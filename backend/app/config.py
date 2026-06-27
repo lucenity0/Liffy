@@ -1,9 +1,32 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):
+    # Database
+    database_url: str = Field(default="postgresql://localhost/liffy")
+    
+    # Redis
+    redis_url: str = Field(default="redis://localhost:6379/0")
+    
+    # GitHub OAuth
+    github_client_id: str = Field(default="")
+    github_client_secret: str = Field(default="")
     github_webhook_secret: str = Field(default="change-me")
+    
+    # JWT
+    jwt_secret_key: str = Field(default="dev-secret-change-in-production")
+    jwt_algorithm: str = Field(default="HS256")
+    access_token_expire_minutes: int = Field(default=15)
+    refresh_token_expire_days: int = Field(default=30)
+    
+    # OpenAI
+    openai_api_key: str = Field(default="")
+    
+    # App
+    debug: bool = Field(default=True)
 
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()

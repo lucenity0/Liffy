@@ -1,6 +1,38 @@
+# Environment
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 .venv/
-.pytest_cache/
-node_modules/
+*.egg-info/
 dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ChromaDB
+chroma/
+!chroma/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+celerybeat-schedule

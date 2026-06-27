@@ -1,0 +1,8 @@
+version: '3.9'
+services:
+  backend:
+    build: ./backend
+    environment:
+      - GITHUB_WEBHOOK_SECRET=change-me
+    ports:
+      - "8000:8000"

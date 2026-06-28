@@ -36,3 +36,5 @@ Thumbs.db
 # Logs
 *.log
 celerybeat-schedule
+
+create_liffy_issues.sh

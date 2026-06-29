@@ -1,0 +1,19 @@
+this is Gaja Lakshmi branch 
+Branch Name: g_Task1
+
+
+Terminal 1:
+cd C:\Users\Gaja Lakshmi\Liffy\backend
+.\.venv\Scripts\activate
+uvicorn app.main:app --reload
+
+
+Terminal 2:
+cd C:\Users\Gaja Lakshmi\Liffy\backend
+.\.venv\Scripts\activate
+celery -A app.workers.celery_app worker --loglevel=info --pool=solo
+
+
+Terminal 3:
+cd C:\Users\Gaja Lakshmi\Liffy\frontend
+npm run dev

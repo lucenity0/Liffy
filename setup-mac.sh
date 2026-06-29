@@ -5,7 +5,7 @@
 #  Installs everything from scratch and starts the app.
 # ─────────────────────────────────────────────
 
-set -e  # exit immediately if any command fails
+set -euo pipefail 2>/dev/null || true  # best-effort strict mode
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -54,12 +54,16 @@ fi
 
 export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
 
-if ! brew services list | grep postgresql@15 | grep started &>/dev/null; then
+if pg_isready -q 2>/dev/null; then
+    success "PostgreSQL already running"
+elif ! brew services list | grep postgresql@15 | grep started &>/dev/null; then
     log "Starting PostgreSQL service..."
-    brew services start postgresql@15
+    brew services start postgresql@15 2>/dev/null || true
     sleep 3
+    pg_isready -q 2>/dev/null && success "PostgreSQL ready" || warn "PostgreSQL may not have started — check with: brew services list"
+else
+    success "PostgreSQL ready"
 fi
-success "PostgreSQL ready"
 
 # ── 3. Redis ──────────────────────────────────────────────────────────────────
 log "Checking Redis..."
@@ -143,8 +147,13 @@ success "Python dependencies installed"
 
 # ── 9. Database migrations ────────────────────────────────────────────────────
 log "Running database migrations..."
-alembic upgrade head
-success "Migrations applied"
+if [ ! -f alembic.ini ]; then
+    warn "alembic.ini not found in backend/ — skipping migrations."
+    warn "Run: alembic init migrations  inside backend/ and commit alembic.ini to the repo."
+else
+    alembic upgrade head
+    success "Migrations applied"
+fi
 cd ..
 
 # ── 10. Frontend dependencies ─────────────────────────────────────────────────
@@ -169,18 +178,18 @@ echo ""
 sleep 2
 
 # ── 11. Launch all three services ────────────────────────────────────────────
-# Open three Terminal tabs
-osascript <<EOF
+# Open three separate Terminal windows (more reliable than tabs)
+LIFFY_ROOT="$(pwd)"
+
+osascript <<APPLESCRIPT
 tell application "Terminal"
-    do script "cd '$(pwd)/backend' && source .venv/bin/activate && uvicorn app.main:app --reload"
-    delay 1
-    tell application "System Events" to keystroke "t" using command down
-    do script "cd '$(pwd)/backend' && source .venv/bin/activate && celery -A app.workers.celery_app worker --loglevel=info" in front window
-    delay 1
-    tell application "System Events" to keystroke "t" using command down
-    do script "cd '$(pwd)/frontend' && npm run dev" in front window
+    do script "cd '${LIFFY_ROOT}/backend' && source .venv/bin/activate && uvicorn app.main:app --reload"
+    delay 2
+    do script "cd '${LIFFY_ROOT}/backend' && source .venv/bin/activate && celery -A app.workers.celery_app worker --loglevel=info"
+    delay 2
+    do script "cd '${LIFFY_ROOT}/frontend' && npm run dev"
     activate
 end tell
-EOF
+APPLESCRIPT
 
 success "All services started. Check the Terminal tabs."

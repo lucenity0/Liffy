@@ -23,7 +23,7 @@ async def github_webhook(
 
     try:
         payload = json.loads(body.decode("utf-8") or "{}")
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         # Signature was valid but the body is malformed: return 4xx so GitHub
         # records a client error instead of retrying on a 500.
         raise HTTPException(

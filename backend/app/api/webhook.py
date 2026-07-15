@@ -21,7 +21,14 @@ async def github_webhook(
     if not verify_webhook_signature(settings.github_webhook_secret, body, x_hub_signature_256):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
 
-    payload = json.loads(body.decode("utf-8") or "{}")
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # Signature was valid but the body is malformed: return 4xx so GitHub
+        # records a client error instead of retrying on a 500.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed JSON body"
+        ) from exc
     pull_request = payload.get("pull_request")
     action = payload.get("action")
     full_name = (payload.get("repository") or {}).get("full_name", "")

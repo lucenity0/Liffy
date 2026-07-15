@@ -110,3 +110,23 @@ def test_removed_file_cleans_vectors_and_rows(db, repo) -> None:
         db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
     )
     assert "app/b.py" not in paths
+
+
+def test_oversized_file_keeps_existing_chunks(db, repo, monkeypatch) -> None:
+    # Regression: a file that grows past MAX_FILE_BYTES on re-index must keep
+    # its already-indexed chunks, not be purged by stale-cleanup.
+    _, client, _ = _run(db, repo, FILES)
+    before = get_repo_collection(client, repo.id).count()
+
+    monkeypatch.setattr("app.services.indexer.MAX_FILE_BYTES", 100)
+    grown = dict(FILES)
+    grown["app/a.py"] = "x = 1\n" * 40  # 240 bytes > 100; b.py/README stay small
+
+    result, _, _ = _run(db, repo, grown, client=client)
+
+    assert result.chunks_deleted == 0
+    assert get_repo_collection(client, repo.id).count() == before
+    paths = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert "app/a.py" in paths

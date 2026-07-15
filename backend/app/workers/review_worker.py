@@ -22,21 +22,23 @@ from app.workers.celery_app import celery
 @celery.task(name="liffy.review_pr")
 def review_pr_task(owner: str, repo_name: str, pr_number: int) -> dict:
     db = SessionLocal()
-    gh = GitHubClient()
     try:
-        review = run_review(
-            db,
-            owner,
-            repo_name,
-            pr_number,
-            gh=gh,
-            chroma_client=get_chroma_client(),
-            embedder=get_embedding_provider(),
-            llm=OpenAIReviewLLM(),
-        )
-        return {"review_id": str(review.id), "status": review.status}
+        gh = GitHubClient()  # inside try so db.close() runs even if this raises
+        try:
+            review = run_review(
+                db,
+                owner,
+                repo_name,
+                pr_number,
+                gh=gh,
+                chroma_client=get_chroma_client(),
+                embedder=get_embedding_provider(),
+                llm=OpenAIReviewLLM(),
+            )
+            return {"review_id": str(review.id), "status": review.status}
+        finally:
+            gh.close()
     finally:
-        gh.close()
         db.close()
 
 

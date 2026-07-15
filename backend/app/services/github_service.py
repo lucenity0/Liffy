@@ -24,6 +24,7 @@ _EXCLUDED_DIRS = {
     ".mypy_cache",
     ".pytest_cache",
 }
+_EXCLUDED_FILENAMES = {"package-lock.json", "pnpm-lock.yaml", "composer.lock", "Cargo.lock"}
 _BINARY_SUFFIXES = (
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".svg",
     ".pdf", ".zip", ".gz", ".tar", ".mp4", ".mov", ".mp3", ".wav",
@@ -73,7 +74,10 @@ class PullRequestMeta:
 
 
 def _is_indexable(path: str) -> bool:
-    if any(part in _EXCLUDED_DIRS for part in path.split("/")):
+    parts = path.split("/")
+    if any(part in _EXCLUDED_DIRS for part in parts):
+        return False
+    if parts[-1] in _EXCLUDED_FILENAMES:
         return False
     return not path.lower().endswith(_BINARY_SUFFIXES)
 

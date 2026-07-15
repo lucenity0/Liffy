@@ -47,6 +47,7 @@ class OpenAIReviewLLM:
         self._chat = ChatOpenAI(
             model=self.model_name,
             api_key=api_key or settings.openai_api_key,
+            base_url=settings.openai_base_url or None,
             temperature=0,
             model_kwargs={"response_format": {"type": "json_object"}},
         )

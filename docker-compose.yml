@@ -54,6 +54,10 @@ services:
       CHROMA_PORT: "8000"
       GITHUB_WEBHOOK_SECRET: change-me
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
     ports:
       - "8000:8000"
     # command comes from the backend Dockerfile CMD (uvicorn)
@@ -71,6 +75,10 @@ services:
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
     command: celery -A app.workers.celery_app worker --loglevel=info
 
 volumes:

@@ -73,6 +73,13 @@ class PullRequestMeta:
     state: str
 
 
+@dataclass(frozen=True)
+class RepositoryMeta:
+    id: int
+    full_name: str
+    default_branch: str
+
+
 def _is_indexable(path: str) -> bool:
     parts = path.split("/")
     if any(part in _EXCLUDED_DIRS for part in parts):
@@ -140,8 +147,16 @@ class GitHubClient:
         )
         return response.text
 
+    def get_repository(self, owner: str, repo: str) -> RepositoryMeta:
+        data = self._get(f"/repos/{owner}/{repo}").json()
+        return RepositoryMeta(
+            id=int(data["id"]),
+            full_name=data.get("full_name", f"{owner}/{repo}"),
+            default_branch=data.get("default_branch", "main"),
+        )
+
     def get_default_branch(self, owner: str, repo: str) -> str:
-        return self._get(f"/repos/{owner}/{repo}").json().get("default_branch", "main")
+        return self.get_repository(owner, repo).default_branch
 
     def list_repository_files(self, owner: str, repo: str, ref: str | None = None) -> list[str]:
         tree_ref = ref or self.get_default_branch(owner, repo)

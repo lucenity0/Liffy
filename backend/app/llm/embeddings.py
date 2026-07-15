@@ -8,7 +8,6 @@ from typing import Protocol
 
 from app.config import settings
 
-EMBEDDING_MODEL = "text-embedding-3-small"
 _BATCH_SIZE = 100
 
 
@@ -17,11 +16,17 @@ class EmbeddingProvider(Protocol):
 
 
 class OpenAIEmbeddings:
-    def __init__(self, api_key: str | None = None, model: str = EMBEDDING_MODEL) -> None:
+    """Embeddings over any OpenAI-compatible API (OpenAI itself, or e.g.
+    Gemini via its compat endpoint when ``settings.openai_base_url`` is set)."""
+
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         from openai import OpenAI  # deferred so tests never need the key
 
-        self.model = model
-        self._client = OpenAI(api_key=api_key or settings.openai_api_key)
+        self.model = model or settings.embedding_model
+        self._client = OpenAI(
+            api_key=api_key or settings.openai_api_key,
+            base_url=settings.openai_base_url or None,
+        )
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []

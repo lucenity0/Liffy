@@ -53,6 +53,7 @@ services:
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
       GITHUB_WEBHOOK_SECRET: change-me
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     ports:
       - "8000:8000"
     # command comes from the backend Dockerfile CMD (uvicorn)
@@ -69,6 +70,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     command: celery -A app.workers.celery_app worker --loglevel=info
 
 volumes:

@@ -30,6 +30,10 @@ openai==1.54.4
 chromadb==0.5.18
 tiktoken==0.8.0                  # Token counting for OpenAI models
 
+# ── AST parsing (semantic chunking) ────────────────────────────────────────────
+tree-sitter==0.23.2              # Language-agnostic AST parser (BASE-5 indexer)
+tree-sitter-python==0.23.6       # Python grammar; more languages added in BASE-5
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 pydantic==2.10.2
 pydantic-settings==2.6.1         # Settings loaded from .env

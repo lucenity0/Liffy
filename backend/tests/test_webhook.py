@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -36,7 +37,18 @@ def _signature(secret: str, body: bytes) -> str:
     return f"sha256={digest}"
 
 
-def _post(payload: dict) -> "TestClient.Response":
+def _signed(body: bytes) -> "httpx.Response":
+    return client.post(
+        "/webhook/github",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": _signature(WEBHOOK_SECRET, body),
+            "Content-Type": "application/json",
+        },
+    )
+
+
+def _post(payload: dict) -> "httpx.Response":
     body = json.dumps(payload).encode("utf-8")
     return client.post(
         "/webhook/github",
@@ -72,6 +84,13 @@ def test_webhook_queues_on_synchronize(enqueued) -> None:
     response = _post(dict(PR_OPENED, action="synchronize"))
     assert response.json()["status"] == "queued"
     assert len(enqueued) == 1
+
+
+def test_webhook_malformed_json_returns_400(enqueued) -> None:
+    # Valid signature but non-JSON body must not 500 (which GitHub would retry).
+    response = _signed(b"not json at all")
+    assert response.status_code == 400
+    assert enqueued == []
 
 
 def test_webhook_ignores_irrelevant_events(enqueued) -> None:

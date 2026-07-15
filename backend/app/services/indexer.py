@@ -56,6 +56,9 @@ def index_repository(
         result.files_seen += 1
         content = gh.get_file_content(owner, name, file_path, ref=ref)
         if len(content.encode("utf-8", "replace")) > MAX_FILE_BYTES:
+            # Too large to re-embed, but keep its existing chunks: a file that
+            # grew past the limit must not be purged by the stale-cleanup below.
+            seen_keys.update(key for key in existing_rows if key[0] == file_path)
             continue
         for chunk in chunk_source(file_path, content):
             key = (chunk.file_path, chunk.chunk_index)

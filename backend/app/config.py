@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = Field(default="")
 
+    # ChromaDB — HTTP server when chroma_host is set (compose); local persistent dir otherwise
+    chroma_host: str = Field(default="")
+    chroma_port: int = Field(default=8000)
+    chroma_persist_dir: str = Field(default="./chroma")
+
     # App
     debug: bool = Field(default=True)
 

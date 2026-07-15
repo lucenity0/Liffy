@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = Field(default="")
+    llm_model: str = Field(default="gpt-4o")  # review-generation model
 
     # ChromaDB — HTTP server when chroma_host is set (compose); local persistent dir otherwise
     chroma_host: str = Field(default="")

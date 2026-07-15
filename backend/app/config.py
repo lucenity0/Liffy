@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     github_client_id: str = Field(default="")
     github_client_secret: str = Field(default="")
     github_webhook_secret: str = Field(default="change-me")
+    # Server-side PAT used until per-user OAuth lands (token seam in github_service).
+    github_token: str = Field(default="")
     
     # JWT
     jwt_secret_key: str = Field(default="dev-secret-change-in-production")
@@ -19,8 +21,18 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=15)
     refresh_token_expire_days: int = Field(default=30)
     
-    # OpenAI
+    # LLM provider (OpenAI-compatible API; leave base_url empty for real OpenAI.
+    # For Gemini: base_url=https://generativelanguage.googleapis.com/v1beta/openai/
+    # with llm_model=gemini-2.5-flash, embedding_model=gemini-embedding-001)
     openai_api_key: str = Field(default="")
+    openai_base_url: str = Field(default="")
+    llm_model: str = Field(default="gpt-4o")  # review-generation model
+    embedding_model: str = Field(default="text-embedding-3-small")
+
+    # ChromaDB — HTTP server when chroma_host is set (compose); local persistent dir otherwise
+    chroma_host: str = Field(default="")
+    chroma_port: int = Field(default=8000)
+    chroma_persist_dir: str = Field(default="./chroma")
     
     # App
     debug: bool = Field(default=True)

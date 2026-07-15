@@ -38,4 +38,5 @@ Thumbs.db
 celerybeat-schedule
 
 create_liffy_issues.sh
-create_liffy_milestones.sh
+front_end_issues.sh
+create_issues.sh

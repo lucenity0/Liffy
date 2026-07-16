@@ -2,7 +2,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { PageShell } from "@/components/layout/PageShell";
 import { Dashboard } from "@/pages/Dashboard";
 import { Reviews } from "@/pages/Reviews";
-import { ReviewDetail } from "@/pages/ReviewDetail";
+import { ReviewDetail } from "@/pages/Reviewdetail";
 import { RepoDetail } from "@/pages/RepoDetail";
 import { NotFound } from "@/pages/NotFound";
 

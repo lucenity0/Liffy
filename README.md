@@ -74,7 +74,10 @@ cd Liffy
 cp .env.example backend/.env   # fill in your keys
 ```
 
-Then three terminals: `uvicorn app.main:app --reload` · `celery -A app.workers.celery_app worker` · `npm run dev`.
+Then three terminals (from the right directories, with the backend venv active):
+- `cd backend && uvicorn app.main:app --reload`
+- `cd backend && celery -A app.workers.celery_app worker --loglevel=info` (Windows: add `--pool=solo`)
+- `cd frontend && npm run dev`
 
 Full walkthrough (macOS + Windows, prerequisites, env vars, common issues): **[docs/SETUP.md](docs/SETUP.md)**
 

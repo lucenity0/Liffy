@@ -2,15 +2,26 @@ import { render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { routes } from "@/routes";
+import { createWrapper } from "@/test/renderWithProviders";
 
 /**
  * Mounting `routes` through a memory router rather than `<App />` is what
  * lets a test pick its own URL — a module-level createBrowserRouter would
  * pin every test to jsdom's location.
+ *
+ * The QueryClientProvider is not optional here even though these are shell
+ * tests: the pages behind these routes fetch, and a page that throws "No
+ * QueryClient set" renders the router's errorElement instead of the shell.
  */
 function renderAt(path: string) {
+  const { Wrapper } = createWrapper();
+
   return render(
-    <RouterProvider router={createMemoryRouter(routes, { initialEntries: [path] })} />,
+    <Wrapper>
+      <RouterProvider
+        router={createMemoryRouter(routes, { initialEntries: [path] })}
+      />
+    </Wrapper>,
   );
 }
 

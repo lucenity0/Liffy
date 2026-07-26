@@ -8,6 +8,14 @@
       "cwd": "frontend",
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "liffy-frontend-mock",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:mock"],
+      "cwd": "frontend",
+      "port": 5174,
+      "autoPort": true
     }
   ]
 }

@@ -74,6 +74,8 @@ const fixtureCommentCritical: ReviewCommentOut = {
 export const fixtureReviewCompleted: ReviewDetailOut = {
   id: "bbbbbbbb-0000-0000-0000-000000000001",
   pr_id: "cccccccc-0000-0000-0000-000000000001",
+  pr_number: 58,
+  repo_full_name: "lucenity0/Liffy",
   status: "completed",
   summary:
     "One thing worth fixing before this merges: the diff-hunk parser assumes an explicit line count on every hunk header, but the format allows omitting it. Everything else — the setup script, the retry logic — reads cleanly.",
@@ -108,6 +110,8 @@ diff --git a/src/lib/diff.ts b/src/lib/diff.ts
 export const fixtureReviewApproved: ReviewDetailOut = {
   id: "bbbbbbbb-0000-0000-0000-000000000002",
   pr_id: "cccccccc-0000-0000-0000-000000000002",
+  pr_number: 59,
+  repo_full_name: "lucenity0/portfolio",
   status: "completed",
   summary: "Clean change. No issues found.",
   verdict: "approve",
@@ -122,6 +126,8 @@ export const fixtureReviewApproved: ReviewDetailOut = {
 export const fixtureReviewPending: ReviewDetailOut = {
   id: "bbbbbbbb-0000-0000-0000-000000000003",
   pr_id: "cccccccc-0000-0000-0000-000000000003",
+  pr_number: 62,
+  repo_full_name: "lucenity0/Liffy",
   status: "pending",
   summary: null,
   verdict: null,
@@ -137,12 +143,15 @@ export const fixtureReviewProcessing: ReviewDetailOut = {
   ...fixtureReviewPending,
   id: "bbbbbbbb-0000-0000-0000-000000000004",
   pr_id: "cccccccc-0000-0000-0000-000000000004",
+  pr_number: 60,
   status: "processing",
 };
 
 export const fixtureReviewFailed: ReviewDetailOut = {
   id: "bbbbbbbb-0000-0000-0000-000000000005",
   pr_id: "cccccccc-0000-0000-0000-000000000005",
+  pr_number: 61,
+  repo_full_name: "lucenity0/Liffy",
   status: "failed",
   summary: null,
   verdict: null,
@@ -154,12 +163,17 @@ export const fixtureReviewFailed: ReviewDetailOut = {
   raw_diff: null,
 };
 
-const detailToListItem = (
-  review: ReviewDetailOut,
-  overrides: { pr_number: number; repo_full_name: string },
-): ReviewListItem => ({
+/**
+ * The list item is the detail minus the two heavy fields. Since #136 put
+ * pr_number and repo_full_name on the detail too, this no longer needs them
+ * passed in — which also means the two fixtures can never disagree about
+ * which PR a review belongs to.
+ */
+const detailToListItem = (review: ReviewDetailOut): ReviewListItem => ({
   id: review.id,
   pr_id: review.pr_id,
+  pr_number: review.pr_number,
+  repo_full_name: review.repo_full_name,
   status: review.status,
   summary: review.summary,
   verdict: review.verdict,
@@ -167,26 +181,13 @@ const detailToListItem = (
   tokens_used: review.tokens_used,
   created_at: review.created_at,
   completed_at: review.completed_at,
-  ...overrides,
 });
 
 export const fixtureReviewListItems: ReviewListItem[] = [
-  detailToListItem(fixtureReviewFailed, {
-    pr_number: 61,
-    repo_full_name: "lucenity0/Liffy",
-  }),
-  detailToListItem(fixtureReviewProcessing, {
-    pr_number: 60,
-    repo_full_name: "lucenity0/Liffy",
-  }),
-  detailToListItem(fixtureReviewApproved, {
-    pr_number: 59,
-    repo_full_name: "lucenity0/portfolio",
-  }),
-  detailToListItem(fixtureReviewCompleted, {
-    pr_number: 58,
-    repo_full_name: "lucenity0/Liffy",
-  }),
+  detailToListItem(fixtureReviewFailed),
+  detailToListItem(fixtureReviewProcessing),
+  detailToListItem(fixtureReviewApproved),
+  detailToListItem(fixtureReviewCompleted),
 ];
 
 export const fixtureReviewDetailById: Record<string, ReviewDetailOut> = {

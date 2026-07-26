@@ -66,6 +66,13 @@ export interface ReviewCommentOut {
 }
 
 export interface ReviewDetailOut extends ReviewOut {
+  /**
+   * The same join the list does. Without these a review fetched by id cannot
+   * say which PR it belongs to, and the detail page is most often reached by
+   * a deep link rather than from the list. Added by #136.
+   */
+  pr_number: number;
+  repo_full_name: string;
   comments: ReviewCommentOut[];
   /** Detail only — never present on ReviewListItem. Added by #127. */
   raw_diff: string | null;

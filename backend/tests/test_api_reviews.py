@@ -96,6 +96,13 @@ def test_get_review_detail_with_comments(seeded) -> None:
     assert body["comments"][0]["category"] == "logic_error"
 
 
+def test_get_review_detail_names_its_pull_request(seeded) -> None:
+    # A deep-linked review has nothing else to identify itself with.
+    body = client.get(f"/reviews/{seeded['new']}").json()
+    assert body["pr_number"] == 7
+    assert body["repo_full_name"] == "octo/demo"
+
+
 def test_get_review_detail_exposes_raw_diff(seeded) -> None:
     body = client.get(f"/reviews/{seeded['new']}").json()
     assert body["raw_diff"] == RAW_DIFF

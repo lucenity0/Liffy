@@ -51,49 +51,16 @@
 }
 
 /* ==================================================================== *
- * 2. SEMANTIC ALIASES → Tailwind namespaces.
+ * 2. NAMESPACE RESETS + THEME-INVARIANT SCALES.
  *
- * `inline` matters: without it Tailwind substitutes the value at :root,
- * so a future `.dark { --paper: … }` would never propagate. With it the
- * var() expression lands in the utility and resolves per element.
- * ==================================================================== */
-@theme inline {
-  --color-paper: var(--paper);
-  --color-card: var(--card);
-  --color-recessed: var(--recessed);
-  --color-rule: var(--rule);
-  --color-rule-strong: var(--rule-strong);
-
-  --color-ink: var(--ink);
-  --color-ink-dim: var(--ink-dim);
-  --color-ink-sub: var(--ink-sub);
-
-  --color-oxide: var(--oxide);
-  --color-sage: var(--sage);
-  --color-ochre: var(--ochre);
-  --color-payne: var(--payne);
-
-  --color-oxide-tint: var(--oxide-tint);
-  --color-sage-tint: var(--sage-tint);
-  --color-ochre-tint: var(--ochre-tint);
-  --color-payne-tint: var(--payne-tint);
-  --color-neutral-tint: var(--neutral-tint);
-
-  --color-diff-add: var(--diff-add);
-  --color-diff-del: var(--diff-del);
-
-  /* Paper does not glow. Hard offset, zero blur — set once, on Sheet. */
-  --shadow-hard: 1px 1px 0 0 var(--rule-strong);
-  --shadow-hard-lg: 3px 3px 0 0 var(--rule-strong);
-}
-
-/* ==================================================================== *
- * 3. THEME-INVARIANT SCALES.
+ * This block MUST come before the aliases below. `*: initial` closes a
+ * namespace, and Tailwind applies theme blocks in source order — putting
+ * the reset last would silently wipe every semantic alias, leaving
+ * `bg-card` and friends generating nothing at all.
  *
- * The `*: initial` lines close each namespace: Tailwind's default oklch
- * palette, font stacks, radii and blurred shadows are all removed, so
- * `bg-blue-500` or `shadow-lg` simply do not exist. A closed palette
- * nobody can typo their way out of.
+ * Closing these namespaces removes Tailwind's default oklch palette, font
+ * stacks, radii and blurred shadows, so `bg-blue-500` and `shadow-lg`
+ * simply do not exist. A closed palette nobody can typo their way out of.
  * ==================================================================== */
 @theme {
   --color-*: initial;
@@ -138,6 +105,43 @@
 
   --container-prose: 68ch; /* the reading column, for LLM prose only */
   --container-app: 1080px; /* every app page */
+}
+
+/* ==================================================================== *
+ * 3. SEMANTIC ALIASES → Tailwind namespaces.
+ *
+ * `inline` matters: without it Tailwind substitutes the value at :root,
+ * so a future `.dark { --paper: … }` would never propagate. With it the
+ * var() expression lands in the utility and resolves per element.
+ * ==================================================================== */
+@theme inline {
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-recessed: var(--recessed);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-sub: var(--ink-sub);
+
+  --color-oxide: var(--oxide);
+  --color-sage: var(--sage);
+  --color-ochre: var(--ochre);
+  --color-payne: var(--payne);
+
+  --color-oxide-tint: var(--oxide-tint);
+  --color-sage-tint: var(--sage-tint);
+  --color-ochre-tint: var(--ochre-tint);
+  --color-payne-tint: var(--payne-tint);
+  --color-neutral-tint: var(--neutral-tint);
+
+  --color-diff-add: var(--diff-add);
+  --color-diff-del: var(--diff-del);
+
+  /* Paper does not glow. Hard offset, zero blur — set once, on Sheet. */
+  --shadow-hard: 1px 1px 0 0 var(--rule-strong);
+  --shadow-hard-lg: 3px 3px 0 0 var(--rule-strong);
 }
 
 /* ==================================================================== *

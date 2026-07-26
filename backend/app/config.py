@@ -39,7 +39,10 @@ class Settings(BaseSettings):
 
     # CORS — comma-separated, NOT list[str]: pydantic-settings parses list fields
     # from env as JSON, so "http://a,http://b" would raise at import time.
-    cors_origins: str = Field(default="http://localhost:5173")
+    # 5174 is where Vite lands when 5173 is already taken (a second checkout).
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://localhost:5174"
+    )
 
     @property
     def cors_origin_list(self) -> list[str]:

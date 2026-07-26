@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     # App
     debug: bool = Field(default=True)
 
+    # CORS — comma-separated, NOT list[str]: pydantic-settings parses list fields
+    # from env as JSON, so "http://a,http://b" would raise at import time.
+    cors_origins: str = Field(default="http://localhost:5173")
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
     class Config:
         env_file = ".env"
         extra = "ignore"

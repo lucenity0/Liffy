@@ -4,10 +4,12 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client"],
+    // "node" is for src/test/polyfills.ts only; "vitest/globals" covers the
+    // describe/it/expect that vitest's `globals: true` injects.
+    "types": ["vite/client", "node", "vitest/globals"],
     "skipLibCheck": true,
 
-    "baseUrl": ".",
+    // No baseUrl: deprecated in TS 6. Bare "paths" resolve relative to this file.
     "paths": {
       "@/*": ["./src/*"]
     },

@@ -65,6 +65,7 @@ def _detail(db: Session, review_id: uuid.UUID) -> ReviewDetailOut:
     return ReviewDetailOut(
         **ReviewOut.model_validate(review).model_dump(),
         comments=[ReviewCommentOut.model_validate(c) for c in comments],
+        raw_diff=review.raw_diff,
     )
 
 

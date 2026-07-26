@@ -84,3 +84,5 @@ class ReviewListItem(ReviewOut):
 
 class ReviewDetailOut(ReviewOut):
     comments: list[ReviewCommentOut]
+    # Detail only — never on ReviewListItem. Diffs are large and the list stays light.
+    raw_diff: str | None = None

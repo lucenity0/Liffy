@@ -109,12 +109,56 @@ describe("Dashboard — repositories", () => {
     );
   });
 
-  it("disables the connect button until the modal exists", async () => {
+  it("opens the connect modal from the section header", async () => {
+    const user = userEvent.setup();
     renderWithProviders(<Dashboard />);
 
+    await user.click(
+      await screen.findByRole("button", { name: "Connect repository" }),
+    );
+
     expect(
-      await screen.findByRole("button", { name: /connect repository/i }),
-    ).toBeDisabled();
+      await screen.findByRole("dialog", { name: /connect a repository/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("connects a repo and lands the new card in the list", async () => {
+    const user = userEvent.setup();
+
+    // The card only appears if the mutation's invalidation actually refetches
+    // the list — so the handler has to grow a repo, not just return one.
+    let repos = [...fixtureRepos];
+    server.use(
+      http.get("*/repos", () => HttpResponse.json(repos)),
+      http.post("*/repos", async ({ request }) => {
+        const { full_name } = (await request.json()) as { full_name: string };
+        const created = {
+          id: "99999999-9999-9999-9999-999999999999",
+          full_name,
+          default_branch: "main",
+          indexed_at: null,
+          created_at: "2026-07-26T10:00:00Z",
+        };
+        repos = [...repos, created];
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    );
+
+    renderWithProviders(<Dashboard />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Connect repository" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: /repository/i }),
+      "lucenity0/dotfiles",
+    );
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const card = await repoCard("lucenity0/dotfiles");
+    // Fresh repos are never indexed yet, so the poll starts on arrival.
+    expect(await within(card).findByText("Indexing")).toBeInTheDocument();
   });
 });
 

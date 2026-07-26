@@ -9,17 +9,17 @@ import { useRepos } from "@/hooks/useRepos";
 import { useRepoStatus } from "@/hooks/useRepoStatus";
 import { useDisconnectRepo, useTriggerIndex } from "@/hooks/useRepoMutations";
 import type { RepoOut } from "@/types/api";
+import { ConnectRepoModal } from "./ConnectRepoModal";
 import { RepoCard } from "./RepoCard";
 
 /**
  * The Repositories section: its own header, its own four states, and one card
  * per connected repo.
- *
- * `onConnect` is optional so this can ship before the connect modal exists —
- * absent, the button renders disabled rather than lying about being clickable.
  */
-export function RepoList({ onConnect }: { onConnect?: () => void }) {
+export function RepoList() {
   const repos = useRepos();
+  const [connecting, setConnecting] = useState(false);
+  const onConnect = () => setConnecting(true);
 
   return (
     <section className="flex flex-col gap-3">
@@ -33,12 +33,7 @@ export function RepoList({ onConnect }: { onConnect?: () => void }) {
             {repos.data.length}
           </span>
         )}
-        <Button
-          variant="primary"
-          onClick={onConnect}
-          disabled={!onConnect}
-          className="ml-auto"
-        >
+        <Button variant="primary" onClick={onConnect} className="ml-auto">
           Connect repository
         </Button>
       </header>
@@ -55,8 +50,8 @@ export function RepoList({ onConnect }: { onConnect?: () => void }) {
             title="No repositories yet."
             description="Connect a GitHub repository and Liffy will index it, then review every pull request that opens against it."
             action={
-              <Button variant="primary" onClick={onConnect} disabled={!onConnect}>
-                Connect repository
+              <Button variant="primary" onClick={onConnect}>
+                Connect your first repository
               </Button>
             }
           />
@@ -74,6 +69,13 @@ export function RepoList({ onConnect }: { onConnect?: () => void }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {connecting && (
+        <ConnectRepoModal
+          onClose={() => setConnecting(false)}
+          knownRepoIds={new Set(repos.data?.map((repo) => repo.id))}
+        />
       )}
     </section>
   );

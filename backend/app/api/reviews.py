@@ -62,9 +62,20 @@ def _detail(db: Session, review_id: uuid.UUID) -> ReviewDetailOut:
     if fetched is None:
         raise HTTPException(status_code=404, detail="Review not found")
     review, comments = fetched
+
+    # Same join list_reviews does, so a deep-linked review can name its PR.
+    identity = db.execute(
+        select(PullRequest.github_pr_number, Repository.full_name)
+        .join(Repository, PullRequest.repo_id == Repository.id)
+        .where(PullRequest.id == review.pr_id)
+    ).one()
+
     return ReviewDetailOut(
         **ReviewOut.model_validate(review).model_dump(),
+        pr_number=identity.github_pr_number,
+        repo_full_name=identity.full_name,
         comments=[ReviewCommentOut.model_validate(c) for c in comments],
+        raw_diff=review.raw_diff,
     )
 
 

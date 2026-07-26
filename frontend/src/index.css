@@ -1,1 +1,349 @@
 @import "tailwindcss";
+@import "./styles/fonts.css";
+
+/* Wired now, unused until a graphite mode ships. Everything a dark theme
+   needs to override lives in the :root block below and nowhere else. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ==================================================================== *
+ * 1. RAW PALETTE — hand-written, always emitted.
+ *
+ * Tailwind only emits the theme variables it sees *used in classes*, so
+ * anything referenced from hand-authored CSS (the grain and rule layers
+ * below) has to live here rather than in @theme.
+ *
+ * Contrast ratios are measured against --paper.
+ * ==================================================================== */
+:root {
+  /* Surfaces — warm paper, never #fff */
+  --paper: #f4f1ea; /* page */
+  --card: #faf8f3; /* raised leaf */
+  --recessed: #efebe2; /* sheet headers, table headers, footers */
+  --rule: #ded8cb; /* hairline: every divider and border */
+  --rule-strong: #c9c1b0; /* hover borders, the 1px hard shadow */
+
+  /* Inks — soft black, never #000 */
+  --ink: #2b2925; /* 12.9:1  primary text */
+  --ink-dim: #6b6459; /*  5.2:1  secondary text, passes AA body */
+  --ink-sub: #8e8678; /*  3.2:1  LARGE TEXT AND NON-TEXT ONLY */
+
+  /* Semantic inks — desaturated, matte. All clear AA on paper and card. */
+  --oxide: #9a3f2b; /* 6.0:1  critical · request_changes · failed */
+  --sage: #4a6b4a; /* 5.3:1  approve · completed · indexed */
+  --ochre: #7d6019; /* 5.2:1  warning · processing */
+  --payne: #3f5a73; /* 6.4:1  info · comment */
+
+  /* Tint washes — BACKGROUNDS ONLY, never text. */
+  --oxide-tint: color-mix(in oklab, var(--oxide) 9%, var(--card));
+  --sage-tint: color-mix(in oklab, var(--sage) 9%, var(--card));
+  --ochre-tint: color-mix(in oklab, var(--ochre) 9%, var(--card));
+  --payne-tint: color-mix(in oklab, var(--payne) 9%, var(--card));
+  --neutral-tint: var(--recessed);
+
+  /* Diff washes reuse the same two inks, so the diff is not a 2nd palette. */
+  --diff-add: color-mix(in oklab, var(--sage) 12%, var(--card));
+  --diff-del: color-mix(in oklab, var(--oxide) 10%, var(--card));
+
+  /* Raw-CSS-only constants — deliberately not theme variables. */
+  --grain-opacity: 0.032;
+  --grain-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  --rule-step: 28px; /* ruled-line pitch; the prose block matches it exactly */
+}
+
+/* ==================================================================== *
+ * 2. NAMESPACE RESETS + THEME-INVARIANT SCALES.
+ *
+ * This block MUST come before the aliases below. `*: initial` closes a
+ * namespace, and Tailwind applies theme blocks in source order — putting
+ * the reset last would silently wipe every semantic alias, leaving
+ * `bg-card` and friends generating nothing at all.
+ *
+ * Closing these namespaces removes Tailwind's default oklch palette, font
+ * stacks, radii and blurred shadows, so `bg-blue-500` and `shadow-lg`
+ * simply do not exist. A closed palette nobody can typo their way out of.
+ * ==================================================================== */
+@theme {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --font-*: initial;
+  --font-hand: "Monaspace Radon", "Monaspace Fallback", ui-monospace, monospace;
+  --font-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
+  --font-code: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+  --default-font-family: var(--font-ui);
+  --default-mono-font-family: var(--font-code);
+
+  /* Monaspace runs narrow (0.62em advance), so the ramp sits a touch
+     larger than it would for a proportional face. */
+  --text-*: initial;
+  --text-2xs: 10px;
+  --text-xs: 11px; /* the label idiom: uppercase + tracking-label */
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+
+  --leading-*: initial;
+  --leading-none: 1;
+  --leading-tight: 1.3;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.75;
+  --leading-rule: var(--rule-step); /* prose: one line == one ruled line */
+
+  --tracking-label: 0.14em; /* ~2px at 11px — straight off the portfolio */
+  --tracking-wide: 0.06em;
+
+  --radius-*: initial;
+  --radius-chip: 2px;
+  --radius-sheet: 3px;
+  --radius-full: 9999px;
+
+  --shadow-*: initial;
+
+  --container-prose: 68ch; /* the reading column, for LLM prose only */
+  --container-app: 1080px; /* every app page */
+}
+
+/* ==================================================================== *
+ * 3. SEMANTIC ALIASES → Tailwind namespaces.
+ *
+ * `inline` matters: without it Tailwind substitutes the value at :root,
+ * so a future `.dark { --paper: … }` would never propagate. With it the
+ * var() expression lands in the utility and resolves per element.
+ * ==================================================================== */
+@theme inline {
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-recessed: var(--recessed);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-sub: var(--ink-sub);
+
+  --color-oxide: var(--oxide);
+  --color-sage: var(--sage);
+  --color-ochre: var(--ochre);
+  --color-payne: var(--payne);
+
+  --color-oxide-tint: var(--oxide-tint);
+  --color-sage-tint: var(--sage-tint);
+  --color-ochre-tint: var(--ochre-tint);
+  --color-payne-tint: var(--payne-tint);
+  --color-neutral-tint: var(--neutral-tint);
+
+  --color-diff-add: var(--diff-add);
+  --color-diff-del: var(--diff-del);
+
+  /* Paper does not glow. Hard offset, zero blur — set once, on Sheet. */
+  --shadow-hard: 1px 1px 0 0 var(--rule-strong);
+  --shadow-hard-lg: 3px 3px 0 0 var(--rule-strong);
+}
+
+/* ==================================================================== *
+ * 4. BASE
+ * ==================================================================== */
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Texture healing + ligatures — the reason for the variable fonts. */
+    font-feature-settings: "calt" 1, "liga" 1;
+  }
+
+  /* Hairlines are the whole visual language, and v4 defaults border-color
+     to currentColor — which would draw them in ink. Default to the rule. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--rule);
+  }
+
+  ::selection {
+    background: var(--ink);
+    color: var(--paper);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+    border-radius: 1px;
+  }
+
+  /* Tabular figures everywhere numbers are compared in a column. */
+  table,
+  time,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--rule);
+    border: 3px solid var(--paper);
+    border-radius: var(--radius-full);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--rule-strong);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule) transparent;
+  }
+}
+
+/* ==================================================================== *
+ * 5. PAPER TEXTURE
+ *
+ * Both layers sit at z-index 0 with the app root at z-index 1. Putting
+ * `mix-blend-mode: multiply` above content would tint modals and Monaco.
+ * ==================================================================== */
+@utility paper-grain {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--grain-url);
+  opacity: var(--grain-opacity);
+  mix-blend-mode: multiply;
+}
+
+@utility paper-ruled {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--rule-step) - 1px),
+    var(--rule) calc(var(--rule-step) - 1px),
+    var(--rule) var(--rule-step)
+  );
+  opacity: 0.4;
+  -webkit-mask-image: radial-gradient(
+    120% 80% at 50% 0%,
+    #000 30%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(120% 80% at 50% 0%, #000 30%, transparent 100%);
+}
+
+/* The one place ruled lines are literal rather than texture: Liffy's
+   review prose, where the line-height is pinned to the rule pitch. */
+@utility prose-hand {
+  font-family: var(--font-hand);
+  font-size: var(--text-md);
+  line-height: var(--rule-step);
+  color: var(--ink);
+  max-width: var(--container-prose);
+  text-wrap: pretty;
+}
+
+/* The portfolio's label idiom, as one utility. */
+@utility label {
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--ink-dim);
+}
+
+/* ==================================================================== *
+ * 6. MONACO DECORATIONS
+ *
+ * Monaco applies decoration classes to line elements it owns, so these
+ * have to be real global classes rather than Tailwind utilities on a
+ * React element. The palette is the same one everything else uses — the
+ * diff is not a second colour scheme.
+ * ==================================================================== */
+.diff-line-added {
+  background: var(--diff-add);
+}
+
+.diff-line-removed {
+  background: var(--diff-del);
+}
+
+.diff-line-hunk {
+  background: var(--recessed);
+  color: var(--ink-sub);
+  font-style: italic;
+}
+
+/* Sits under the add/remove wash, so a commented added line still reads as
+   added. inset box-shadow rather than a background, for exactly that. */
+.diff-line-commented {
+  box-shadow: inset 2px 0 0 0 var(--rule-strong);
+}
+
+.diff-glyph {
+  cursor: pointer;
+}
+
+.diff-glyph::after {
+  content: "";
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin: 6px auto;
+  border-radius: 9999px;
+}
+
+.diff-glyph-critical::after {
+  background: var(--oxide);
+}
+.diff-glyph-warning::after {
+  background: var(--ochre);
+}
+.diff-glyph-info::after {
+  background: var(--payne);
+}
+
+/* The motion-safe: variants cover the spinner and the badge pulse, but not
+   Tailwind's transition utilities or a smooth scrollIntoView. This is the
+   backstop for everything the variants do not reach. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .paper-grain,
+  .paper-ruled {
+    display: none;
+  }
+}
+
+@media print {
+  .paper-grain,
+  .paper-ruled {
+    display: none;
+  }
+}

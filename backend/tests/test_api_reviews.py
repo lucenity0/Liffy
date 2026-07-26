@@ -21,6 +21,8 @@ client = TestClient(app)
 
 T0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
 
+RAW_DIFF = "diff --git a/a.py b/a.py\n@@ -1,2 +1,2 @@\n-old\n+new\n"
+
 
 @pytest.fixture()
 def seeded():
@@ -49,7 +51,8 @@ def seeded():
         old = Review(pr_id=pr.id, status="completed", summary="old", verdict="approve",
                      model_used="m", tokens_used=10, created_at=T0)
         new = Review(pr_id=pr.id, status="completed", summary="new", verdict="comment",
-                     model_used="m", tokens_used=20, created_at=T0 + timedelta(hours=1))
+                     model_used="m", tokens_used=20, created_at=T0 + timedelta(hours=1),
+                     raw_diff=RAW_DIFF)
         db.add_all([old, new])
         db.flush()
         db.add(ReviewComment(
@@ -91,6 +94,29 @@ def test_get_review_detail_with_comments(seeded) -> None:
     assert len(body["comments"]) == 1
     assert body["comments"][0]["file_path"] == "a.py"
     assert body["comments"][0]["category"] == "logic_error"
+
+
+def test_get_review_detail_names_its_pull_request(seeded) -> None:
+    # A deep-linked review has nothing else to identify itself with.
+    body = client.get(f"/reviews/{seeded['new']}").json()
+    assert body["pr_number"] == 7
+    assert body["repo_full_name"] == "octo/demo"
+
+
+def test_get_review_detail_exposes_raw_diff(seeded) -> None:
+    body = client.get(f"/reviews/{seeded['new']}").json()
+    assert body["raw_diff"] == RAW_DIFF
+
+
+def test_list_reviews_omits_raw_diff(seeded) -> None:
+    # Diffs are large; the list must stay light.
+    assert all("raw_diff" not in item for item in client.get("/reviews").json())
+
+
+def test_cors_headers_echoed_for_dev_origin(seeded) -> None:
+    origin = "http://localhost:5173"
+    response = client.get("/reviews", headers={"Origin": origin})
+    assert response.headers["access-control-allow-origin"] == origin
 
 
 def test_get_review_404(seeded) -> None:

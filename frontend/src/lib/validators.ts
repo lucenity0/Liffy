@@ -20,3 +20,22 @@ export function isValidFullName(value: string): boolean {
 }
 
 export const FULL_NAME_HINT = "owner/name, as it appears in the GitHub URL.";
+
+/** Splits a validated full name. Call `isValidFullName` first. */
+export function splitFullName(value: string): { owner: string; repo: string } {
+  const [owner, repo] = normalizeFullName(value).split("/");
+  return { owner, repo };
+}
+
+/**
+ * Mirrors `pr_number: int = Field(gt=0)` on TriggerReviewRequest.
+ *
+ * Deliberately a digits test rather than `Number.isInteger(Number(value))`:
+ * Number() reads "1e3" as 1000 and "0x10" as 16, so the loose version would
+ * quietly send a review request for a pull request the user never named.
+ * Rejecting is the only honest answer to input we cannot read back.
+ */
+export function isValidPrNumber(value: string | number): boolean {
+  if (typeof value === "number") return Number.isInteger(value) && value > 0;
+  return /^\d+$/.test(value.trim()) && Number(value) > 0;
+}

@@ -209,6 +209,57 @@ describe("Reviews", () => {
     expect(screen.getByRole("button", { name: /previous/i })).toBeEnabled();
   });
 
+  it("offers the trigger form from the header and from the empty state", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("*/reviews", () => HttpResponse.json([])));
+
+    renderPage();
+    await screen.findByText(/nothing reviewed yet/i);
+
+    // The empty-state CTA and the header button open the same modal.
+    await user.click(screen.getByRole("button", { name: /review a pull request/i }));
+    expect(
+      await screen.findByRole("dialog", { name: /review a pull request/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(screen.getByRole("button", { name: "New review" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("queues a review, returns to page one, and says where it will appear", async () => {
+    const user = userEvent.setup();
+    trackPages(fullPage);
+    server.use(
+      http.post("*/reviews/trigger", () =>
+        HttpResponse.json(
+          { status: "queued", repo: "lucenity0/Liffy", pr_number: 58 },
+          { status: 202 },
+        ),
+      ),
+    );
+
+    renderPage("/reviews?offset=20");
+    await screen.findByRole("list", { name: "Reviews" });
+
+    await user.click(screen.getByRole("button", { name: "New review" }));
+    await user.type(
+      screen.getByRole("textbox", { name: /repository/i }),
+      "lucenity0/Liffy",
+    );
+    await user.type(screen.getByRole("textbox", { name: /pull request/i }), "58");
+    await user.click(screen.getByRole("button", { name: "Start review" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The 202 has no review id, so there is nothing to deep-link to — the new
+    // row is the newest, and page three is not where it lands.
+    expect(searchString()).toBe("");
+    expect(await screen.findByRole("status")).toHaveTextContent(/queued/i);
+    expect(screen.getByRole("status")).toHaveTextContent("58");
+  });
+
   it("surfaces a failed page", async () => {
     server.use(
       http.get("*/reviews", () =>

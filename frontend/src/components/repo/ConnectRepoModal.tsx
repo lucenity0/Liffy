@@ -98,7 +98,16 @@ export function ConnectRepoModal({
       {/* The submit button lives in the modal footer, outside this form —
           `form="connect-repo"` is what still makes it submit, and keeps Enter
           in the text field working. */}
-      <form id="connect-repo" onSubmit={onSubmit} className="flex flex-col gap-3">
+      <form
+        id="connect-repo"
+        onSubmit={onSubmit}
+        // noValidate, but the fields keep `required`: without this the
+        // browser's own bubble fires first on an empty field and our message
+        // never renders — and that bubble is the one thing on the page that
+        // cannot be made to look like paper.
+        noValidate
+        className="flex flex-col gap-3"
+      >
         <Field label="Repository" hint={FULL_NAME_HINT} error={fieldError} required>
           {(props) => (
             <Input

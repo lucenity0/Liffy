@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isValidFullName, normalizeFullName } from "./validators";
+import {
+  isValidFullName,
+  isValidPrNumber,
+  normalizeFullName,
+  splitFullName,
+} from "./validators";
 
 describe("isValidFullName", () => {
   const cases: [input: string, valid: boolean, why: string][] = [
@@ -28,5 +33,38 @@ describe("normalizeFullName", () => {
 
   it("leaves an already-clean name alone", () => {
     expect(normalizeFullName("lucenity0/Liffy")).toBe("lucenity0/Liffy");
+  });
+});
+
+describe("isValidPrNumber", () => {
+  it.each([
+    ["1", true],
+    ["58", true],
+    ["0", false],
+    ["-1", false],
+    ["1.5", false],
+    ["abc", false],
+    ["", false],
+    ["  ", false],
+    // Number() would happily take these; a PR number is not in that language.
+    ["1e3", false],
+    ["0x10", false],
+  ])("%j → %s", (input, valid) => {
+    expect(isValidPrNumber(input)).toBe(valid);
+  });
+
+  it("accepts a number as readily as its string", () => {
+    expect(isValidPrNumber(58)).toBe(true);
+    expect(isValidPrNumber(0)).toBe(false);
+    expect(isValidPrNumber(Number.NaN)).toBe(false);
+  });
+});
+
+describe("splitFullName", () => {
+  it("splits what the API wants out of what the user typed", () => {
+    expect(splitFullName("  lucenity0/Liffy  ")).toEqual({
+      owner: "lucenity0",
+      repo: "Liffy",
+    });
   });
 });

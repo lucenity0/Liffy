@@ -269,6 +269,57 @@
   color: var(--ink-dim);
 }
 
+/* ==================================================================== *
+ * 6. MONACO DECORATIONS
+ *
+ * Monaco applies decoration classes to line elements it owns, so these
+ * have to be real global classes rather than Tailwind utilities on a
+ * React element. The palette is the same one everything else uses — the
+ * diff is not a second colour scheme.
+ * ==================================================================== */
+.diff-line-added {
+  background: var(--diff-add);
+}
+
+.diff-line-removed {
+  background: var(--diff-del);
+}
+
+.diff-line-hunk {
+  background: var(--recessed);
+  color: var(--ink-sub);
+  font-style: italic;
+}
+
+/* Sits under the add/remove wash, so a commented added line still reads as
+   added. inset box-shadow rather than a background, for exactly that. */
+.diff-line-commented {
+  box-shadow: inset 2px 0 0 0 var(--rule-strong);
+}
+
+.diff-glyph {
+  cursor: pointer;
+}
+
+.diff-glyph::after {
+  content: "";
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin: 6px auto;
+  border-radius: 9999px;
+}
+
+.diff-glyph-critical::after {
+  background: var(--oxide);
+}
+.diff-glyph-warning::after {
+  background: var(--ochre);
+}
+.diff-glyph-info::after {
+  background: var(--payne);
+}
+
 @media (prefers-contrast: more) {
   .paper-grain,
   .paper-ruled {

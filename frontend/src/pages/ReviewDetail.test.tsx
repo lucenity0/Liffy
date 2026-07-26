@@ -52,7 +52,10 @@ describe("ReviewDetail — completed", () => {
     renderDetail(fixtureReviewCompleted.id);
 
     await screen.findByText(fixtureReviewCompleted.summary!);
-    const groups = screen.getAllByRole("group");
+    // Scoped: the diff viewer renders <details> per file too, and both stacks
+    // expose the group role.
+    const comments = screen.getByRole("region", { name: "Comments" });
+    const groups = within(comments).getAllByRole("group");
 
     expect(groups).toHaveLength(2);
     expect(within(groups[0]).getByText("setup-mac.sh")).toBeInTheDocument();
@@ -84,7 +87,9 @@ describe("ReviewDetail — completed", () => {
     renderDetail(fixtureReviewApproved.id);
 
     expect(await screen.findByText(/nothing to flag/i)).toBeInTheDocument();
-    expect(screen.queryByRole("group")).toBeNull();
+    expect(
+      within(screen.getByRole("region", { name: "Comments" })).queryByRole("group"),
+    ).toBeNull();
   });
 });
 

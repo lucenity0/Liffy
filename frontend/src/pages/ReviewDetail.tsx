@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -5,13 +6,15 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Sheet } from "@/components/ui/Sheet";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { CommentGroup } from "@/components/review/CommentGroup";
+import { DiffViewer } from "@/components/review/diff/DiffViewer";
 import { ReviewHeader } from "@/components/review/ReviewHeader";
 import { ReviewFailed, ReviewInFlight } from "@/components/review/ReviewStates";
 import { ReviewSummary } from "@/components/review/ReviewSummary";
 import { useReview } from "@/hooks/useReview";
 import { useRereview } from "@/hooks/useReviewMutations";
+import type { ReviewCommentOut } from "@/types/api";
 import { normalizeApiError } from "@/lib/errors";
-import { groupCommentsByFile } from "@/lib/reviewUtils";
+import { commentAnchorId, groupCommentsByFile } from "@/lib/reviewUtils";
 
 /**
  * One review, in whichever of its four states it happens to be in.
@@ -24,6 +27,26 @@ export function ReviewDetail() {
   const { reviewId } = useParams();
   const review = useReview(reviewId);
   const rereview = useRereview();
+
+  /**
+   * Half of the two-way navigation. A fresh object per click is the signal
+   * the diff viewer watches, so clicking the same comment twice reveals
+   * twice while an unrelated re-render leaves the viewport alone.
+   */
+  const [focus, setFocus] = useState<{
+    filePath: string;
+    line: number;
+  } | null>(null);
+
+  /** The other half: a glyph in the gutter scrolls back to its card. */
+  function revealComment(comment: ReviewCommentOut) {
+    document.getElementById(commentAnchorId(comment.id))?.scrollIntoView({
+      block: "center",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
+  }
 
   if (review.isPending) return <DetailSkeleton />;
 
@@ -66,10 +89,16 @@ export function ReviewDetail() {
         <>
           <ReviewSummary review={data} />
 
-          {/* The diff viewer lands here in #137, between Liffy's verdict and
-              the line-anchored comments it hangs off. */}
+          {data.raw_diff && (
+            <DiffViewer
+              rawDiff={data.raw_diff}
+              comments={data.comments}
+              focus={focus}
+              onGlyphClick={revealComment}
+            />
+          )}
 
-          <Sheet>
+          <Sheet aria-label="Comments">
             <Sheet.Header title="Comments" count={data.comments.length} />
             {groups.length === 0 ? (
               <EmptyState
@@ -78,7 +107,19 @@ export function ReviewDetail() {
               />
             ) : (
               groups.map((group) => (
-                <CommentGroup key={group.filePath} group={group} />
+                <CommentGroup
+                  key={group.filePath}
+                  group={group}
+                  onReveal={
+                    data.raw_diff
+                      ? (comment) =>
+                          setFocus({
+                            filePath: comment.file_path,
+                            line: comment.line_start,
+                          })
+                      : undefined
+                  }
+                />
               ))
             )}
           </Sheet>

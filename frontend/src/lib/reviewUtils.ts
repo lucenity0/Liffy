@@ -63,3 +63,12 @@ export function groupCommentsByFile(
       };
     });
 }
+
+/**
+ * DOM id for a comment card. The diff's gutter glyphs scroll to these, and a
+ * plain id is what makes that work without threading refs through three
+ * components that otherwise have no reason to know about each other.
+ */
+export function commentAnchorId(commentId: string): string {
+  return `comment-${commentId}`;
+}

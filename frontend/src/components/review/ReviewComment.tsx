@@ -1,4 +1,6 @@
+import { Button } from "@/components/ui/Button";
 import { CategoryBadge, SeverityBadge } from "@/components/ui/badgeMaps";
+import { commentAnchorId } from "@/lib/reviewUtils";
 import { cn } from "@/lib/utils";
 import type { ReviewCommentOut } from "@/types/api";
 
@@ -14,7 +16,14 @@ const EDGE: Record<string, string> = {
   info: "border-l-payne",
 };
 
-export function ReviewComment({ comment }: { comment: ReviewCommentOut }) {
+export function ReviewComment({
+  comment,
+  onReveal,
+}: {
+  comment: ReviewCommentOut;
+  /** Present only when there is a diff to reveal it in. */
+  onReveal?: (comment: ReviewCommentOut) => void;
+}) {
   const lines =
     comment.line_start === comment.line_end
       ? `${comment.line_start}`
@@ -22,6 +31,7 @@ export function ReviewComment({ comment }: { comment: ReviewCommentOut }) {
 
   return (
     <article
+      id={commentAnchorId(comment.id)}
       className={cn(
         "flex flex-col gap-2 border-l-2 px-4 py-3",
         EDGE[comment.severity] ?? "border-l-rule-strong",
@@ -38,6 +48,14 @@ export function ReviewComment({ comment }: { comment: ReviewCommentOut }) {
       </div>
 
       <p className="prose-hand">{comment.comment_text}</p>
+
+      {onReveal && (
+        <div>
+          <Button variant="ghost" onClick={() => onReveal(comment)}>
+            Show in diff
+          </Button>
+        </div>
+      )}
 
       {comment.suggestion && (
         <div className="flex flex-col gap-1">

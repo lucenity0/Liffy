@@ -320,6 +320,20 @@
   background: var(--payne);
 }
 
+/* The motion-safe: variants cover the spinner and the badge pulse, but not
+   Tailwind's transition utilities or a smooth scrollIntoView. This is the
+   backstop for everything the variants do not reach. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media (prefers-contrast: more) {
   .paper-grain,
   .paper-ruled {

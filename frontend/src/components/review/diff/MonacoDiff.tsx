@@ -169,6 +169,8 @@ export default function MonacoDiff({
       options={{
         readOnly: true,
         domReadOnly: true,
+        // Read-only, so Tab moves on rather than being swallowed as input.
+        ariaLabel: `Diff for ${file.path}`,
         // The gutter shows *new-file* line numbers, blank on removed lines
         // and hunk headers, because that is the numbering review comments
         // are anchored to. A row's number and a comment's line agree.

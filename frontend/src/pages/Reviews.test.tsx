@@ -254,8 +254,10 @@ describe("Reviews", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // The 202 has no review id, so there is nothing to deep-link to — the new
-    // row is the newest, and page three is not where it lands.
-    expect(searchString()).toBe("");
+    // row is the newest, and page three is not where it lands. Waited for
+    // rather than asserted outright: the router commits the navigation on its
+    // own schedule, not necessarily in the same paint as the modal closing.
+    await waitFor(() => expect(searchString()).toBe(""));
     expect(await screen.findByRole("status")).toHaveTextContent(/queued/i);
     expect(screen.getByRole("status")).toHaveTextContent("58");
   });

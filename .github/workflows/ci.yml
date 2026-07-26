@@ -18,3 +18,26 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
       - run: PYTHONPATH=. pytest
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # `tsc -b` runs again inside `build`, but running it on its own first
+      # means a type error reports as a type error rather than as a build
+      # failure several steps later.
+      - run: npm run typecheck
+      - run: npm run test
+      # Not redundant with the rest: this is what catches Monaco failing to
+      # split into its own chunk, which no test or type can see.
+      - run: npm run build

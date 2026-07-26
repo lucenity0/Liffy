@@ -27,9 +27,23 @@ export function AppShell() {
       <ScrollRestoration />
 
       <div className="relative z-1 flex min-h-screen flex-col">
+        {/* First thing in the tab order, invisible until it has focus. The
+            tab strip is short, but the reviews table is not — and neither is
+            a diff. */}
+        <a
+          href="#main"
+          className="rounded-chip sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-30 focus:border focus:border-rule-strong focus:bg-card focus:px-3 focus:py-1.5 focus:text-ink"
+        >
+          Skip to content
+        </a>
+
         <TopBar crumbs={crumbs} />
 
-        <main className="mx-auto w-full max-w-app flex-1 px-4 py-8 sm:px-6">
+        <main
+          id="main"
+          tabIndex={-1}
+          className="mx-auto w-full max-w-app flex-1 px-4 py-8 sm:px-6"
+        >
           <Outlet />
         </main>
 

@@ -1,0 +1,122 @@
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { Route, Routes, useLocation } from "react-router-dom";
+import { describe, expect, it } from "vitest";
+import { server } from "@/mocks/server";
+import {
+  fixtureRepoIndexed,
+  fixtureRepoStatusIndexed,
+  fixtureReviewListItems,
+} from "@/mocks/fixtures";
+import { renderWithProviders } from "@/test/renderWithProviders";
+import { RepoDetail } from "./RepoDetail";
+
+function PathProbe() {
+  return <span data-testid="path">{useLocation().pathname}</span>;
+}
+
+function renderDetail(repoId: string) {
+  return renderWithProviders(
+    <>
+      <Routes>
+        <Route path="/repos/:repoId" element={<RepoDetail />} />
+      </Routes>
+      <PathProbe />
+    </>,
+    { route: `/repos/${repoId}` },
+  );
+}
+
+describe("RepoDetail", () => {
+  it("names the repo and shows its index status with the chunk count", async () => {
+    renderDetail(fixtureRepoIndexed.id);
+
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
+      fixtureRepoIndexed.full_name,
+    );
+    expect(await screen.findByText("Indexed")).toBeInTheDocument();
+    expect(
+      screen.getByText(String(fixtureRepoStatusIndexed.chunk_count)),
+    ).toBeInTheDocument();
+  });
+
+  it("lists only this repo's reviews", async () => {
+    renderDetail(fixtureRepoIndexed.id);
+
+    const list = await screen.findByRole("list", {
+      name: `Reviews for ${fixtureRepoIndexed.full_name}`,
+    });
+    const expected = fixtureReviewListItems.filter(
+      (review) => review.repo_full_name === fixtureRepoIndexed.full_name,
+    );
+
+    expect(within(list).getAllByRole("listitem")).toHaveLength(expected.length);
+    // The portfolio review is in the same fixture page and must not appear.
+    expect(within(list).queryByText(/portfolio/)).toBeNull();
+  });
+
+  it("says the repo is not there rather than rendering an empty shell", async () => {
+    renderDetail("00000000-0000-0000-0000-000000000000");
+
+    expect(
+      await screen.findByText(/no repository filed under that id/i),
+    ).toBeInTheDocument();
+  });
+
+  it("queues a re-index and confirms it", async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    server.use(
+      http.post("*/repos/:repoId/index", ({ params }) => {
+        calls += 1;
+        return HttpResponse.json(
+          { repo_id: params.repoId, status: "queued" },
+          { status: 202 },
+        );
+      }),
+    );
+
+    renderDetail(fixtureRepoIndexed.id);
+    await screen.findByRole("heading", { level: 1 });
+
+    await user.click(screen.getByRole("button", { name: "Re-index" }));
+
+    expect(await screen.findByText(/re-index queued/i)).toBeInTheDocument();
+    expect(calls).toBe(1);
+  });
+
+  it("leaves for the dashboard after disconnecting, since this page is about to be about nothing", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.delete("*/repos/:repoId", () => new HttpResponse(null, { status: 204 })),
+    );
+
+    renderDetail(fixtureRepoIndexed.id);
+    await screen.findByRole("heading", { level: 1 });
+
+    await user.click(screen.getByRole("button", { name: "Disconnect" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("path")).toHaveTextContent("/"),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps the repo readable when the reviews query fails", async () => {
+    server.use(
+      http.get("*/reviews", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+
+    renderDetail(fixtureRepoIndexed.id);
+
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
+      fixtureRepoIndexed.full_name,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+  });
+});

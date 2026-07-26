@@ -19,6 +19,7 @@ build/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+node_modules/
 
 # ChromaDB
 chroma/
@@ -32,6 +33,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+.claude/
 
 # Logs
 *.log
@@ -40,3 +42,5 @@ celerybeat-schedule
 create_liffy_issues.sh
 front_end_issues.sh
 create_issues.sh
+
+#local cache

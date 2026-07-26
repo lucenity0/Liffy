@@ -1,0 +1,73 @@
+/* ------------------------------------------------------------------ *
+ * Monaspace — GitHub's monospace superfamily, self-hosted.
+ *
+ * Three variable faces, one role each. They share identical metrics
+ * (2000 upm, 1240 advance = 0.62em), so mixing them never reflows.
+ *
+ *   Radon  handwriting  → wordmark, headings, Liffy's review prose
+ *   Neon   neo-grotesque → all UI chrome, tables, badges
+ *   Argon  humanist      → code, diffs, file paths
+ *
+ * v1.400, subsetted to Latin-1 + punctuation + arrows (1.8MB → 448KB)
+ * with `--layout-features='*'` so `calt` texture healing survives.
+ * SIL OFL 1.1 — see public/fonts/OFL.txt.
+ * ------------------------------------------------------------------ */
+
+@font-face {
+  font-family: "Monaspace Neon";
+  src: url("/fonts/MonaspaceNeonVar.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Monaspace Neon";
+  src: url("/fonts/MonaspaceNeonVar.woff2") format("woff2");
+  font-weight: 200 800;
+  /* The slnt axis runs 0 → -11, which CSS spells as oblique 0deg → 11deg.
+     Declaring it stops the browser synthesising a sheared fake italic. */
+  font-style: oblique 0deg 11deg;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Monaspace Argon";
+  src: url("/fonts/MonaspaceArgonVar.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Monaspace Radon";
+  src: url("/fonts/MonaspaceRadonVar.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Monaspace Radon";
+  src: url("/fonts/MonaspaceRadonVar.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: oblique 0deg 11deg;
+  font-display: swap;
+}
+
+/* ------------------------------------------------------------------ *
+ * Metric-matched fallback.
+ *
+ * Monaspace advances 0.62em; the system mono stack advances 0.60em, so
+ * unadjusted fallback text is ~3% narrow and the page jumps on swap.
+ * Overrides are computed from the real font: ascender 1890/2000,
+ * descender 400/2000, lineGap 200/2000, size 0.62/0.60.
+ * ------------------------------------------------------------------ */
+@font-face {
+  font-family: "Monaspace Fallback";
+  src:
+    local("SF Mono"), local("SFMono-Regular"), local("Menlo"),
+    local("Consolas"), local("DejaVu Sans Mono");
+  size-adjust: 103.3%;
+  ascent-override: 94.5%;
+  descent-override: 20%;
+  line-gap-override: 10%;
+}

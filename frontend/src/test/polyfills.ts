@@ -41,3 +41,51 @@ for (const [name, value] of Object.entries(globals)) {
     configurable: true,
   });
 }
+
+/**
+ * jsdom parses <dialog> but implements none of its methods, so Modal (which
+ * uses the native element for its focus trap and top-layer stacking) cannot
+ * be tested without this. Models the three behaviours the component relies
+ * on: `open` reflects state, Esc dispatches `cancel`, and close() fires
+ * `close`.
+ */
+if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.showModal) {
+  const escHandlers = new WeakMap<HTMLDialogElement, (e: KeyboardEvent) => void>();
+
+  const open = function (this: HTMLDialogElement, modal: boolean) {
+    if (this.open) return;
+    this.setAttribute("open", "");
+
+    if (!modal) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      // Real dialogs fire `cancel` first; only an unprevented one closes.
+      const cancel = new Event("cancel", { cancelable: true });
+      if (this.dispatchEvent(cancel)) this.close();
+    };
+    escHandlers.set(this, onKeyDown);
+    document.addEventListener("keydown", onKeyDown);
+  };
+
+  HTMLDialogElement.prototype.show = function () {
+    open.call(this, false);
+  };
+
+  HTMLDialogElement.prototype.showModal = function () {
+    open.call(this, true);
+  };
+
+  HTMLDialogElement.prototype.close = function (returnValue?: string) {
+    if (!this.open) return;
+    this.removeAttribute("open");
+    if (returnValue !== undefined) this.returnValue = returnValue;
+
+    const onKeyDown = escHandlers.get(this);
+    if (onKeyDown) {
+      document.removeEventListener("keydown", onKeyDown);
+      escHandlers.delete(this);
+    }
+    this.dispatchEvent(new Event("close"));
+  };
+}

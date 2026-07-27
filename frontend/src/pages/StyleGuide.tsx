@@ -178,23 +178,8 @@ export function StyleGuide() {
         </Sheet>
       </Section>
 
-      <Section
-        title="Type"
-        note="Monaspace — Radon / Neon / Argon, identical metrics"
-      >
-        <div className="grid gap-3 lg:grid-cols-3">
-          <Sheet>
-            <Sheet.Header title="Radon · hand" />
-            <Sheet.Body className="flex flex-col gap-2 font-hand">
-              <p className="text-2xl leading-tight">Liffy</p>
-              <p className="text-lg leading-tight">Recent reviews</p>
-              <p className="prose-hand">
-                This changes the retry loop to back off exponentially, which is
-                right — but the jitter is applied after the cap, so the ceiling
-                can be exceeded.
-              </p>
-            </Sheet.Body>
-          </Sheet>
+      <Section title="Type" note="Monaspace — Neon / Argon, identical metrics">
+        <div className="grid gap-3 lg:grid-cols-2">
           <Sheet>
             <Sheet.Header title="Neon · UI" />
             <Sheet.Body className="flex flex-col gap-2 font-ui">
@@ -206,12 +191,17 @@ export function StyleGuide() {
             </Sheet.Body>
           </Sheet>
           <Sheet>
-            <Sheet.Header title="Argon · code" />
+            <Sheet.Header title="Argon · code / hand" />
             <Sheet.Body className="flex flex-col gap-2 font-code">
               <p className="text-sm">setup-mac.sh:1-5</p>
               <p className="text-sm">if (x !== null) {"{"} return -&gt; 0 {"}"}</p>
               <p className="text-sm text-ink-dim">
                 {"const n = a >= b ? a : b;"}
+              </p>
+              <p className="prose-hand pt-1">
+                This changes the retry loop to back off exponentially, which is
+                right — but the jitter is applied after the cap, so the ceiling
+                can be exceeded.
               </p>
             </Sheet.Body>
           </Sheet>

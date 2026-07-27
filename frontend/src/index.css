@@ -68,7 +68,7 @@
   --color-current: currentColor;
 
   --font-*: initial;
-  --font-hand: "Monaspace Radon", "Monaspace Fallback", ui-monospace, monospace;
+  --font-hand: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
   --font-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
   --font-code: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
   --default-font-family: var(--font-ui);

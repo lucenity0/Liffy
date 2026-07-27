@@ -57,8 +57,8 @@ export function ReviewRow({
 
         {detailed && (review.summary || review.model_used) && (
           <div className="flex flex-wrap items-baseline gap-x-3">
-            {/* Radon here and nowhere else in the row: the summary is the one
-                part a model wrote, and the handwriting is what says so. */}
+            {/* font-hand here and nowhere else in the row: the summary is
+                the one part a model wrote. */}
             {review.summary && (
               <p className="min-w-0 flex-1 truncate font-hand text-base text-ink-dim">
                 {review.summary}

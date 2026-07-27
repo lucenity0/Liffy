@@ -27,7 +27,6 @@ export function TopBar({
           <Link
             to="/"
             className="font-hand text-xl leading-none text-ink shrink-0"
-            // The wordmark is the only place Radon carries no other meaning.
             aria-label="Liffy — home"
           >
             Liffy

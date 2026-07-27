@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * The zero state. The heading is in Radon because an empty page is where
- * Liffy is most obviously speaking to you rather than reporting data.
+ * The zero state. The heading is set in font-hand because an empty page is
+ * where Liffy is most obviously speaking to you rather than reporting data.
  */
 export function EmptyState({
   icon,

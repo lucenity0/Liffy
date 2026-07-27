@@ -1,12 +1,13 @@
 /* ------------------------------------------------------------------ *
  * Monaspace — GitHub's monospace superfamily, self-hosted.
  *
- * Three variable faces, one role each. They share identical metrics
+ * Two variable faces, one role each. They share identical metrics
  * (2000 upm, 1240 advance = 0.62em), so mixing them never reflows.
  *
- *   Radon  handwriting  → wordmark, headings, Liffy's review prose
  *   Neon   neo-grotesque → all UI chrome, tables, badges
- *   Argon  humanist      → code, diffs, file paths
+ *   Argon  humanist      → code, diffs, file paths, wordmark, headings,
+ *                          Liffy's review prose — the one face everywhere
+ *                          else, so nothing reads as a handwriting flourish.
  *
  * v1.400, subsetted to Latin-1 + punctuation + arrows (1.8MB → 448KB)
  * with `--layout-features='*'` so `calt` texture healing survives.
@@ -35,21 +36,6 @@
   src: url("/fonts/MonaspaceArgonVar.woff2") format("woff2");
   font-weight: 200 800;
   font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Monaspace Radon";
-  src: url("/fonts/MonaspaceRadonVar.woff2") format("woff2");
-  font-weight: 200 800;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Monaspace Radon";
-  src: url("/fonts/MonaspaceRadonVar.woff2") format("woff2");
-  font-weight: 200 800;
-  font-style: oblique 0deg 11deg;
   font-display: swap;
 }
 

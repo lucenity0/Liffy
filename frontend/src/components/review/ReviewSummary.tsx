@@ -3,8 +3,8 @@ import { formatCount, formatDuration } from "@/lib/utils";
 import type { ReviewDetailOut } from "@/types/api";
 
 /**
- * Liffy's verdict in prose — the one block on the page set in Radon at the
- * ruled line-height, in a 68ch column. Everything else on this screen is
+ * Liffy's verdict in prose — the one block on the page set in font-hand at
+ * the ruled line-height, in a 68ch column. Everything else on this screen is
  * data; this is the part a model wrote, and it reads as marginalia.
  */
 export function ReviewSummary({ review }: { review: ReviewDetailOut }) {

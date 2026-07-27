@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDiff } from "@/lib/diff";
 import type { ReviewCommentOut } from "@/types/api";
 
@@ -27,6 +27,7 @@ const captured = {
   lineNumbers: undefined as ((row: number) => string) | undefined,
   value: "",
   language: "",
+  theme: "",
   mouseDown: undefined as ((event: unknown) => void) | undefined,
 };
 
@@ -63,6 +64,7 @@ const monacoStub = {
 
 vi.mock("./monacoSetup", () => ({
   PAPER_THEME: "liffy-paper",
+  GRAPHITE_THEME: "liffy-graphite",
   setupMonaco: vi.fn(),
 }));
 
@@ -73,15 +75,18 @@ vi.mock("@monaco-editor/react", () => ({
     options,
     value,
     language,
+    theme,
   }: {
     onMount: (editor: unknown, monaco: unknown) => void;
     options: { lineNumbers?: (row: number) => string };
     value: string;
     language: string;
+    theme: string;
   }) {
     captured.lineNumbers = options.lineNumbers;
     captured.value = value;
     captured.language = language;
+    captured.theme = theme;
 
     useEffect(() => {
       // Asynchronously, once — which is what the real editor does, and what
@@ -240,5 +245,29 @@ describe("MonacoDiff", () => {
     onGlyphClick.mockClear();
     captured.mouseDown!({ target: { position: { lineNumber: 2 } } });
     expect(onGlyphClick).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Monaco is the one surface the CSS cascade cannot reach — it does not read
+ * custom properties, so the theme has to be handed to it by name. That makes
+ * this the only part of graphite mode that can be wrong while every other
+ * pixel on the page is right, which is why it gets its own test.
+ */
+describe("theme", () => {
+  afterEach(() => {
+    document.documentElement.classList.remove("dark");
+  });
+
+  it("asks for the paper theme on a light page", () => {
+    render(<MonacoDiff file={file} comments={[]} />);
+    expect(captured.theme).toBe("liffy-paper");
+  });
+
+  it("asks for the graphite theme when <html> carries the dark class", () => {
+    document.documentElement.classList.add("dark");
+
+    render(<MonacoDiff file={file} comments={[]} />);
+    expect(captured.theme).toBe("liffy-graphite");
   });
 });

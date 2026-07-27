@@ -8,8 +8,9 @@ import {
   type FileDiff,
 } from "@/lib/diff";
 import { Spinner } from "@/components/ui/Spinner";
+import { useTheme } from "@/hooks/useTheme";
 import type { ReviewCommentOut } from "@/types/api";
-import { PAPER_THEME, setupMonaco } from "./monacoSetup";
+import { GRAPHITE_THEME, PAPER_THEME, setupMonaco } from "./monacoSetup";
 
 const LINE_HEIGHT = 20;
 const MAX_HEIGHT = 560;
@@ -50,6 +51,11 @@ export default function MonacoDiff({
    * run again. This is the re-render that makes it run after onMount.
    */
   const [mounted, setMounted] = useState(false);
+
+  // Monaco does not read CSS variables, so the theme cannot ride the cascade
+  // like everything else — it is a named theme the editor has to be told to
+  // switch to. @monaco-editor/react calls setTheme itself when this changes.
+  const { theme } = useTheme();
 
   const rendered = useMemo(() => renderFileDiff(file), [file]);
 
@@ -162,7 +168,7 @@ export default function MonacoDiff({
       height={height}
       language={languageForPath(file.path)}
       value={rendered.text}
-      theme={PAPER_THEME}
+      theme={theme === "graphite" ? GRAPHITE_THEME : PAPER_THEME}
       beforeMount={setupMonaco}
       onMount={onMount}
       loading={<Spinner size="md" label="Loading the diff" />}

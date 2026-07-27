@@ -9,8 +9,10 @@ import { loader } from "@monaco-editor/react";
 // ?worker is Vite's own worker import — Monaco's default loader would fetch
 // this from jsDelivr, which is not an option for a self-hosted tool.
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
+import { resolveColor } from "@/lib/colors";
 
 export const PAPER_THEME = "liffy-paper";
+export const GRAPHITE_THEME = "liffy-graphite";
 
 declare global {
   interface Window {
@@ -19,73 +21,66 @@ declare global {
 }
 
 /**
- * Reads a CSS custom property as a hex colour.
+ * Module scope, not inside setupMonaco — this has to happen before
+ * @monaco-editor/react resolves an instance, and `beforeMount` is already
+ * too late: the wrapper loads Monaco *first*, then calls the hook. Configured
+ * from there, the CDN copy had already won, so the editor on screen was a
+ * second Monaco that had never heard of the themes defined below — which is
+ * why it rendered in the stock `vs` white, and why the local-package wiring
+ * this comment block promises was not actually happening.
  *
- * Monaco's theme API only takes hex strings, and half the palette is defined
- * with `color-mix()`, so the declared value is unusable as-is. Painting it on
- * a throwaway element and reading it back lets the browser resolve it, which
- * keeps index.css the single source of truth instead of duplicating the
- * palette here where it would quietly drift.
+ * Safe at import time: the only route to this module is the React.lazy chunk
+ * behind MonacoDiff, which is fetched long after the stylesheet is applied.
  */
-function resolveColor(variable: string, fallback: string): string {
-  try {
-    const probe = document.createElement("span");
-    probe.style.color = `var(${variable})`;
-    probe.style.display = "none";
-    document.body.appendChild(probe);
-    const computed = getComputedStyle(probe).color;
-    probe.remove();
+window.MonacoEnvironment = {
+  getWorker: () => new EditorWorker(),
+};
 
-    const rgb = computed.match(/\d+(\.\d+)?/g);
-    if (!rgb || rgb.length < 3) return fallback;
-
-    return `#${rgb
-      .slice(0, 3)
-      .map((part) => Math.round(Number(part)).toString(16).padStart(2, "0"))
-      .join("")}`;
-  } catch {
-    return fallback;
-  }
-}
-
-let configured = false;
+loader.config({ monaco });
 
 /**
- * Idempotent: React 19 StrictMode mounts twice in development, and defining
- * the same theme or reassigning the loader on every mount is wasted work.
+ * Both themes, built from the same CSS variables.
+ *
+ * Monaco does not read custom properties — it wants literal hex — so the
+ * palette is resolved through the browser rather than restated here.
+ *
+ * `scope` is always passed explicitly, never left to the ambient page. Both
+ * themes are defined in one pass on whichever mode the app booted in, so
+ * reading ambient values would build the *other* theme out of the current
+ * palette — a graphite boot would give "paper" a graphite background.
  */
-export function setupMonaco(): typeof monaco {
-  if (configured) return monaco;
-  configured = true;
+function defineTheme(name: string, scope: "light" | "dark") {
+  const dark = scope === "dark";
+  const ink = resolveColor("--ink", dark ? "#e6e1d6" : "#2b2925", scope);
+  const inkDim = resolveColor("--ink-dim", dark ? "#9c9280" : "#6b6459", scope);
+  const inkSub = resolveColor("--ink-sub", dark ? "#786f60" : "#8e8678", scope);
+  const rule = resolveColor("--rule", dark ? "#423d36" : "#ded8cb", scope);
+  const surface = resolveColor("--card", dark ? "#28251f" : "#faf8f3", scope);
+  const sage = resolveColor("--sage", dark ? "#7ba171" : "#4a6b4a", scope);
+  const payne = resolveColor("--payne", dark ? "#84a5c2" : "#3f5a73", scope);
+  const oxide = resolveColor("--oxide", dark ? "#dd8462" : "#9a3f2b", scope);
 
-  window.MonacoEnvironment = {
-    getWorker: () => new EditorWorker(),
-  };
-
-  const paper = resolveColor("--card", "#faf8f3");
-  const ink = resolveColor("--ink", "#2b2925");
-  const inkDim = resolveColor("--ink-dim", "#6b6459");
-  const inkSub = resolveColor("--ink-sub", "#8e8678");
-  const rule = resolveColor("--rule", "#ded8cb");
-
-  monaco.editor.defineTheme(PAPER_THEME, {
-    base: "vs",
+  monaco.editor.defineTheme(name, {
+    // `vs-dark` matters beyond colour: it is what flips Monaco's own
+    // widgets — find box, hover, context menu — which the `colors` map below
+    // does not enumerate.
+    base: dark ? "vs-dark" : "vs",
     inherit: true,
     rules: [
       { token: "", foreground: ink.slice(1) },
       { token: "comment", foreground: inkSub.slice(1), fontStyle: "italic" },
-      { token: "string", foreground: resolveColor("--sage", "#4a6b4a").slice(1) },
-      { token: "keyword", foreground: resolveColor("--payne", "#3f5a73").slice(1) },
-      { token: "number", foreground: resolveColor("--oxide", "#9a3f2b").slice(1) },
-      { token: "type", foreground: resolveColor("--payne", "#3f5a73").slice(1) },
+      { token: "string", foreground: sage.slice(1) },
+      { token: "keyword", foreground: payne.slice(1) },
+      { token: "number", foreground: oxide.slice(1) },
+      { token: "type", foreground: payne.slice(1) },
       { token: "delimiter", foreground: inkDim.slice(1) },
     ],
     colors: {
-      "editor.background": paper,
+      "editor.background": surface,
       "editor.foreground": ink,
       "editorLineNumber.foreground": inkSub,
       "editorLineNumber.activeForeground": inkDim,
-      "editorGutter.background": paper,
+      "editorGutter.background": surface,
       "editor.lineHighlightBackground": "#00000000",
       "editor.lineHighlightBorder": "#00000000",
       "editorIndentGuide.background1": rule,
@@ -95,9 +90,28 @@ export function setupMonaco(): typeof monaco {
       "scrollbarSlider.activeBackground": rule,
     },
   });
+}
 
-  // Point @monaco-editor/react at the local package. Its default is a CDN.
-  loader.config({ monaco });
+let configured = false;
+
+/**
+ * Idempotent: React 19 StrictMode mounts twice in development, and redefining
+ * the same two themes on every mount is wasted work.
+ *
+ * Still a `beforeMount` hook rather than module scope, unlike the loader
+ * config above: themes only need to exist by the time the editor is created,
+ * and resolving the palette on first mount rather than on chunk load keeps it
+ * behind the same lazy boundary as everything else here.
+ */
+export function setupMonaco(): typeof monaco {
+  if (configured) return monaco;
+  configured = true;
+
+  // Both up front, in the one pass. Defining graphite lazily on first flip
+  // would mean resolving the palette while the editor is already mounted,
+  // for no saving worth the extra state.
+  defineTheme(PAPER_THEME, "light");
+  defineTheme(GRAPHITE_THEME, "dark");
 
   return monaco;
 }

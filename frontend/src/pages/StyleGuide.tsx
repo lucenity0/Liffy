@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { Badge, type BadgeTone, type BadgeVariant } from "@/components/ui/Badge";
 import {
@@ -15,6 +15,8 @@ import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { Modal } from "@/components/ui/Modal";
 import { Field, Input } from "@/components/ui/Field";
+import { contrastRatio, resolveColor } from "@/lib/colors";
+import { useTheme, type Theme } from "@/hooks/useTheme";
 import type {
   Category,
   IndexStatus,
@@ -28,26 +30,67 @@ import type {
  *
  * This is the review surface for the design system: it needs no data layer,
  * no backend and no fixtures, so the whole visual language can be checked in
- * one screenshot before any screen is built on top of it.
+ * one screenshot before any screen is built on top of it — and since the
+ * graphite palette landed, in one screenshot *per theme*, which is why the
+ * mode toggle sits on the page rather than only in the top bar.
  */
 
 const SURFACES = [
-  ["--paper", "#f4f1ea", "page"],
-  ["--card", "#faf8f3", "raised leaf"],
-  ["--recessed", "#efebe2", "headers, footers"],
-  ["--rule", "#ded8cb", "every hairline"],
-  ["--rule-strong", "#c9c1b0", "hover, hard shadow"],
+  ["--paper", "page"],
+  ["--card", "raised leaf"],
+  ["--recessed", "headers, footers"],
+  ["--rule", "every hairline"],
+  ["--rule-strong", "hover, hard shadow"],
 ] as const;
 
 const INKS = [
-  ["--ink", "#2b2925", "12.9:1", "primary text"],
-  ["--ink-dim", "#6b6459", "5.2:1", "secondary text"],
-  ["--ink-sub", "#8e8678", "3.2:1", "large / non-text only"],
-  ["--oxide", "#9a3f2b", "6.0:1", "critical · failed"],
-  ["--sage", "#4a6b4a", "5.3:1", "approve · completed"],
-  ["--ochre", "#7d6019", "5.2:1", "warning · processing"],
-  ["--payne", "#3f5a73", "6.4:1", "info · comment"],
+  ["--ink", "primary text"],
+  ["--ink-dim", "secondary text"],
+  ["--ink-sub", "large / non-text only"],
+  ["--oxide", "critical · failed"],
+  ["--sage", "approve · completed"],
+  ["--ochre", "warning · processing"],
+  ["--payne", "info · comment"],
 ] as const;
+
+const TOKENS = [...SURFACES, ...INKS].map(([token]) => token);
+
+/**
+ * Hex values and contrast ratios, read back out of the browser on every
+ * theme flip rather than written down here.
+ *
+ * The previous version hardcoded the light-mode hexes and ratios as labels,
+ * which was fine while there was one palette and a lie the moment there were
+ * two. Resolving them live also means the contrast audit is a standing
+ * readout — a value edited in index.css shows its real ratio here
+ * immediately, instead of drifting from a comment nobody re-measures.
+ */
+function usePalette(theme: Theme) {
+  // Scoped rather than ambient: asking for the palette *of a theme* makes the
+  // memo key a real input instead of a stand-in for "the document changed",
+  // and it is the same mechanism the Monaco setup uses to build both themes.
+  //
+  // Read during render rather than in an effect — by the time `theme` has
+  // changed, useTheme has already flipped the class, so an effect would only
+  // paint the previous palette's numbers for a frame.
+  const scope = theme === "graphite" ? "dark" : "light";
+  const hexes = useMemo(
+    () =>
+      Object.fromEntries(
+        TOKENS.map((token) => [token, resolveColor(token, "—", scope)]),
+      ),
+    [scope],
+  );
+
+  const against = (token: string, surface: "--paper" | "--card") => {
+    const ink = hexes[token];
+    const bg = hexes[surface];
+    if (!ink || !bg || ink === "—" || bg === "—") return "—";
+    return contrastRatio(ink, bg).toFixed(2);
+  };
+
+  return { hex: (token: string) => hexes[token] ?? "—", against };
+}
 
 const TYPE_RAMP = [
   ["text-2xs", "10px", "counter chips"],
@@ -110,23 +153,32 @@ export function StyleGuide() {
   const [loading, setLoading] = useState(false);
   const [broken, setBroken] = useState(false);
   const [value, setValue] = useState("");
+  const { theme, toggle } = useTheme();
+  const palette = usePalette(theme);
 
   return (
     <div className="flex flex-col gap-10 pb-16">
       <header className="flex flex-col gap-2">
         <p className="label">Design system · dev only</p>
-        <h1 className="font-hand text-2xl leading-tight text-ink">
-          Liffy on paper
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="font-hand text-2xl leading-tight text-ink">
+            {theme === "graphite" ? "Liffy in graphite" : "Liffy on paper"}
+          </h1>
+          <Button className="ml-auto" onClick={toggle}>
+            {theme === "graphite" ? "Switch to paper" : "Switch to graphite"}
+          </Button>
+        </div>
         <p className="max-w-prose text-ink-dim">
           Notebook-style, matte, low-chrome. Monochrome paper carries the
-          structure; colour is reserved for things you triage by.
+          structure; colour is reserved for things you triage by. Both palettes
+          review here — every swatch, badge map and Sheet composition on one
+          page, in either mode.
         </p>
       </header>
 
       <Section title="Surfaces" note="warm paper, never #fff">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {SURFACES.map(([token, hex, role]) => (
+          {SURFACES.map(([token, role]) => (
             <Sheet key={token}>
               <Sheet.Body className="flex items-center gap-3">
                 <span
@@ -135,7 +187,9 @@ export function StyleGuide() {
                 />
                 <div className="min-w-0">
                   <p className="font-code text-sm text-ink">{token}</p>
-                  <p className="font-code text-2xs text-ink-sub">{hex}</p>
+                  <p className="font-code text-2xs text-ink-sub">
+                    {palette.hex(token)}
+                  </p>
                   <p className="text-2xs text-ink-dim">{role}</p>
                 </div>
               </Sheet.Body>
@@ -144,11 +198,32 @@ export function StyleGuide() {
         </div>
       </Section>
 
-      <Section title="Inks" note="contrast measured against --paper">
+      <Section
+        title="Inks"
+        note="hex and contrast read live — these are the real numbers for the palette on screen"
+      >
         <Sheet>
           <Sheet.Header title="Ink" count={INKS.length} />
           <Sheet.List>
-            {INKS.map(([token, hex, ratio, role]) => (
+            <Sheet.Row className="bg-recessed">
+              <span className="size-5 shrink-0" aria-hidden="true" />
+              <span className="text-2xs text-ink-sub">token</span>
+              <span className="ml-auto flex items-center gap-4">
+                <span className="w-16 text-right text-2xs text-ink-sub">
+                  hex
+                </span>
+                <span className="w-12 text-right text-2xs text-ink-sub">
+                  :paper
+                </span>
+                <span className="w-12 text-right text-2xs text-ink-sub">
+                  :card
+                </span>
+                <span className="hidden w-44 text-right text-2xs text-ink-sub sm:inline">
+                  role
+                </span>
+              </span>
+            </Sheet.Row>
+            {INKS.map(([token, role]) => (
               <Sheet.Row key={token}>
                 <span
                   className="size-5 shrink-0 rounded-chip border border-rule"
@@ -161,12 +236,20 @@ export function StyleGuide() {
                   The quick brown fox
                 </span>
                 <span className="ml-auto flex items-center gap-4">
-                  <span className="font-code text-2xs text-ink-sub">{hex}</span>
+                  <span className="w-16 text-right font-code text-2xs text-ink-sub">
+                    {palette.hex(token)}
+                  </span>
                   <span
                     data-numeric
-                    className="w-14 text-right font-code text-sm text-ink-dim"
+                    className="w-12 text-right font-code text-sm text-ink-dim"
                   >
-                    {ratio}
+                    {palette.against(token, "--paper")}
+                  </span>
+                  <span
+                    data-numeric
+                    className="w-12 text-right font-code text-sm text-ink-dim"
+                  >
+                    {palette.against(token, "--card")}
                   </span>
                   <span className="hidden w-44 text-right text-2xs text-ink-dim sm:inline">
                     {role}

@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
 import { Breadcrumb, type Crumb } from "./Breadcrumb";
 import { TabNav, type Tab } from "./TabNav";
+import { ThemeToggle } from "./ThemeToggle";
 
 const TABS: Tab[] = [
   { to: "/", label: "Dashboard", end: true },
@@ -41,9 +42,12 @@ export function TopBar({
             </>
           )}
 
-          {actions && (
-            <div className="ml-auto flex items-center gap-2">{actions}</div>
-          )}
+          {/* Always rendered, even with no page actions — the theme toggle
+              is chrome, not something a page opts into. */}
+          <div className="ml-auto flex items-center gap-2">
+            {actions}
+            <ThemeToggle />
+          </div>
         </div>
 
         <TabNav tabs={TABS} />

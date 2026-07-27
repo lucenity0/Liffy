@@ -4,12 +4,39 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f4f1ea" />
     <meta
       name="description"
       content="Liffy — a self-hosted AI code reviewer for your pull requests."
     />
+
+    <!-- Blocking on purpose. The theme has to be on <html> before the first
+         paint, or the page renders light and then snaps to graphite — so this
+         runs here rather than in the app, which mounts too late to help.
+         `liffy-theme` is also read by src/hooks/useTheme.ts; keep them
+         in step. Wrapped in try/catch because localStorage throws outright
+         when storage is partitioned or blocked, and a colour preference is
+         not worth a blank page. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("liffy-theme");
+          var graphite =
+            stored === "graphite" ||
+            (stored !== "paper" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+          if (graphite) {
+            document.documentElement.classList.add("dark");
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute("content", "#1d1b18");
+          }
+        } catch (e) {
+          /* Light it is. */
+        }
+      })();
+    </script>
 
     <!-- The two faces above the fold. `crossorigin` is required on font
          preloads even same-origin, or the browser fetches them twice. -->

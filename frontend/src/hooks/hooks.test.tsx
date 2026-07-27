@@ -16,6 +16,7 @@ import { useReview } from "./useReview";
 import { useReviews } from "./useReviews";
 import { useConnectRepo, useDisconnectRepo } from "./useRepoMutations";
 import { useTriggerReview } from "./useReviewMutations";
+import { THEME_KEY, useTheme } from "./useTheme";
 
 describe("useRepos", () => {
   it("returns the fixture repos", async () => {
@@ -236,5 +237,73 @@ describe("mutations", () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: keys.reviews.all });
+  });
+});
+
+describe("useTheme", () => {
+  beforeEach(() => {
+    document.documentElement.classList.remove("dark");
+    localStorage.clear();
+  });
+
+  it("reads the initial theme off <html>, where the boot script put it", () => {
+    document.documentElement.classList.add("dark");
+
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("graphite");
+  });
+
+  it("toggling flips the class, the meta colour and localStorage together", () => {
+    const meta = document.createElement("meta");
+    meta.setAttribute("name", "theme-color");
+    meta.setAttribute("content", "#f4f1ea");
+    document.head.appendChild(meta);
+
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("paper");
+
+    act(() => result.current.toggle());
+
+    expect(result.current.theme).toBe("graphite");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(meta.getAttribute("content")).toBe("#1d1b18");
+    // Persisted, so the boot script can apply it before the next first paint.
+    expect(localStorage.getItem(THEME_KEY)).toBe("graphite");
+
+    act(() => result.current.toggle());
+
+    expect(result.current.theme).toBe("paper");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(meta.getAttribute("content")).toBe("#f4f1ea");
+
+    meta.remove();
+  });
+
+  /**
+   * The reason this hook is an external store rather than component state:
+   * TopBar, the style guide and the Monaco diff each call it independently,
+   * and a flip in one has to reach the others.
+   */
+  it("notifies every subscriber, not just the one that flipped it", () => {
+    const first = renderHook(() => useTheme());
+    const second = renderHook(() => useTheme());
+
+    act(() => first.result.current.setTheme("graphite"));
+
+    expect(second.result.current.theme).toBe("graphite");
+  });
+
+  it("survives localStorage throwing, because a blocked store is not a blank page", () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("storage is blocked");
+      });
+
+    const { result } = renderHook(() => useTheme());
+    act(() => result.current.setTheme("graphite"));
+
+    expect(result.current.theme).toBe("graphite");
+    setItem.mockRestore();
   });
 });

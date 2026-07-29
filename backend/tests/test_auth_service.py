@@ -126,6 +126,15 @@ def test_default_secret_refused_outside_debug(user: User, monkeypatch: pytest.Mo
         auth_service.create_access_token(user)
 
 
+def test_blank_secret_env_falls_back_to_dev_default() -> None:
+    # docker-compose passes JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}, which sets the
+    # variable to "" when the host exports nothing. Without the fallback that
+    # empty value would override the field default and break every login.
+    from app.config import Settings
+
+    assert Settings(jwt_secret_key="").jwt_secret_key == DEV_JWT_SECRET
+
+
 def test_default_secret_allowed_in_debug(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
     # A fresh clone must still run without any setup.
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)

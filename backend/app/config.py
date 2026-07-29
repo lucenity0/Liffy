@@ -1,7 +1,7 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
-# Placeholder so a fresh clone runs without setup. It is a public constant in a
+# Development default so a fresh clone runs without setup. It is a constant in a
 # public repo, so anything signed with it is forgeable by anyone who can read
 # this file — auth_service refuses to mint tokens with it outside debug mode.
 # 48 bytes clears the 32-byte RFC 7518 minimum for HS256.
@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     github_client_id: str = Field(default="")
     github_client_secret: str = Field(default="")
     github_webhook_secret: str = Field(default="change-me")
+    # Must byte-match the callback URL registered on the GitHub OAuth App —
+    # scheme, host, port and path, with no trailing slash. A mismatch fails at
+    # GitHub's end with an unhelpful error rather than anywhere in this code.
+    github_redirect_uri: str = Field(default="http://localhost:8000/auth/github/callback")
     # Server-side PAT used until per-user OAuth lands (token seam in github_service).
     github_token: str = Field(default="")
     
@@ -26,6 +30,20 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256")
     access_token_expire_minutes: int = Field(default=15)
     refresh_token_expire_days: int = Field(default=30)
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def _blank_means_unset(cls, value: str) -> str:
+        """Treat an empty JWT_SECRET_KEY as absent.
+
+        ``docker-compose.yml`` passes ``JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}``,
+        which sets the variable to an empty string when the host has not
+        exported one. That would otherwise override this field's default and
+        break token minting with a confusing key-length error, so an empty
+        value falls back to the development default — which is still refused
+        outright when DEBUG=False.
+        """
+        return value or DEV_JWT_SECRET
     
     # LLM provider (OpenAI-compatible API; leave base_url empty for real OpenAI.
     # For Gemini: base_url=https://generativelanguage.googleapis.com/v1beta/openai/

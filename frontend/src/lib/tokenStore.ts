@@ -65,6 +65,14 @@ export function getRefreshToken(): string | null {
 export function setTokens(pair: Pick<TokenPair, "access_token" | "refresh_token">): void {
   writeKey(ACCESS_KEY, pair.access_token);
   writeKey(REFRESH_KEY, pair.refresh_token);
+  // A stored pair means a live session, so a later expiry has to broadcast
+  // again — without this, a second login in the same tab would never announce
+  // its own expiry and the UI would stay stuck looking logged in.
+  //
+  // Re-arming here rather than through a separate `beginSession()` keeps one
+  // way to write tokens. A second entry point would silently skip the reset
+  // whenever anyone reached for the older one.
+  sessionEnded = false;
 }
 
 export function clearTokens(): void {
@@ -91,6 +99,17 @@ type SessionEndedListener = () => void;
 
 const listeners = new Set<SessionEndedListener>();
 
+/**
+ * Whether the current session has already been announced as over.
+ *
+ * Guards the listener loop, which is *not* naturally idempotent even though
+ * clearing storage is. Three concurrent requests sharing one failed refresh
+ * all reach the give-up path, so without this every subscriber runs three
+ * times — harmless for a state setter, three redirects or three toasts for
+ * anything with a visible effect. Re-armed by `setTokens`.
+ */
+let sessionEnded = false;
+
 /** Returns an unsubscribe function, so a React effect can clean up after itself. */
 export function onSessionEnded(listener: SessionEndedListener): () => void {
   listeners.add(listener);
@@ -100,15 +119,22 @@ export function onSessionEnded(listener: SessionEndedListener): () => void {
 }
 
 /**
- * Clear the tokens and tell everyone who cares. Idempotent: calling it twice
- * (three concurrent requests all giving up at once) is harmless, and the
- * second call is a no-op as far as storage is concerned.
+ * Clear the tokens and tell everyone who cares.
+ *
+ * Genuinely idempotent, listeners included: call it three times for one
+ * expired session and subscribers hear about it once. Storage is cleared on
+ * every call regardless, since that costs nothing and keeps the "no tokens
+ * afterwards" guarantee unconditional.
  *
  * Iterates a copy so a listener that unsubscribes itself mid-notification
  * does not mutate the set being walked.
  */
 export function endSession(): void {
   clearTokens();
+
+  if (sessionEnded) return;
+  sessionEnded = true;
+
   for (const listener of [...listeners]) {
     listener();
   }

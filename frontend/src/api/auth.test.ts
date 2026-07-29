@@ -187,6 +187,62 @@ describe("refresh on 401", () => {
     expect(getRefreshToken()).toBeNull();
   });
 
+  it("notifies session-ended listeners once, not once per failed request", async () => {
+    setTokens(SEEDED);
+    const onEnd = trackSessionEnd();
+
+    server.use(
+      http.get("*/repos", () =>
+        HttpResponse.json({ detail: "Token expired" }, { status: 401 }),
+      ),
+      http.get("*/reviews", () =>
+        HttpResponse.json({ detail: "Token expired" }, { status: 401 }),
+      ),
+      http.get("*/repos/:repoId/status", () =>
+        HttpResponse.json({ detail: "Token expired" }, { status: 401 }),
+      ),
+      http.post("*/auth/refresh", async () => {
+        await delay(20);
+        return HttpResponse.json({ detail: "Refresh token revoked" }, { status: 401 });
+      }),
+    );
+
+    await Promise.allSettled([
+      listRepos(),
+      listReviews(),
+      getRepoStatus("11111111-1111-1111-1111-111111111111"),
+    ]);
+
+    // Three requests share one failing refresh, so all three reach the
+    // give-up path. Storage is idempotent, but a listener that redirects or
+    // raises a toast is not — three redirects on one expiry.
+    expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifies again after a new session is established", async () => {
+    setTokens(SEEDED);
+    const onEnd = trackSessionEnd();
+
+    server.use(
+      http.get("*/repos", () =>
+        HttpResponse.json({ detail: "Token expired" }, { status: 401 }),
+      ),
+      http.post("*/auth/refresh", () =>
+        HttpResponse.json({ detail: "Revoked" }, { status: 401 }),
+      ),
+    );
+
+    await expect(listRepos()).rejects.toThrow();
+    expect(onEnd).toHaveBeenCalledTimes(1);
+
+    // Logging in again must re-arm the notification, or a second expiry in
+    // the same tab would go unannounced and the UI would never log out.
+    setTokens({ access_token: "second-access", refresh_token: "second-refresh" });
+
+    await expect(listRepos()).rejects.toThrow();
+    expect(onEnd).toHaveBeenCalledTimes(2);
+  });
+
   it("does not retry a request that already retried", async () => {
     setTokens(SEEDED);
     const onEnd = trackSessionEnd();

@@ -44,6 +44,12 @@ export interface ReviewOut {
   verdict: Verdict | null;
   model_used: string | null;
   tokens_used: number | null;
+  /**
+   * Wall-clock milliseconds for the whole pipeline (report §8.1, target
+   * < 90s). Null on reviews still in flight, and on any row written
+   * before the instrumentation landed.
+   */
+  duration_ms: number | null;
   created_at: string;
   completed_at: string | null;
 }

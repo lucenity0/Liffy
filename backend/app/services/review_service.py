@@ -6,6 +6,7 @@ generate (BASE-7) -> persist review + comments. All I/O dependencies are
 injected, so the pipeline is testable offline.
 """
 
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -131,6 +132,17 @@ def run_review(
     db.add(review)
     db.commit()
 
+    # Report §8.1's time-to-review clock starts here, once the row exists and
+    # the pipeline proper begins.
+    #
+    # `monotonic`, not `datetime.now()`: a wall clock can jump backwards on an
+    # NTP correction or a DST change, and a negative duration in the metrics
+    # table is worse than no duration at all.
+    started = time.monotonic()
+
+    def elapsed_ms() -> int:
+        return int((time.monotonic() - started) * 1000)
+
     try:
         file_diffs = parse_diff(raw_diff)
         context = _gather_context(chroma_client, repo.id, file_diffs, embedder)
@@ -154,12 +166,23 @@ def run_review(
         review.status = "completed"
         review.model_used = result.model_used
         review.tokens_used = result.tokens_used
+        review.duration_ms = elapsed_ms()
         review.completed_at = datetime.now(timezone.utc)
         db.commit()
         return review
     except Exception:
         db.rollback()  # discard any partial comment rows
+
+        # Every write below has to come *after* the rollback. Setting
+        # duration_ms before it — inside the try, or in a finally that runs
+        # first — would put the value on a session state that is then thrown
+        # away, and the column would silently stay NULL on exactly the reviews
+        # worth investigating.
+        #
+        # A review that took forty seconds to fail is the most useful data
+        # point in the table, so the failure path records the clock too.
         review.status = "failed"
+        review.duration_ms = elapsed_ms()
         review.completed_at = datetime.now(timezone.utc)
         db.commit()
         raise

@@ -73,6 +73,10 @@ class ReviewOut(BaseModel):
     verdict: str | None
     model_used: str | None
     tokens_used: int | None
+    # Report §8.1. Null on rows written before the instrumentation landed, and
+    # on any review still in flight — so every consumer has to tolerate None
+    # rather than assume a number.
+    duration_ms: int | None
     created_at: datetime
     completed_at: datetime | None
 

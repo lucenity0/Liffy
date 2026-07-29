@@ -53,7 +53,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(default="")
     openai_api_key: str = Field(default="")
     openai_base_url: str = Field(default="")
-    llm_model: str = Field(default="claude-opus-5")  # review-generation model
+    # Per-provider, deliberately: the two namespaces share no model names, so a
+    # single LLM_MODEL would silently send e.g. "gemini-2.5-flash" to Anthropic
+    # after a provider switch and fail as an unhelpful 404 with a valid key.
+    anthropic_model: str = Field(default="claude-opus-5")
+    openai_model: str = Field(default="gpt-4o")
     # Caps thinking *and* response text together on Claude models, where
     # thinking is on by default — too tight and the review truncates mid-JSON,
     # which reads like a parser bug rather than a budget problem.

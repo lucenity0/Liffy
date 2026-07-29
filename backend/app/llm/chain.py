@@ -43,7 +43,7 @@ class OpenAIReviewLLM:
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         from langchain_openai import ChatOpenAI
 
-        self.model_name = model or settings.llm_model
+        self.model_name = model or settings.openai_model
         self._chat = ChatOpenAI(
             model=self.model_name,
             api_key=api_key or settings.openai_api_key,
@@ -80,7 +80,7 @@ class AnthropicReviewLLM:
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         import anthropic  # deferred so tests never need the SDK configured
 
-        self.model_name = model or settings.llm_model
+        self.model_name = model or settings.anthropic_model
         self._client = anthropic.Anthropic(api_key=api_key or settings.anthropic_api_key)
 
     def complete(self, system: str, user: str) -> LLMResponse:

@@ -248,3 +248,22 @@ def test_refusal_is_not_swallowed_by_the_retry_loop() -> None:
         generate_review(llm, "PR", [], [])
 
     assert RefusingLLM.calls == 1  # not retried
+
+
+def test_providers_read_separate_model_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shared LLM_MODEL would send the wrong provider's model name.
+
+    Switching LLM_PROVIDER used to leave a stale model name behind — e.g.
+    "gemini-2.5-flash" sent to Anthropic, which fails as an unhelpful 404 with
+    a perfectly valid key. Each provider reads its own field so a provider
+    switch is a one-variable change.
+    """
+    from app.llm.chain import AnthropicReviewLLM
+
+    monkeypatch.setattr(settings, "anthropic_model", "claude-opus-5")
+    monkeypatch.setattr(settings, "openai_model", "gemini-2.5-flash")
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-not-real")
+
+    llm = AnthropicReviewLLM()
+
+    assert llm.model_name == "claude-opus-5"

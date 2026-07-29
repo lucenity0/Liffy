@@ -5,6 +5,10 @@ seam, validates the JSON (retrying with the validation error fed back), and
 anchors comment line numbers to the actual diff.
 """
 
+import json
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -118,10 +122,155 @@ class AnthropicReviewLLM:
         )
 
 
+class ClaudeCodeError(RuntimeError):
+    """The Claude Code CLI could not produce a review."""
+
+
+class ClaudeCodeReviewLLM:
+    """Drives the locally-installed Claude Code CLI as a completion endpoint.
+
+    This is the only provider that needs no API key: Claude Code authenticates
+    with the user's own Pro/Max subscription, so a self-hosted Liffy can review
+    with credentials the user already has. See #170 for the reasoning.
+
+    It is deliberately *not* the default. Claude Code injects its own system
+    prompt and tool definitions on every invocation — measured at roughly 17k
+    tokens of overhead for a 9-token answer — which on an API key is strictly
+    worse than calling the API directly. On a subscription that overhead costs
+    rate-limit quota rather than money, which is the trade this provider is for.
+    """
+
+    # Claude Code is an agent; we want a completion. Nothing here should touch
+    # the filesystem or the network on our behalf — Liffy already did its own
+    # retrieval and hands over the finished prompt.
+    _DISABLED_TOOLS = (
+        "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Task,"
+        "NotebookEdit,TodoWrite,BashOutput,KillShell"
+    )
+
+    def __init__(
+        self,
+        model: str | None = None,
+        binary: str | None = None,
+        timeout: float | None = None,
+    ) -> None:
+        self.model_name = model or settings.claude_code_model
+        self._binary = binary or settings.claude_code_binary
+        self._timeout = timeout if timeout is not None else settings.claude_code_timeout
+
+        if shutil.which(self._binary) is None:
+            raise ClaudeCodeError(
+                f"{self._binary!r} is not on PATH. Install Claude Code and sign in, "
+                f"or set LLM_PROVIDER to a different provider."
+            )
+
+    def _argv(self, system: str, user: str) -> list[str]:
+        return [
+            self._binary,
+            "--print",
+            user,
+            "--output-format", "json",
+            # Replaces Claude Code's own system prompt rather than appending to
+            # it. Appending would stack Liffy's reviewer persona on top of the
+            # coding-agent persona and pay for both.
+            "--system-prompt", system,
+            "--disallowed-tools", self._DISABLED_TOOLS,
+            "--model", self.model_name,
+        ]
+
+    def complete(self, system: str, user: str) -> LLMResponse:
+        # A neutral empty directory, not the repository under review. Claude
+        # Code reads CLAUDE.md and picks up file context from its working
+        # directory, so running it inside the repo would let the model see code
+        # the RAG pipeline never selected — inflating cost and, worse, quietly
+        # invalidating any measurement of retrieval quality.
+        with tempfile.TemporaryDirectory(prefix="liffy-review-") as workdir:
+            try:
+                proc = subprocess.run(
+                    self._argv(system, user),
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout,
+                    cwd=workdir,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise ClaudeCodeError(
+                    f"Claude Code timed out after {self._timeout}s"
+                ) from exc
+
+        if proc.returncode != 0:
+            raise ClaudeCodeError(
+                f"Claude Code exited {proc.returncode}: {(proc.stderr or '').strip()[:300]}"
+            )
+
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            # Never let a raw JSONDecodeError escape — it reads as a bug in the
+            # output parser rather than a CLI that printed something unexpected.
+            raise ClaudeCodeError(
+                f"Claude Code did not return JSON: {proc.stdout.strip()[:300]!r}"
+            ) from exc
+
+        if payload.get("is_error") or payload.get("subtype") != "success":
+            raise ClaudeCodeError(
+                f"Claude Code reported failure "
+                f"(subtype={payload.get('subtype')}, "
+                f"api_error_status={payload.get('api_error_status')})"
+            )
+
+        text = payload.get("result") or ""
+        if not text:
+            raise ClaudeCodeError(
+                f"Claude Code returned no result (stop_reason={payload.get('stop_reason')})"
+            )
+
+        return LLMResponse(text=text, tokens_used=_claude_code_tokens(payload))
+
+
+def _claude_code_tokens(payload: dict) -> int:
+    """Total tokens processed across every model the CLI used for this call.
+
+    Two things make this less obvious than it looks.
+
+    A single invocation can span more than one model — a small one for internal
+    bookkeeping alongside the one that answers — so the top-level ``usage``
+    block describes only part of the work.
+
+    More importantly, Claude Code caches its own prompt aggressively, so nearly
+    all the volume lands in the cache fields: a call reporting ``inputTokens=2``
+    can have read 12,000 cached tokens and written 2,800 more. Counting only
+    input+output would under-report a review by an order of magnitude and make
+    the persisted ``tokens_used`` useless for the §8 metrics.
+
+    Cached tokens are cheaper, not free, so they belong in the total. For
+    providers that do no caching the cache fields are zero and this degrades to
+    input+output, which keeps the number comparable across providers.
+    """
+    per_model = payload.get("modelUsage") or {}
+    if per_model:
+        return sum(
+            int(m.get("inputTokens", 0))
+            + int(m.get("outputTokens", 0))
+            + int(m.get("cacheReadInputTokens", 0))
+            + int(m.get("cacheCreationInputTokens", 0))
+            for m in per_model.values()
+        )
+    usage = payload.get("usage") or {}
+    return (
+        int(usage.get("input_tokens", 0))
+        + int(usage.get("output_tokens", 0))
+        + int(usage.get("cache_read_input_tokens", 0))
+        + int(usage.get("cache_creation_input_tokens", 0))
+    )
+
+
 def get_llm() -> ReviewLLM:
     """Select the review transport. Constructed lazily by callers, never at import."""
     if settings.llm_provider == "openai":
         return OpenAIReviewLLM()
+    if settings.llm_provider == "claude_code":
+        return ClaudeCodeReviewLLM()
     return AnthropicReviewLLM()
 
 

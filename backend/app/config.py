@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     # after a provider switch and fail as an unhelpful 404 with a valid key.
     anthropic_model: str = Field(default="claude-opus-5")
     openai_model: str = Field(default="gpt-4o")
+    # llm_provider="claude_code" drives the locally-installed Claude Code CLI,
+    # which authenticates with the user's own subscription — the only provider
+    # that needs no API key. Local deployment only: the credentials live in the
+    # user's home directory, not in the container.
+    claude_code_binary: str = Field(default="claude")
+    claude_code_model: str = Field(default="claude-opus-5")
+    # Generous: a review is a long single call, and reviews are already async.
+    claude_code_timeout: float = Field(default=600.0)
     # Caps thinking *and* response text together on Claude models, where
     # thinking is on by default — too tight and the review truncates mid-JSON,
     # which reads like a parser bug rather than a budget problem.

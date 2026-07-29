@@ -25,7 +25,14 @@ function render() {
  */
 if (import.meta.env.DEV && import.meta.env.VITE_USE_MSW === "true") {
   const { worker } = await import("./mocks/browser");
-  await worker.start({ onUnhandledRequest: "bypass" });
+  await worker.start({
+    onUnhandledRequest: "bypass",
+    // MSW defaults to registering /mockServiceWorker.js at the site root. Under
+    // a --base the file lives beneath that base, so registration 404s and no
+    // request is ever intercepted. BASE_URL is "/" by default, so this only
+    // changes anything for a sub-path build.
+    serviceWorker: { url: `${import.meta.env.BASE_URL}mockServiceWorker.js` },
+  });
   render();
 } else {
   render();

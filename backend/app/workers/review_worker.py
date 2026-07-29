@@ -11,7 +11,7 @@ failures.
 """
 
 from app.database import SessionLocal
-from app.llm.chain import OpenAIReviewLLM
+from app.llm.chain import get_llm
 from app.llm.embeddings import get_embedding_provider
 from app.services.github_service import GitHubClient
 from app.services.rag_service import get_chroma_client
@@ -46,7 +46,7 @@ def review_pr_task(owner: str, repo_name: str, pr_number: int) -> dict:
                 gh=gh,
                 chroma_client=get_chroma_client(),
                 embedder=get_embedding_provider(),
-                llm=OpenAIReviewLLM(),
+                llm=get_llm(),
             )
             return {"review_id": str(review.id), "status": review.status}
         except RepositoryNotConnected:

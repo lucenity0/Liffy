@@ -22,12 +22,14 @@ PyGithub==2.5.0                  # GitHub REST API client
 pygments==2.18.0                 # Syntax highlighting for diff rendering
 
 # ── LLM & RAG ──────────────────────────────────────────────────────────────────
+anthropic==0.120.2               # Review LLM (default provider)
 langchain==0.3.9
 langchain-openai==0.2.10
 langchain-community==0.3.9
-openai==1.54.4
+openai==1.54.4                   # Also covers Gemini-compat and local Ollama
 chromadb==0.5.18
 tiktoken==0.8.0                  # Token counting for OpenAI models
+fastembed==0.8.0                 # Local ONNX embeddings — no key, and no torch
 
 # ── AST parsing (semantic chunking) ────────────────────────────────────────────
 tree-sitter==0.23.2              # Language-agnostic AST parser (BASE-5 indexer)

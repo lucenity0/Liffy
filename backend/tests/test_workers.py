@@ -81,7 +81,7 @@ def test_review_task_writes_review_row(session_factory, monkeypatch) -> None:
     )
     monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
     monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
-    monkeypatch.setattr(review_worker, "OpenAIReviewLLM", lambda: FakeLLM([PAYLOAD]))
+    monkeypatch.setattr(review_worker, "get_llm", lambda: FakeLLM([PAYLOAD]))
 
     result = review_worker.review_pr_task("octo", "demo", 5)
 
@@ -178,7 +178,7 @@ def test_review_task_ignores_unconnected_repo(session_factory, monkeypatch) -> N
     )
     monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
     monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
-    monkeypatch.setattr(review_worker, "OpenAIReviewLLM", lambda: FakeLLM([PAYLOAD]))
+    monkeypatch.setattr(review_worker, "get_llm", lambda: FakeLLM([PAYLOAD]))
 
     result = review_worker.review_pr_task("stranger", "unknown", 5)
 
@@ -210,7 +210,7 @@ def test_worker_resolves_token_from_repo_owner(session_factory, monkeypatch) -> 
     monkeypatch.setattr(review_worker, "GitHubClient", factory)
     monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
     monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
-    monkeypatch.setattr(review_worker, "OpenAIReviewLLM", lambda: FakeLLM([PAYLOAD]))
+    monkeypatch.setattr(review_worker, "get_llm", lambda: FakeLLM([PAYLOAD]))
 
     review_worker.review_pr_task("octo", "demo", 5)
 

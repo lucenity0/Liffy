@@ -45,9 +45,15 @@ export interface ReviewOut {
   model_used: string | null;
   tokens_used: number | null;
   /**
-   * Wall-clock milliseconds for the whole pipeline (report §8.1, target
-   * < 90s). Null on reviews still in flight, and on any row written
-   * before the instrumentation landed.
+   * Wall-clock milliseconds for the review pipeline.
+   *
+   * A *lower bound* on report §8.1's time-to-review, not that figure: §8.1
+   * counts from webhook receipt, and the queue wait before the worker picks
+   * the job up is not included here. Do not present this as "time to review"
+   * against the < 90s target without saying so.
+   *
+   * Null on reviews still in flight, and on any row written before the
+   * instrumentation landed.
    */
   duration_ms: number | null;
   created_at: string;

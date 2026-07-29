@@ -256,6 +256,45 @@ def test_metrics_are_null_before_completion(db: Session) -> None:
     assert review.model_used is None
 
 
+def test_duration_covers_the_github_calls(db: Session) -> None:
+    """Pins *where* the clock starts, which nothing else does.
+
+    The two GitHub calls are the largest network payload in the pipeline
+    before the LLM, and they run before the `processing` row is committed. A
+    clock started after them omits latency the user genuinely waits through:
+    measured with both calls costing 300ms, it recorded 16ms against a 328ms
+    wall clock.
+
+    Without this test the start point can drift back with every other test
+    still green — which is how it was written the first time.
+    """
+
+    class SlowGitHub(FakeGitHub):
+        def get_pull_request(self, owner: str, repo: str, number: int):
+            time.sleep(0.08)
+            return super().get_pull_request(owner, repo, number)
+
+        def get_pull_request_diff(self, owner: str, repo: str, number: int) -> str:
+            time.sleep(0.08)
+            return super().get_pull_request_diff(owner, repo, number)
+
+    review = run_review(
+        db,
+        "octo",
+        "demo",
+        7,
+        gh=SlowGitHub(pr_meta=META, pr_diff=DIFF),
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+    )
+
+    assert review.duration_ms is not None
+    # 160ms of deliberate GitHub latency; a generous floor clears platform
+    # jitter while still failing a clock that starts after the fetch.
+    assert review.duration_ms >= 120
+
+
 def test_duration_is_measured_not_defaulted(db: Session) -> None:
     """The clock is real: a slower pipeline reports a larger number.
 

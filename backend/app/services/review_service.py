@@ -116,6 +116,20 @@ def run_review(
     embedder: EmbeddingProvider,
     llm: ReviewLLM,
 ) -> Review:
+    # Report §8.1's clock. First statement in the function on purpose: the two
+    # GitHub calls below are the largest network payload in the pipeline
+    # before the LLM, and starting the clock after them makes real latency a
+    # user waits through invisible. Measured with both calls costing 300ms,
+    # starting it lower down recorded 16ms against a 328ms wall clock.
+    #
+    # `monotonic`, not `datetime.now()`: a wall clock can jump backwards on an
+    # NTP correction or a DST change, and a negative duration in the metrics
+    # table is worse than no duration at all.
+    started = time.monotonic()
+
+    def elapsed_ms() -> int:
+        return int((time.monotonic() - started) * 1000)
+
     # Resolve the owner before spending a GitHub call: a review for a
     # repository nobody connected has no one to belong to.
     owner_user = resolve_repo_owner(db, f"{owner}/{repo_name}")
@@ -131,17 +145,6 @@ def run_review(
     review = Review(pr_id=pr.id, status="processing", raw_diff=raw_diff)
     db.add(review)
     db.commit()
-
-    # Report §8.1's time-to-review clock starts here, once the row exists and
-    # the pipeline proper begins.
-    #
-    # `monotonic`, not `datetime.now()`: a wall clock can jump backwards on an
-    # NTP correction or a DST change, and a negative duration in the metrics
-    # table is worse than no duration at all.
-    started = time.monotonic()
-
-    def elapsed_ms() -> int:
-        return int((time.monotonic() - started) * 1000)
 
     try:
         file_diffs = parse_diff(raw_diff)

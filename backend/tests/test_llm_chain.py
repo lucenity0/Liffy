@@ -267,3 +267,207 @@ def test_providers_read_separate_model_fields(monkeypatch: pytest.MonkeyPatch) -
     llm = AnthropicReviewLLM()
 
     assert llm.model_name == "claude-opus-5"
+
+
+# ── ClaudeCodeReviewLLM (LLM-2) ───────────────────────────────────────────────
+
+import json as _json
+import subprocess as _subprocess
+
+
+def _cc_payload(**overrides) -> dict:
+    """A successful `claude -p --output-format json` payload."""
+    payload = {
+        "is_error": False,
+        "subtype": "success",
+        "stop_reason": "end_turn",
+        "num_turns": 1,
+        "api_error_status": None,
+        "result": '{"summary":"ok","verdict":"approve","comments":[]}',
+        "usage": {
+            "input_tokens": 2,
+            "output_tokens": 9,
+            "cache_read_input_tokens": 11621,
+            "cache_creation_input_tokens": 2807,
+        },
+        "modelUsage": {
+            "claude-haiku-4-5": {
+                "inputTokens": 530, "outputTokens": 13,
+                "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
+            },
+            "claude-opus-5": {
+                "inputTokens": 2, "outputTokens": 9,
+                "cacheReadInputTokens": 11621, "cacheCreationInputTokens": 2807,
+            },
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+class _Completed:
+    def __init__(self, stdout: str, returncode: int = 0, stderr: str = "") -> None:
+        self.stdout = stdout
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+def _claude_code(monkeypatch, payload=None, *, stdout=None, returncode=0, raises=None):
+    """Build the provider with `claude` faked. Never runs the real binary."""
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/claude")
+    calls: dict = {}
+
+    def fake_run(argv, **kwargs):
+        calls["argv"] = argv
+        calls["kwargs"] = kwargs
+        if raises is not None:
+            raise raises
+        out = stdout if stdout is not None else _json.dumps(payload or _cc_payload())
+        return _Completed(out, returncode)
+
+    monkeypatch.setattr(chain.subprocess, "run", fake_run)
+    return chain.ClaudeCodeReviewLLM(), calls
+
+
+def test_claude_code_satisfies_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, _ = _claude_code(monkeypatch)
+    assert isinstance(llm.model_name, str)
+    assert callable(llm.complete)
+
+
+def test_claude_code_parses_result_and_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, _ = _claude_code(monkeypatch)
+    result = llm.complete("sys", "user")
+
+    assert result.text == '{"summary":"ok","verdict":"approve","comments":[]}'
+    # 543 (haiku) + 11 (opus in/out) + 14,428 (opus cache read + creation).
+    # Two models in one call, and the cache fields carry nearly all the volume:
+    # counting only input+output would report 554 and miss 96% of the work.
+    assert result.tokens_used == 14982
+
+
+def test_claude_code_falls_back_to_top_level_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, _ = _claude_code(monkeypatch, _cc_payload(modelUsage={}))
+    assert llm.complete("sys", "user").tokens_used == 14439  # 2+9+11621+2807
+
+
+def test_claude_code_counts_cached_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Claude Code caches its own prompt, so input_tokens alone is misleading.
+
+    A real call reported inputTokens=2 while reading 11,621 cached tokens and
+    writing 2,807 more. Ignoring the cache fields would under-report a review
+    by an order of magnitude and corrupt the §8 token metrics.
+    """
+    payload = _cc_payload(modelUsage={
+        "claude-opus-5": {
+            "inputTokens": 2, "outputTokens": 9,
+            "cacheReadInputTokens": 11621, "cacheCreationInputTokens": 2807,
+        },
+    })
+    llm, _ = _claude_code(monkeypatch, payload)
+    assert llm.complete("sys", "user").tokens_used == 14439
+
+
+def test_claude_code_runs_in_a_neutral_cwd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guard against reading the repository under review out of band.
+
+    Claude Code picks up CLAUDE.md and file context from its working directory.
+    Running it inside the repo would give the model code the RAG pipeline never
+    selected, inflating cost and invalidating any retrieval-quality measurement.
+    """
+    import os
+
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("sys", "user")
+
+    cwd = calls["kwargs"]["cwd"]
+    assert cwd is not None
+    assert "liffy-review-" in cwd
+    assert os.path.abspath(cwd) != os.path.abspath(os.getcwd())
+
+
+def test_claude_code_disables_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv = calls["argv"]
+    disabled = argv[argv.index("--disallowed-tools") + 1]
+    for tool in ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task"):
+        assert tool in disabled
+
+
+def test_claude_code_replaces_rather_than_appends_the_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--append-system-prompt would stack Liffy's persona on the agent's."""
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("SYSTEM", "USER")
+
+    argv = calls["argv"]
+    assert "--system-prompt" in argv
+    assert "--append-system-prompt" not in argv
+    assert argv[argv.index("--system-prompt") + 1] == "SYSTEM"
+    assert "USER" in argv
+
+
+def test_claude_code_is_error_raises_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm.chain import ClaudeCodeError
+
+    llm, _ = _claude_code(monkeypatch, _cc_payload(is_error=True, subtype="error_during_execution"))
+    with pytest.raises(ClaudeCodeError, match="reported failure"):
+        llm.complete("sys", "user")
+
+
+def test_claude_code_non_json_stdout_raises_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unhandled JSONDecodeError would read as a bug in the output parser."""
+    from app.llm.chain import ClaudeCodeError
+
+    llm, _ = _claude_code(monkeypatch, stdout="Not logged in. Run `claude` to sign in.")
+    with pytest.raises(ClaudeCodeError, match="did not return JSON"):
+        llm.complete("sys", "user")
+
+
+def test_claude_code_nonzero_exit_raises_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm.chain import ClaudeCodeError
+
+    llm, _ = _claude_code(monkeypatch, stdout="", returncode=1)
+    with pytest.raises(ClaudeCodeError, match="exited 1"):
+        llm.complete("sys", "user")
+
+
+def test_claude_code_timeout_raises_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm.chain import ClaudeCodeError
+
+    llm, _ = _claude_code(
+        monkeypatch, raises=_subprocess.TimeoutExpired(cmd="claude", timeout=600)
+    )
+    with pytest.raises(ClaudeCodeError, match="timed out"):
+        llm.complete("sys", "user")
+
+
+def test_claude_code_empty_result_raises_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm.chain import ClaudeCodeError
+
+    llm, _ = _claude_code(monkeypatch, _cc_payload(result=""))
+    with pytest.raises(ClaudeCodeError, match="no result"):
+        llm.complete("sys", "user")
+
+
+def test_claude_code_missing_binary_raises_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.shutil, "which", lambda _b: None)
+    with pytest.raises(chain.ClaudeCodeError, match="not on PATH"):
+        chain.ClaudeCodeReviewLLM()
+
+
+def test_get_llm_selects_claude_code_on_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm import chain
+
+    monkeypatch.setattr(settings, "llm_provider", "claude_code")
+    monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/claude")
+    assert isinstance(chain.get_llm(), chain.ClaudeCodeReviewLLM)

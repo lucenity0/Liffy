@@ -194,3 +194,65 @@ def test_node_modules_is_excluded_at_any_depth() -> None:
     assert _is_indexable("frontend/node_modules/react/cjs/react.production.js") is False
     # A file merely *named* like it is fine.
     assert _is_indexable("frontend/src/lib/node_modules_helper.ts") is True
+
+
+# ── Secrets and datastores must never be indexed (LANG-2) ────────────────────
+
+
+# One table, accept and reject together, because the gaps that got through the
+# first version of this predicate (.envrc, staging.env, .ENV) were all things
+# nobody thought to write a separate test for.
+_DOTENV_CASES = [
+    # (path, must_be_excluded, why)
+    ("backend/.env", True, "plain dotenv"),
+    ("frontend/.env", True, "the one LANG-2's live run actually found indexed"),
+    ("frontend/.env.local", True, "local override"),
+    (".env.production.local", True, "compound suffix"),
+    ("backend/.envrc", True, "direnv: raw `export AWS_SECRET_ACCESS_KEY=...`"),
+    ("deploy/staging.env", True, "docker-compose env_file: convention"),
+    ("docker.env", True, "same convention"),
+    ("backend/.ENV", True, "git paths are case-sensitive even where the FS is not"),
+    ("backend/.Env.Local", True, "mixed case"),
+    ("PROD.ENV", True, "upper case, <name>.env form"),
+    # Templates carry no values and are useful context for config questions.
+    (".env.example", False, "template"),
+    ("backend/.env.example", False, "template"),
+    ("backend/.env.sample", False, "template"),
+    ("backend/.env.template", False, "template"),
+    ("backend/.env.dist", False, "template"),
+    ("backend/.ENV.EXAMPLE", False, "template, upper case"),
+    # Must not over-reach into ordinary source.
+    ("frontend/src/lib/env.ts", False, "a module that happens to be named env"),
+    ("backend/app/environment.py", False, "starts with 'env'"),
+    ("docs/environment.md", False, "prose about environments"),
+]
+
+
+@pytest.mark.parametrize("path,excluded,why", _DOTENV_CASES)
+def test_dotenv_exclusion(path: str, excluded: bool, why: str) -> None:
+    """Found by LANG-2's live run, which embedded `backend/.env`.
+
+    A dotenv holds the database password and API keys. Indexing one puts them
+    in the vector store, where they come back as review context — and under a
+    hosted embedding provider they are sent to a third party on the way in.
+    """
+    assert _is_indexable(path) is (not excluded), why
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "chroma/chroma.sqlite3",
+        "backend/chroma/chroma.sqlite3",
+        "data/app.db",
+        "var/cache.sqlite",
+        "models/model.onnx",
+    ],
+)
+def test_datastores_are_not_indexed(path: str) -> None:
+    """Chroma's own persist dir holds an 11MB chroma.sqlite3.
+
+    Without this the index ingests its own storage: LANG-2's first live run
+    produced 60 chunks of SQLite page data.
+    """
+    assert _is_indexable(path) is False

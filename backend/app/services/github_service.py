@@ -31,7 +31,61 @@ _BINARY_SUFFIXES = (
     ".woff", ".woff2", ".ttf", ".eot", ".otf",
     ".lock", ".min.js", ".min.css", ".map",
     ".so", ".dylib", ".dll", ".pyc", ".class", ".jar", ".wasm",
+    # Datastores and serialised blobs. Chroma's persist directory holds an
+    # 11MB chroma.sqlite3 and a .pickle of index metadata, so a repository
+    # that commits one — or any future caller that indexes a working tree
+    # rather than a git tree — would otherwise ingest the vector store itself.
+    ".sqlite", ".sqlite3", ".db", ".mdb", ".bin", ".onnx", ".pack", ".idx",
+    ".pickle", ".pkl", ".npy", ".npz", ".parquet",
 )
+
+# Suffixes that mark a dotenv file as a *template* rather than real secrets.
+_ENV_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
+
+
+def _is_dotenv_with_secrets(filename: str) -> bool:
+    """`.env`, `.env.local`, `.envrc`, `staging.env` — but not `.env.example`.
+
+    A dotenv holds database passwords and API keys. Indexing one embeds them
+    into the vector store, where they are retrievable as review context and,
+    under a hosted embedding provider, are sent to a third party on the way
+    in.
+
+    **Preventive, not a fix for a leak that happened.** Liffy indexes through
+    GitHub's git-tree API, which only returns *tracked* files, and a dotenv is
+    gitignored in any repository that has its house in order — this one
+    included. The case this defends against is a repository where somebody
+    committed one, which is common enough to be worth ten lines: this
+    predicate runs against whatever repository a user connects, not against
+    this one.
+
+    Four shapes, because this runs against whatever repository a user
+    connects rather than only against this one:
+
+    - ``.env`` and ``.env.<anything>`` — the common case.
+    - ``.envrc`` — direnv. Raw ``export AWS_SECRET_ACCESS_KEY=...`` with no
+      quoting or structure to hide behind, so it embeds and retrieves
+      cleanly.
+    - ``<name>.env`` — ``staging.env``, ``docker.env``, the convention
+      docker-compose's ``env_file:`` encourages.
+    - Any of the above in a different case. Git paths are case-sensitive even
+      where the filesystem is not, and the two checks below this one in
+      ``_is_indexable`` both lowercase first.
+
+    Templates are deliberately still indexed: they are documentation, they
+    carry no values, and they are genuinely useful retrieval context for
+    configuration questions.
+    """
+    lowered = filename.lower()
+    is_dotenv = (
+        lowered.startswith(".env.")
+        or lowered == ".envrc"
+        # Subsumes a bare `.env` as well as the `<name>.env` convention.
+        or lowered.endswith(".env")
+    )
+    if not is_dotenv:
+        return False
+    return not lowered.endswith(_ENV_TEMPLATE_SUFFIXES)
 
 
 class GitHubError(RuntimeError):
@@ -85,6 +139,8 @@ def _is_indexable(path: str) -> bool:
     if any(part in _EXCLUDED_DIRS for part in parts):
         return False
     if parts[-1] in _EXCLUDED_FILENAMES:
+        return False
+    if _is_dotenv_with_secrets(parts[-1]):
         return False
     # Ambient type declarations: signatures with no implementation behind
     # them. They chunk cleanly now that TypeScript is indexed (LANG-1), which

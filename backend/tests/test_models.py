@@ -27,6 +27,7 @@ def test_user_roundtrip() -> None:
 def test_all_tables_registered() -> None:
     expected = {
         "users",
+        "refresh_tokens",
         "repositories",
         "pull_requests",
         "reviews",

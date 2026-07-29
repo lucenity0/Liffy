@@ -43,7 +43,7 @@ class OpenAIReviewLLM:
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         from langchain_openai import ChatOpenAI
 
-        self.model_name = model or settings.llm_model
+        self.model_name = model or settings.openai_model
         self._chat = ChatOpenAI(
             model=self.model_name,
             api_key=api_key or settings.openai_api_key,
@@ -59,6 +59,70 @@ class OpenAIReviewLLM:
             text=str(message.content),
             tokens_used=int(usage.get("total_tokens", 0)),
         )
+
+
+class LLMRefusalError(RuntimeError):
+    """The model declined the request rather than producing a review.
+
+    Distinct from a malformed response: retrying the same prompt will not help,
+    so ``generate_review``'s validation loop must not swallow this.
+    """
+
+
+class AnthropicReviewLLM:
+    """Official Anthropic SDK transport.
+
+    Anthropic is not OpenAI-wire-compatible, so ``OpenAIReviewLLM`` cannot be
+    pointed at it with a ``base_url`` override — hence a second implementation
+    of the same protocol rather than a config change.
+    """
+
+    def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
+        import anthropic  # deferred so tests never need the SDK configured
+
+        self.model_name = model or settings.anthropic_model
+        self._client = anthropic.Anthropic(api_key=api_key or settings.anthropic_api_key)
+
+    def complete(self, system: str, user: str) -> LLMResponse:
+        # No temperature/top_p/top_k: they are rejected outright on this model
+        # family. The system prompt is a top-level parameter here, not a message
+        # with role="system".
+        response = self._client.messages.create(
+            model=self.model_name,
+            max_tokens=settings.llm_max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+
+        # Check before touching content: on a refusal `content` can be empty, so
+        # indexing it blindly raises IndexError and surfaces as a 500 rather
+        # than a cleanly failed review.
+        if response.stop_reason == "refusal":
+            raise LLMRefusalError(
+                f"Model declined to review this diff (stop_reason=refusal, "
+                f"category={getattr(response.stop_details, 'category', None)})"
+            )
+
+        # content is a list of typed blocks and a thinking block can come first,
+        # so filter by type instead of indexing content[0].
+        text = "".join(block.text for block in response.content if block.type == "text")
+        if not text:
+            raise LLMRefusalError(
+                f"Model returned no text block (stop_reason={response.stop_reason})"
+            )
+
+        usage = response.usage
+        return LLMResponse(
+            text=text,
+            tokens_used=int(usage.input_tokens) + int(usage.output_tokens),
+        )
+
+
+def get_llm() -> ReviewLLM:
+    """Select the review transport. Constructed lazily by callers, never at import."""
+    if settings.llm_provider == "openai":
+        return OpenAIReviewLLM()
+    return AnthropicReviewLLM()
 
 
 @dataclass

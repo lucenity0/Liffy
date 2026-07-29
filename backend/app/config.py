@@ -45,13 +45,30 @@ class Settings(BaseSettings):
         """
         return value or DEV_JWT_SECRET
     
-    # LLM provider (OpenAI-compatible API; leave base_url empty for real OpenAI.
-    # For Gemini: base_url=https://generativelanguage.googleapis.com/v1beta/openai/
-    # with llm_model=gemini-2.5-flash, embedding_model=gemini-embedding-001)
+    # ── Review LLM ────────────────────────────────────────────────────────────
+    # "anthropic" uses the official SDK; "openai" speaks the OpenAI wire format
+    # and therefore also covers anything that emulates it — Gemini's compat
+    # endpoint, or a local Ollama at http://localhost:11434/v1 (no key, no cost).
+    llm_provider: str = Field(default="anthropic")
+    anthropic_api_key: str = Field(default="")
     openai_api_key: str = Field(default="")
     openai_base_url: str = Field(default="")
-    llm_model: str = Field(default="gpt-4o")  # review-generation model
-    embedding_model: str = Field(default="text-embedding-3-small")
+    # Per-provider, deliberately: the two namespaces share no model names, so a
+    # single LLM_MODEL would silently send e.g. "gemini-2.5-flash" to Anthropic
+    # after a provider switch and fail as an unhelpful 404 with a valid key.
+    anthropic_model: str = Field(default="claude-opus-5")
+    openai_model: str = Field(default="gpt-4o")
+    # Caps thinking *and* response text together on Claude models, where
+    # thinking is on by default — too tight and the review truncates mid-JSON,
+    # which reads like a parser bug rather than a budget problem.
+    llm_max_tokens: int = Field(default=16000)
+
+    # ── Embeddings ────────────────────────────────────────────────────────────
+    # Local by default: no key, no quota, no billing in the retrieval path, so
+    # CI and demos cannot be broken by someone else's account state.
+    embedding_provider: str = Field(default="local")
+    embedding_model: str = Field(default="text-embedding-3-small")  # openai only
+    local_embedding_model: str = Field(default="BAAI/bge-small-en-v1.5")  # 384-dim
 
     # ChromaDB — HTTP server when chroma_host is set (compose); local persistent dir otherwise
     chroma_host: str = Field(default="")

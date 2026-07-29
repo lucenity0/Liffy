@@ -1,6 +1,7 @@
 /**
  * Mirrors of the backend's Pydantic schemas. Keep in lockstep with
- * `backend/app/schemas/review.py` and `backend/app/schemas/repo.py`.
+ * `backend/app/schemas/review.py`, `backend/app/schemas/repo.py` and
+ * `backend/app/schemas/auth.py`.
  *
  * Note the backend types `status`, `verdict`, `category` and `severity` as
  * plain `str`, not enums — the LLM populates them. The unions below are what
@@ -44,6 +45,18 @@ export interface ReviewOut {
   verdict: Verdict | null;
   model_used: string | null;
   tokens_used: number | null;
+  /**
+   * Wall-clock milliseconds for the review pipeline.
+   *
+   * A *lower bound* on report §8.1's time-to-review, not that figure: §8.1
+   * counts from webhook receipt, and the queue wait before the worker picks
+   * the job up is not included here. Do not present this as "time to review"
+   * against the < 90s target without saying so.
+   *
+   * Null on reviews still in flight, and on any row written before the
+   * instrumentation landed.
+   */
+  duration_ms: number | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -88,4 +101,28 @@ export interface TriggerAccepted {
 export interface IndexAccepted {
   repo_id: string;
   status: string;
+}
+
+// ── Auth (backend/app/schemas/auth.py) ───────────────────────────────────────
+
+/**
+ * Returned by `POST /auth/refresh`, and carried in the OAuth callback
+ * fragment. `refresh_token` is always a *new* value: the backend rotates and
+ * revokes on use, so the pair this replaces is dead the moment it arrives.
+ */
+export interface TokenPair {
+  access_token: string;
+  refresh_token: string;
+  token_type: "bearer";
+  /** Access-token lifetime in seconds — 900 (15 minutes) by default. */
+  expires_in: number;
+}
+
+/** `GET /auth/me`. `email` and `avatar_url` are nullable on GitHub's side. */
+export interface UserOut {
+  id: string;
+  github_id: number;
+  username: string;
+  email: string | null;
+  avatar_url: string | null;
 }

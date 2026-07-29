@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 
 import chromadb
@@ -184,3 +185,140 @@ def test_resolve_repo_owner_picks_first_connector(db: Session) -> None:
     first_owner = db.scalars(select(User).where(User.github_id == 1)).one()
     resolved = resolve_repo_owner(db, "octo/demo")
     assert resolved is not None and resolved.id == first_owner.id
+
+
+# ── §8.1 instrumentation (METRIC-1) ──────────────────────────────────────────
+
+
+def test_successful_review_records_duration(db: Session) -> None:
+    review = _run(db, FakeLLM([_payload([VALID_COMMENT])]))
+
+    assert review.duration_ms is not None
+    # Milliseconds as an int, not seconds as a float — a float here invites
+    # formatting bugs at display time.
+    assert isinstance(review.duration_ms, int)
+    assert review.duration_ms >= 0
+
+
+def test_successful_review_records_tokens(db: Session) -> None:
+    review = _run(db, FakeLLM([_payload([VALID_COMMENT])], tokens_per_call=250))
+    assert review.tokens_used == 250
+
+
+def test_successful_review_records_model(db: Session) -> None:
+    review = _run(db, FakeLLM([_payload([])]))
+    assert review.model_used == "fake-model"
+
+
+def test_failed_review_still_records_duration(db: Session) -> None:
+    """The one this issue is most likely to get wrong.
+
+    The failure path rolls the session back before setting ``failed``, so a
+    metric written inside the ``try`` — or in a ``finally`` that runs first —
+    lands on state that is then discarded, and the column stays NULL on
+    exactly the reviews worth investigating. A review that took forty seconds
+    to fail is the most useful row in the table.
+    """
+    with pytest.raises(LLMOutputError):
+        _run(db, FakeLLM(["nonsense"] * 3))
+
+    review = db.scalars(select(Review)).one()
+    assert review.status == "failed"
+    assert review.duration_ms is not None
+    assert review.duration_ms >= 0
+
+
+def test_failed_review_duration_survives_a_refetch(db: Session) -> None:
+    """Not just set on the in-memory object — actually committed."""
+    with pytest.raises(LLMOutputError):
+        _run(db, FakeLLM(["nonsense"] * 3))
+
+    review_id = db.scalars(select(Review)).one().id
+    db.expire_all()  # force a real read rather than trusting the identity map
+
+    refetched = db.get(Review, review_id)
+    assert refetched is not None
+    assert refetched.duration_ms is not None
+
+
+def test_metrics_are_null_before_completion(db: Session) -> None:
+    """A row still in `processing` has nothing to report yet.
+
+    Asserted through the same commit the pipeline makes, so this catches a
+    default value creeping onto the column.
+    """
+    review = Review(pr_id=uuid.uuid4(), status="processing", raw_diff=DIFF)
+    db.add(review)
+    db.flush()
+
+    assert review.duration_ms is None
+    assert review.tokens_used is None
+    assert review.model_used is None
+
+
+def test_duration_covers_the_github_calls(db: Session) -> None:
+    """Pins *where* the clock starts, which nothing else does.
+
+    The two GitHub calls are the largest network payload in the pipeline
+    before the LLM, and they run before the `processing` row is committed. A
+    clock started after them omits latency the user genuinely waits through:
+    measured with both calls costing 300ms, it recorded 16ms against a 328ms
+    wall clock.
+
+    Without this test the start point can drift back with every other test
+    still green — which is how it was written the first time.
+    """
+
+    class SlowGitHub(FakeGitHub):
+        def get_pull_request(self, owner: str, repo: str, number: int):
+            time.sleep(0.08)
+            return super().get_pull_request(owner, repo, number)
+
+        def get_pull_request_diff(self, owner: str, repo: str, number: int) -> str:
+            time.sleep(0.08)
+            return super().get_pull_request_diff(owner, repo, number)
+
+    review = run_review(
+        db,
+        "octo",
+        "demo",
+        7,
+        gh=SlowGitHub(pr_meta=META, pr_diff=DIFF),
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+    )
+
+    assert review.duration_ms is not None
+    # 160ms of deliberate GitHub latency; a generous floor clears platform
+    # jitter while still failing a clock that starts after the fetch.
+    assert review.duration_ms >= 120
+
+
+def test_duration_is_measured_not_defaulted(db: Session) -> None:
+    """The clock is real: a slower pipeline reports a larger number.
+
+    A genuine delay rather than a faked ``time.monotonic`` — patching that
+    hits the shared module, so every library call inside the pipeline gets
+    the fake too and the scripted ticks run out.
+
+    The assertion is *relative* rather than an absolute floor: Windows'
+    timer granularity is coarse enough that ``sleep(0.05)`` can measure as
+    46ms, which is a property of the platform clock and not of this code.
+    Comparing two runs is the claim actually being made, and a hardcoded
+    constant or a stray column default fails it either way.
+    """
+
+    class SlowLLM(FakeLLM):
+        def complete(self, system: str, user: str):
+            time.sleep(0.15)
+            return super().complete(system, user)
+
+    fast = _run(db, FakeLLM([_payload([])]))
+    slow = _run(db, SlowLLM([_payload([])]))
+
+    assert fast.duration_ms is not None and slow.duration_ms is not None
+    assert slow.duration_ms > fast.duration_ms
+    # Generous floor: the sleep is 150ms, so this clears platform jitter
+    # while still failing a zero or a constant.
+    assert slow.duration_ms >= 100

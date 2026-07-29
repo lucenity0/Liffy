@@ -22,6 +22,24 @@ class Review(Base):
     verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Wall-clock milliseconds for ``run_review``: the whole pipeline, from
+    # the first GitHub call to the review being written.
+    #
+    # **A lower bound on report §8.1's time-to-review, not that figure.** §8.1
+    # measures webhook received -> review complete against a < 90s target, but
+    # the webhook only enqueues a Celery task (``review_pr_task.delay``), so
+    # queue wait happens entirely before this function is called and no
+    # placement inside it can capture that. Checking the §8.1 target needs a
+    # timestamp taken at webhook receipt and threaded through the task.
+    #
+    # Milliseconds as an int rather than seconds as a float — the report talks
+    # in seconds, but a float invites formatting bugs at display time and this
+    # stores exactly.
+    #
+    # Nullable, and deliberately not backfilled: rows written before this
+    # existed genuinely have no measurement, and inventing one would poison
+    # the first analysis that reads the column.
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

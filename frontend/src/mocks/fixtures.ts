@@ -4,6 +4,8 @@ import type {
   ReviewCommentOut,
   ReviewDetailOut,
   ReviewListItem,
+  TokenPair,
+  UserOut,
 } from "@/types/api";
 
 /**
@@ -82,6 +84,7 @@ export const fixtureReviewCompleted: ReviewDetailOut = {
   verdict: "request_changes",
   model_used: "gpt-4o",
   tokens_used: 4213,
+  duration_ms: 41200,
   created_at: "2026-07-25T14:30:00Z",
   completed_at: "2026-07-25T14:32:15Z",
   comments: [fixtureCommentCritical, fixtureComment],
@@ -117,6 +120,7 @@ export const fixtureReviewApproved: ReviewDetailOut = {
   verdict: "approve",
   model_used: "gpt-4o",
   tokens_used: 1802,
+  duration_ms: 18400,
   created_at: "2026-07-24T09:00:00Z",
   completed_at: "2026-07-24T09:01:40Z",
   comments: [],
@@ -133,6 +137,7 @@ export const fixtureReviewPending: ReviewDetailOut = {
   verdict: null,
   model_used: null,
   tokens_used: null,
+  duration_ms: null,
   created_at: "2026-07-26T08:00:00Z",
   completed_at: null,
   comments: [],
@@ -157,6 +162,10 @@ export const fixtureReviewFailed: ReviewDetailOut = {
   verdict: null,
   model_used: "gpt-4o",
   tokens_used: null,
+  // A failed review still reports how long it took to fail — that is the
+  // most useful row in the table when something is going wrong, and matching
+  // completed_at - created_at here keeps the fixture internally consistent.
+  duration_ms: 42000,
   created_at: "2026-07-23T11:00:00Z",
   completed_at: "2026-07-23T11:00:42Z",
   comments: [],
@@ -179,6 +188,7 @@ const detailToListItem = (review: ReviewDetailOut): ReviewListItem => ({
   verdict: review.verdict,
   model_used: review.model_used,
   tokens_used: review.tokens_used,
+  duration_ms: review.duration_ms,
   created_at: review.created_at,
   completed_at: review.completed_at,
 });
@@ -196,4 +206,35 @@ export const fixtureReviewDetailById: Record<string, ReviewDetailOut> = {
   [fixtureReviewPending.id]: fixtureReviewPending,
   [fixtureReviewProcessing.id]: fixtureReviewProcessing,
   [fixtureReviewFailed.id]: fixtureReviewFailed,
+};
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+export const fixtureUser: UserOut = {
+  id: "44444444-4444-4444-4444-444444444444",
+  github_id: 1837423,
+  username: "lucenity0",
+  email: "dev@example.com",
+  avatar_url: "https://avatars.githubusercontent.com/u/1837423?v=4",
+};
+
+/** No avatar — the initials-fallback case AUTH-8 has to render. */
+export const fixtureUserNoAvatar: UserOut = {
+  ...fixtureUser,
+  id: "55555555-5555-5555-5555-555555555555",
+  username: "gajalakshmishashir",
+  email: null,
+  avatar_url: null,
+};
+
+/**
+ * The pair a refresh hands back. Distinct token values from any "current"
+ * pair a test seeds, so an assertion can tell the two apart and prove the
+ * retry actually used the *new* access token.
+ */
+export const fixtureTokenPair: TokenPair = {
+  access_token: "refreshed-access-token",
+  refresh_token: "refreshed-refresh-token",
+  token_type: "bearer",
+  expires_in: 900,
 };

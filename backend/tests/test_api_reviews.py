@@ -36,11 +36,14 @@ def _seed_reviews(db, user: User, full_name: str, summaries: tuple[str, str]) ->
     )
     db.add(pr)
     db.flush()
+    # `old` stands in for a review written before METRIC-1 landed: all three
+    # §8.1 columns NULL. Every row already in a real database looks like this,
+    # so it is worth having one in the fixture rather than only in one test.
     old = Review(pr_id=pr.id, status="completed", summary=summaries[0], verdict="approve",
-                 model_used="m", tokens_used=10, created_at=T0)
+                 created_at=T0)
     new = Review(pr_id=pr.id, status="completed", summary=summaries[1], verdict="comment",
-                 model_used="m", tokens_used=20, created_at=T0 + timedelta(hours=1),
-                 raw_diff=RAW_DIFF)
+                 model_used="m", tokens_used=20, duration_ms=1234,
+                 created_at=T0 + timedelta(hours=1), raw_diff=RAW_DIFF)
     db.add_all([old, new])
     db.flush()
     db.add(ReviewComment(
@@ -160,6 +163,51 @@ def test_get_review_detail_names_its_pull_request(seeded) -> None:
 def test_get_review_detail_exposes_raw_diff(seeded) -> None:
     body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
     assert body["raw_diff"] == RAW_DIFF
+
+
+def test_review_detail_exposes_metrics(seeded) -> None:
+    """Report §8.1's numbers reach the wire, not just the database."""
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+
+    assert body["duration_ms"] == 1234
+    assert body["tokens_used"] == 20
+    assert body["model_used"] == "m"
+
+
+def test_review_list_exposes_tokens_used(seeded) -> None:
+    """On the list too, so a future analytics page can aggregate without an
+    N+1 back to the detail endpoint."""
+    body = client.get("/reviews", headers=seeded["headers"]).json()
+    newest = body[0]
+
+    assert newest["tokens_used"] == 20
+    assert newest["duration_ms"] == 1234
+    assert newest["model_used"] == "m"
+
+
+def test_legacy_review_without_metrics_serializes(seeded) -> None:
+    """A row with all three columns NULL must serialize, not 500.
+
+    Every review already in a real database is exactly this case, so the
+    fields have to be present-and-null rather than absent — a consumer
+    reading `duration_ms` should get None, not a KeyError.
+    """
+    response = client.get(f"/reviews/{seeded['old']}", headers=seeded["headers"])
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["duration_ms"] is None
+    assert body["tokens_used"] is None
+    assert body["model_used"] is None
+
+
+def test_legacy_review_without_metrics_serializes_in_the_list(seeded) -> None:
+    body = client.get("/reviews", headers=seeded["headers"]).json()
+    oldest = body[1]
+
+    assert oldest["summary"] == "old"
+    assert oldest["duration_ms"] is None
+    assert oldest["tokens_used"] is None
 
 
 def test_get_review_404(seeded) -> None:

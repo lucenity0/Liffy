@@ -238,6 +238,60 @@ Once all three terminals are running:
 
 ---
 
+## Running without an API key (Ollama)
+
+Liffy's LLM providers all sit behind one `ReviewLLM` protocol, and
+`LLM_PROVIDER=openai` speaks the OpenAI wire format — so it also drives
+anything that emulates it, including a local [Ollama](https://ollama.com).
+Embeddings are already local by default, so this gives you a complete review
+pipeline with **no account, no key, no quota and no billing**, where nothing
+leaves your machine.
+
+It needs no code changes.
+
+```bash
+brew install ollama            # or https://ollama.com/download
+ollama serve &                 # or: brew services start ollama
+ollama pull qwen2.5-coder:14b
+```
+
+Then in `backend/.env`:
+
+```bash
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_API_KEY=ollama          # ignored by Ollama, but the client needs non-empty
+OPENAI_MODEL=qwen2.5-coder:14b
+OPENAI_USE_JSON_SCHEMA=true    # see below — effectively required for local models
+EMBEDDING_PROVIDER=local       # already the default
+```
+
+### Model size matters more than you would expect
+
+Liffy asks the model for **strict JSON matching a fixed schema**, and comments
+whose file or line numbers do not exist in the diff are dropped rather than
+shown. Small models fail both bars, and they fail quietly.
+
+Measured on real PR #58 (4 files):
+
+| Setup | Result |
+|---|---|
+| `qwen2.5-coder:7b`, `json_object` | Failed validation on all 3 attempts — returned valid JSON of its own design, wrapping everything in a `"review"` key with an invented `"strengths"` array |
+| `qwen2.5-coder:7b`, `json_schema` | Schema-valid, but every comment cited a file not in the diff — **4 produced, 4 dropped, 0 shown to the user** |
+| `claude-opus-5` (API) | Valid on the first attempt, 8 comments, 0 dropped |
+
+So `OPENAI_USE_JSON_SCHEMA=true` is what makes a local model produce the right
+*shape* — it constrains generation to the schema instead of merely demanding
+valid JSON. It cannot make a model reason well enough to cite real files.
+
+**7B is not enough.** Prefer 14B or larger, and treat an empty review as a
+signal that the model is too small rather than that your code is clean. If you
+have the memory, a 32B coder model is a better starting point.
+
+> `OPENAI_USE_JSON_SCHEMA` is off by default because support varies across
+> OpenAI-compatible endpoints. Ollama and OpenAI implement it; an endpoint that
+> does not will reject the request outright rather than silently degrade.
+
 ## Environment Variables
 
 All variables go in `backend/.env`. Never commit this file.

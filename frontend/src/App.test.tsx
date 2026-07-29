@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { routes } from "@/routes";
 import { createWrapper } from "@/test/renderWithProviders";
+import type { AuthContextValue } from "@/hooks/useAuth";
 
 /**
  * Mounting `routes` through a memory router rather than `<App />` is what
@@ -13,8 +14,8 @@ import { createWrapper } from "@/test/renderWithProviders";
  * tests: the pages behind these routes fetch, and a page that throws "No
  * QueryClient set" renders the router's errorElement instead of the shell.
  */
-function renderAt(path: string) {
-  const { Wrapper } = createWrapper();
+function renderAt(path: string, auth?: Partial<AuthContextValue>) {
+  const { Wrapper } = createWrapper({ auth });
 
   return render(
     <Wrapper>
@@ -73,5 +74,75 @@ describe("app shell", () => {
   it("syncs the document title from the route handle", async () => {
     renderAt("/reviews");
     expect(document.title).toBe("Reviews · Liffy");
+  });
+});
+
+/**
+ * The guard exercised through the *real* route tree rather than a synthetic
+ * one, because the thing most likely to go wrong is the wiring in routes.tsx
+ * — which subtree sits behind `RequireAuth` — not the guard's own logic.
+ */
+describe("route protection", () => {
+  afterEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("sends an anonymous deep link to /login", async () => {
+    renderAt("/reviews", { status: "anonymous", user: null });
+
+    expect(
+      await screen.findByRole("link", { name: "Continue with GitHub" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
+  });
+
+  it("remembers the deep link it refused", async () => {
+    renderAt("/reviews/abc", { status: "anonymous", user: null });
+
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem("liffy.return_to")).toBe("/reviews/abc"),
+    );
+  });
+
+  it("renders a deep-linked page when authenticated", () => {
+    renderAt("/reviews");
+
+    expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(
+      "Reviews",
+    );
+  });
+
+  it("shows no authenticated chrome on the way to /login", () => {
+    renderAt("/", { status: "anonymous", user: null });
+
+    // The guard wraps the shell rather than sitting inside it, so an
+    // anonymous visitor never renders a frame of the tab strip.
+    expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
+  });
+
+  it("does not redirect while the session is still loading", () => {
+    renderAt("/reviews", { status: "loading", user: null });
+
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+    // No login flash on refresh — the whole reason status is three-valued.
+    expect(screen.queryByRole("link", { name: "Continue with GitHub" })).toBeNull();
+  });
+
+  it("leaves /login reachable while anonymous, with no redirect loop", () => {
+    renderAt("/login", { status: "anonymous", user: null });
+
+    expect(
+      screen.getByRole("link", { name: "Continue with GitHub" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the style guide reachable without a session", () => {
+    // It has no data layer behind it, so gating it would only make the design
+    // system harder to review.
+    renderAt("/_styleguide", { status: "anonymous", user: null });
+
+    expect(screen.queryByRole("link", { name: "Continue with GitHub" })).toBeNull();
+    expect(document.title).toBe("Style guide · Liffy");
   });
 });

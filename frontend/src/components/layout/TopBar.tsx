@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Breadcrumb, type Crumb } from "./Breadcrumb";
 import { TabNav, type Tab } from "./TabNav";
 import { ThemeToggle } from "./ThemeToggle";
+import { UserMenu } from "./UserMenu";
 
 const TABS: Tab[] = [
   { to: "/", label: "Dashboard", end: true },
@@ -43,10 +44,14 @@ export function TopBar({
           )}
 
           {/* Always rendered, even with no page actions — the theme toggle
-              is chrome, not something a page opts into. */}
+              and the user menu are chrome, not something a page opts into.
+              `UserMenu` renders nothing when there is no user, so the shell
+              stays usable in the style guide and in tests that mount it
+              without a session. */}
           <div className="ml-auto flex items-center gap-2">
             {actions}
             <ThemeToggle />
+            <UserMenu />
           </div>
         </div>
 

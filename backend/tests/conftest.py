@@ -66,11 +66,15 @@ class FakeGitHub:
         pr_meta: PullRequestMeta | None = None,
         pr_diff: str = "",
         repo_meta: RepositoryMeta | None = None,
+        token: str | None = None,
     ) -> None:
         self.files = files or {}
         self.pr_meta = pr_meta
         self.pr_diff = pr_diff
         self.repo_meta = repo_meta
+        # Records which token the caller constructed this with, so tests can
+        # assert the acting identity (AUTH-5) rather than only the outcome.
+        self.token = token
 
     def get_repository(self, owner: str, repo: str) -> RepositoryMeta:
         assert self.repo_meta is not None, "FakeGitHub built without repo_meta"

@@ -182,4 +182,5 @@ def test_resolve_repo_owner_picks_first_connector(db: Session) -> None:
     db.commit()
 
     first_owner = db.scalars(select(User).where(User.github_id == 1)).one()
-    assert resolve_repo_owner(db, "octo/demo") == first_owner.id
+    resolved = resolve_repo_owner(db, "octo/demo")
+    assert resolved is not None and resolved.id == first_owner.id

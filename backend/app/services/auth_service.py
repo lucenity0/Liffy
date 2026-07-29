@@ -132,7 +132,7 @@ def fetch_github_user(access_token: str, *, client: httpx.Client | None = None) 
     )
 
 
-def upsert_user(db: Session, gh_user: GitHubUser) -> User:
+def upsert_user(db: Session, gh_user: GitHubUser, access_token: str | None = None) -> User:
     """Create the user, or refresh a returning user's profile. Idempotent."""
     user = db.scalar(select(User).where(User.github_id == gh_user.id))
     if user is None:
@@ -143,6 +143,10 @@ def upsert_user(db: Session, gh_user: GitHubUser) -> User:
     user.username = gh_user.login
     user.email = gh_user.email
     user.avatar_url = gh_user.avatar_url
+    if access_token is not None:
+        # Replaced on every login, so revoking access on GitHub and signing in
+        # again is enough to recover from a stale token.
+        user.github_access_token = access_token
     db.flush()
     return user
 

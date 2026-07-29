@@ -6,6 +6,7 @@ import uuid
 from app.database import SessionLocal
 from app.llm.embeddings import get_embedding_provider
 from app.models.repository import Repository
+from app.models.user import User
 from app.services.github_service import GitHubClient
 from app.services.indexer import index_repository
 from app.services.rag_service import get_chroma_client
@@ -19,7 +20,10 @@ def index_repo_task(repo_id: str) -> dict:
         repo = db.get(Repository, uuid.UUID(repo_id))
         if repo is None:
             return {"status": "missing", "repo_id": repo_id}
-        gh = GitHubClient()
+        # No request context here: act as the repository's owner, whose token
+        # is the one guaranteed to reach it.
+        owner = db.get(User, repo.user_id)
+        gh = GitHubClient(token=owner.github_access_token if owner else None)
         try:
             result = index_repository(
                 db,

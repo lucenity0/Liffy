@@ -13,7 +13,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.models.repository import Repository
 from app.models.user import User
-from app.services.github_service import RepositoryMeta
+from app.services.github_service import GitHubAuthError, RepositoryMeta
 
 client = TestClient(app)
 
@@ -72,7 +72,12 @@ def indexed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 @pytest.fixture()
 def fake_github(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(repos_api, "GitHubClient", lambda: FakeGitHub(repo_meta=REPO_META))
+    monkeypatch.setattr(
+        repos_api,
+        "GitHubClient",
+        # Records the token the route constructed it with (AUTH-5).
+        lambda token=None: FakeGitHub(repo_meta=REPO_META, token=token),
+    )
 
 
 def _connect(headers: dict[str, str], full_name: str = "octo/demo") -> dict:
@@ -250,3 +255,58 @@ def test_feedback_routes_require_auth(session_factory, caller) -> None:
     assert client.post(
         f"/comments/{comment_id}/feedback", json={"rating": 1}, headers=caller
     ).status_code == 200
+
+
+# ── Acting identity (AUTH-5) ──────────────────────────────────────────────────
+
+
+def test_connect_repo_uses_callers_token(session_factory, caller, indexed, monkeypatch) -> None:
+    """The GitHub call is made as the caller, not as the server-side PAT."""
+    with session_factory() as db:
+        user = db.scalars(select(User).where(User.github_id == 1)).one()
+        user.github_access_token = "gho_caller"
+        db.commit()
+
+    built: list[FakeGitHub] = []
+
+    def factory(token=None):
+        gh = FakeGitHub(repo_meta=REPO_META, token=token)
+        built.append(gh)
+        return gh
+
+    monkeypatch.setattr(repos_api, "GitHubClient", factory)
+    client.post("/repos", json={"full_name": "octo/demo"}, headers=caller)
+
+    assert [gh.token for gh in built] == ["gho_caller"]
+
+
+def test_connect_repo_falls_back_to_pat_when_user_has_no_token(
+    session_factory, caller, indexed, monkeypatch
+) -> None:
+    # A user who predates AUTH-5 has no stored token; get_github_token then
+    # falls back to settings.github_token, so the behaviour must not regress.
+    built: list[FakeGitHub] = []
+
+    def factory(token=None):
+        gh = FakeGitHub(repo_meta=REPO_META, token=token)
+        built.append(gh)
+        return gh
+
+    monkeypatch.setattr(repos_api, "GitHubClient", factory)
+    client.post("/repos", json={"full_name": "octo/demo"}, headers=caller)
+
+    assert [gh.token for gh in built] == [None]
+
+
+def test_revoked_token_returns_503_not_500(
+    session_factory, caller, indexed, monkeypatch
+) -> None:
+    """Revoking access on GitHub is normal, and must read as a clear error."""
+    def factory(token=None):
+        raise GitHubAuthError("GitHub rejected the credentials. Reconnect your account.")
+
+    monkeypatch.setattr(repos_api, "GitHubClient", factory)
+    response = client.post("/repos", json={"full_name": "octo/demo"}, headers=caller)
+
+    assert response.status_code == 503
+    assert "reconnect" in response.json()["detail"].lower()

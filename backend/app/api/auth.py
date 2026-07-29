@@ -86,7 +86,7 @@ def github_callback(
     except AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    user = auth_service.upsert_user(db, gh_user)
+    user = auth_service.upsert_user(db, gh_user, access_token=github_token)
     pair = _issue_pair(db, user)
     db.commit()
 

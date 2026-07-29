@@ -3,8 +3,10 @@ import pytest
 
 from app.config import settings
 from app.services.github_service import (
+    GITHUB_API_BASE,
     GitHubAuthError,
     GitHubClient,
+    GitHubError,
     PullRequestMeta,
     RepositoryMeta,
     get_github_token,
@@ -111,3 +113,33 @@ def test_get_file_content_returns_raw_text() -> None:
         return httpx.Response(200, text="print('hi')\n")
 
     assert _client(handler).get_file_content("octo", "hello", "app/main.py") == "print('hi')\n"
+
+
+def test_revoked_token_raises_auth_error_not_httpx() -> None:
+    """A user can revoke the OAuth app's access at any time.
+
+    That must surface as a typed error the API can turn into a clean 503
+    "reconnect your GitHub account", not an httpx exception escaping as a 500.
+    """
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"message": "Bad credentials"})
+
+    gh = GitHubClient(
+        token="revoked",
+        client=httpx.Client(transport=httpx.MockTransport(handler), base_url=GITHUB_API_BASE),
+    )
+    with pytest.raises(GitHubAuthError, match="reconnect"):
+        gh.get_repository("octo", "demo")
+
+
+def test_other_github_errors_stay_generic() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    gh = GitHubClient(
+        token="t",
+        client=httpx.Client(transport=httpx.MockTransport(handler), base_url=GITHUB_API_BASE),
+    )
+    with pytest.raises(GitHubError) as exc:
+        gh.get_repository("octo", "demo")
+    assert not isinstance(exc.value, GitHubAuthError)

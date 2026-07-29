@@ -74,7 +74,11 @@ def _connect(factory, full_name: str = "octo/demo") -> None:
 
 def test_review_task_writes_review_row(session_factory, monkeypatch) -> None:
     _connect(session_factory)
-    monkeypatch.setattr(review_worker, "GitHubClient", lambda: FakeGitHub(pr_meta=META, pr_diff=DIFF))
+    monkeypatch.setattr(
+        review_worker,
+        "GitHubClient",
+        lambda token=None: FakeGitHub(pr_meta=META, pr_diff=DIFF, token=token),
+    )
     monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
     monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
     monkeypatch.setattr(review_worker, "OpenAIReviewLLM", lambda: FakeLLM([PAYLOAD]))
@@ -99,7 +103,9 @@ def test_index_task_indexes_repo(session_factory, monkeypatch) -> None:
         repo_id = repo.id
 
     monkeypatch.setattr(
-        index_worker, "GitHubClient", lambda: FakeGitHub(files={"a.py": "def f():\n    return 1\n"})
+        index_worker,
+        "GitHubClient",
+        lambda token=None: FakeGitHub(files={"a.py": "def f():\n    return 1\n"}, token=token),
     )
     monkeypatch.setattr(index_worker, "get_chroma_client", shared_chroma_client)
     monkeypatch.setattr(index_worker, "get_embedding_provider", DeterministicEmbeddings)
@@ -166,7 +172,9 @@ def test_review_task_ignores_unconnected_repo(session_factory, monkeypatch) -> N
     Not worth retrying — there is nobody left to own the result.
     """
     monkeypatch.setattr(
-        review_worker, "GitHubClient", lambda: FakeGitHub(pr_meta=META, pr_diff=DIFF)
+        review_worker,
+        "GitHubClient",
+        lambda token=None: FakeGitHub(pr_meta=META, pr_diff=DIFF, token=token),
     )
     monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
     monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
@@ -177,3 +185,59 @@ def test_review_task_ignores_unconnected_repo(session_factory, monkeypatch) -> N
     assert result["status"] == "ignored"
     with session_factory() as db:
         assert db.scalars(select(Review)).all() == []
+
+
+def test_worker_resolves_token_from_repo_owner(session_factory, monkeypatch) -> None:
+    """Workers have no request context, so the token comes from the owner.
+
+    Resolving from the owner rather than the triggering user is also what
+    stops user B's re-review from failing on a repo only user A can reach.
+    """
+    with session_factory() as db:
+        user = User(github_id=1, username="octo", github_access_token="gho_owner")
+        db.add(user)
+        db.flush()
+        db.add(Repository(user_id=user.id, github_repo_id=9, full_name="octo/demo"))
+        db.commit()
+
+    built: list[FakeGitHub] = []
+
+    def factory(token=None):
+        gh = FakeGitHub(pr_meta=META, pr_diff=DIFF, token=token)
+        built.append(gh)
+        return gh
+
+    monkeypatch.setattr(review_worker, "GitHubClient", factory)
+    monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
+    monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
+    monkeypatch.setattr(review_worker, "OpenAIReviewLLM", lambda: FakeLLM([PAYLOAD]))
+
+    review_worker.review_pr_task("octo", "demo", 5)
+
+    assert [gh.token for gh in built] == ["gho_owner"]
+
+
+def test_index_worker_resolves_token_from_repo_owner(session_factory, monkeypatch) -> None:
+    with session_factory() as db:
+        user = User(github_id=1, username="octo", github_access_token="gho_owner")
+        db.add(user)
+        db.flush()
+        repo = Repository(user_id=user.id, github_repo_id=9, full_name="octo/demo")
+        db.add(repo)
+        db.commit()
+        repo_id = repo.id
+
+    built: list[FakeGitHub] = []
+
+    def factory(token=None):
+        gh = FakeGitHub(files={"a.py": "def f():\n    return 1\n"}, token=token)
+        built.append(gh)
+        return gh
+
+    monkeypatch.setattr(index_worker, "GitHubClient", factory)
+    monkeypatch.setattr(index_worker, "get_chroma_client", shared_chroma_client)
+    monkeypatch.setattr(index_worker, "get_embedding_provider", DeterministicEmbeddings)
+
+    index_worker.index_repo_task(str(repo_id))
+
+    assert [gh.token for gh in built] == ["gho_owner"]

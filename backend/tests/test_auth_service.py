@@ -358,3 +358,31 @@ def test_upsert_user_distinguishes_github_ids(db: Session) -> None:
     auth_service.upsert_user(db, other)
 
     assert len(db.scalars(select(User)).all()) == 2
+
+
+def test_upsert_user_stores_github_token(db: Session) -> None:
+    user = auth_service.upsert_user(db, GH_USER, access_token="gho_first")
+    assert user.github_access_token == "gho_first"
+
+
+def test_upsert_user_refreshes_token_on_relogin(db: Session) -> None:
+    auth_service.upsert_user(db, GH_USER, access_token="gho_stale")
+    user = auth_service.upsert_user(db, GH_USER, access_token="gho_fresh")
+
+    assert user.github_access_token == "gho_fresh"
+    assert len(db.scalars(select(User)).all()) == 1
+
+
+def test_upsert_user_without_token_keeps_existing(db: Session) -> None:
+    # Callers that only refresh the profile must not blank out the token.
+    auth_service.upsert_user(db, GH_USER, access_token="gho_keep")
+    user = auth_service.upsert_user(db, GH_USER)
+
+    assert user.github_access_token == "gho_keep"
+
+
+def test_user_out_does_not_expose_github_token() -> None:
+    """The OAuth token must never reach the wire through /auth/me."""
+    from app.schemas.auth import UserOut
+
+    assert "github_access_token" not in UserOut.model_fields

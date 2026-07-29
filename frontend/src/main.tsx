@@ -37,7 +37,14 @@ const useMocks =
 
 if (useMocks) {
   const { worker } = await import("./mocks/browser");
-  await worker.start({ onUnhandledRequest: "bypass" });
+  await worker.start({
+    onUnhandledRequest: "bypass",
+    // MSW defaults to registering /mockServiceWorker.js at the site root. On a
+    // sub-path deploy the file lives under the base, and the root belongs to a
+    // different app entirely — so registration 404s and no request is ever
+    // intercepted. BASE_URL is "/" in dev, so this is a no-op there.
+    serviceWorker: { url: `${import.meta.env.BASE_URL}mockServiceWorker.js` },
+  });
   render();
 } else {
   render();

@@ -1,6 +1,7 @@
 import { Outlet, ScrollRestoration, useLocation } from "react-router-dom";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { DemoBanner } from "./DemoBanner";
 import { PaperBackdrop } from "./PaperBackdrop";
 import { TopBar } from "./TopBar";
 import type { Crumb } from "./Breadcrumb";
@@ -37,6 +38,7 @@ export function AppShell() {
           Skip to content
         </a>
 
+        <DemoBanner />
         <TopBar crumbs={crumbs} />
 
         <main

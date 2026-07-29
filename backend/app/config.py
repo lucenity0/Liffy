@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     # after a provider switch and fail as an unhelpful 404 with a valid key.
     anthropic_model: str = Field(default="claude-opus-5")
     openai_model: str = Field(default="gpt-4o")
+    # Thinking is on by default on this model family and bills as output tokens,
+    # so effort — not max_tokens, which is only a ceiling — is the real cost
+    # lever. "medium" is a deliberate cost choice for review specifically: the
+    # model stays accurate at lower effort on bug-finding, and the first live
+    # run at the "high" default cost ~$0.35 for one PR. Raise to "high" or
+    # "xhigh" if reviews start missing things; the levels are low | medium |
+    # high | xhigh | max.
+    anthropic_effort: str = Field(default="medium")
     # llm_provider="claude_code" drives the locally-installed Claude Code CLI,
     # which authenticates with the user's own subscription — the only provider
     # that needs no API key. Local deployment only: the credentials live in the

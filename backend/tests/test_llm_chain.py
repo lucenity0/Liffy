@@ -216,7 +216,9 @@ def test_anthropic_sends_system_as_top_level_param() -> None:
 
     llm.complete("SYSTEM PROMPT", "USER PROMPT")
 
-    assert messages.kwargs["system"] == "SYSTEM PROMPT"
+    # A list of blocks rather than a bare string, so the prompt can carry
+    # cache_control — see test_anthropic_caches_the_system_prompt.
+    assert messages.kwargs["system"][0]["text"] == "SYSTEM PROMPT"
     assert messages.kwargs["messages"] == [{"role": "user", "content": "USER PROMPT"}]
     for banned in ("temperature", "top_p", "top_k"):
         assert banned not in messages.kwargs
@@ -471,3 +473,56 @@ def test_get_llm_selects_claude_code_on_config(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(settings, "llm_provider", "claude_code")
     monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/claude")
     assert isinstance(chain.get_llm(), chain.ClaudeCodeReviewLLM)
+
+
+# ── Prompt caching + effort ───────────────────────────────────────────────────
+
+
+def test_anthropic_caches_the_system_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SYSTEM_PROMPT is byte-identical every review, so it should cache.
+
+    Sent as a block with cache_control rather than a bare string; from the
+    second review onward the prefix bills at roughly a tenth of input rate.
+    """
+    llm, messages = _anthropic_llm(_Response([_Block("text", "{}")]))
+
+    llm.complete("SYSTEM", "USER")
+
+    system = messages.kwargs["system"]
+    assert isinstance(system, list), "a bare string cannot carry cache_control"
+    assert system[0]["text"] == "SYSTEM"
+    assert system[0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_anthropic_sends_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "anthropic_effort", "medium")
+    llm, messages = _anthropic_llm(_Response([_Block("text", "{}")]))
+
+    llm.complete("sys", "user")
+
+    assert messages.kwargs["output_config"] == {"effort": "medium"}
+
+
+def test_anthropic_counts_cached_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once caching is on, the cache fields carry most of the input volume.
+
+    Counting only input+output would report a cached review as far smaller
+    than it was and skew the §8 token metrics.
+    """
+    class _CachedUsage:
+        input_tokens = 400
+        output_tokens = 2500
+        cache_read_input_tokens = 935
+        cache_creation_input_tokens = 0
+
+    llm, _ = _anthropic_llm(
+        _Response([_Block("text", "{}")], usage=_CachedUsage())
+    )
+
+    assert llm.complete("sys", "user").tokens_used == 3835
+
+
+def test_anthropic_token_count_survives_missing_cache_fields() -> None:
+    """Older SDK responses may not carry the cache attributes at all."""
+    llm, _ = _anthropic_llm(_Response([_Block("text", "{}")], usage=_Usage(100, 50)))
+    assert llm.complete("sys", "user").tokens_used == 150

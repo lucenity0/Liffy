@@ -94,7 +94,26 @@ class AnthropicReviewLLM:
         response = self._client.messages.create(
             model=self.model_name,
             max_tokens=settings.llm_max_tokens,
-            system=system,
+            # Cached as a block rather than a bare string. SYSTEM_PROMPT is
+            # byte-identical on every review and ~935 tokens, comfortably over
+            # the 512-token minimum, so from the second review onward this
+            # prefix bills at roughly a tenth of the input rate.
+            #
+            # It must stay first and stay stable: caching is a prefix match, so
+            # interpolating anything volatile (a timestamp, a repo name) into
+            # this block would invalidate the entry on every call and cost more
+            # than not caching at all.
+            system=[
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            # Thinking is on by default on this model family and bills as output
+            # tokens, so effort is the main cost lever — not max_tokens, which is
+            # only a ceiling. See the note on the config field for the tradeoff.
+            output_config={"effort": settings.anthropic_effort},
             messages=[{"role": "user", "content": user}],
         )
 
@@ -115,10 +134,20 @@ class AnthropicReviewLLM:
                 f"Model returned no text block (stop_reason={response.stop_reason})"
             )
 
+        # Cached tokens are cheaper, not free, and once caching is on they carry
+        # most of the input volume — counting only input+output would report a
+        # review as far smaller than it was and skew the §8 metrics. Same
+        # accounting as the Claude Code provider, so the number stays
+        # comparable across providers.
         usage = response.usage
         return LLMResponse(
             text=text,
-            tokens_used=int(usage.input_tokens) + int(usage.output_tokens),
+            tokens_used=(
+                int(usage.input_tokens)
+                + int(usage.output_tokens)
+                + int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+                + int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+            ),
         )
 
 

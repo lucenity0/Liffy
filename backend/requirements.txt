@@ -14,8 +14,7 @@ celery==5.4.0
 redis==5.2.0                     # Redis client (also used as Celery broker/backend)
 
 # ── Auth & security ────────────────────────────────────────────────────────────
-python-jose[cryptography]==3.3.0 # JWT encode/decode
-passlib[bcrypt]==1.7.4           # Password hashing
+PyJWT==2.13.0                    # JWT encode/decode (HS256 — see auth_service)
 httpx==0.27.2                    # Async HTTP — GitHub OAuth flows
 
 # ── GitHub integration ─────────────────────────────────────────────────────────

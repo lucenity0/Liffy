@@ -3,14 +3,21 @@ import uuid
 
 import chromadb
 import pytest
-from conftest import DeterministicEmbeddings, FakeGitHub, FakeLLM, shared_chroma_client
+from conftest import (
+    DeterministicEmbeddings,
+    FakeGitHub,
+    FakeLLM,
+    auth_headers,
+    shared_chroma_client,
+)
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
 from app.api import reviews as reviews_api
-from app.database import Base
+from app.database import Base, get_db
 from app.main import app
 from app.models.repository import Repository
 from app.models.review import Review
@@ -40,7 +47,13 @@ PAYLOAD = json.dumps({"summary": "ok", "verdict": "approve", "comments": []})
 @pytest.fixture()
 def session_factory(monkeypatch: pytest.MonkeyPatch):
     engine = create_engine(
-        "sqlite://", future=True, connect_args={"check_same_thread": False}
+        "sqlite://",
+        future=True,
+        connect_args={"check_same_thread": False},
+        # Needed now that these tests also drive the API: TestClient runs the
+        # app on another thread, and without a shared connection that thread
+        # would see its own empty in-memory database.
+        poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False)
@@ -49,7 +62,18 @@ def session_factory(monkeypatch: pytest.MonkeyPatch):
     return factory
 
 
+def _connect(factory, full_name: str = "octo/demo") -> None:
+    """Connect the repo the task will review; reviews need an owner now."""
+    with factory() as db:
+        user = User(github_id=1, username="octo")
+        db.add(user)
+        db.flush()
+        db.add(Repository(user_id=user.id, github_repo_id=9, full_name=full_name))
+        db.commit()
+
+
 def test_review_task_writes_review_row(session_factory, monkeypatch) -> None:
+    _connect(session_factory)
     monkeypatch.setattr(review_worker, "GitHubClient", lambda: FakeGitHub(pr_meta=META, pr_diff=DIFF))
     monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
     monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
@@ -91,7 +115,26 @@ def test_index_task_missing_repo(session_factory) -> None:
     assert result["status"] == "missing"
 
 
-def test_manual_trigger_endpoint_enqueues(monkeypatch) -> None:
+@pytest.fixture()
+def api_db(session_factory):
+    """Point the API at the worker's database and return the caller's headers."""
+    _connect(session_factory)
+
+    def override():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override
+    with session_factory() as db:
+        headers = auth_headers(db.scalars(select(User)).one())
+    yield headers
+    app.dependency_overrides.clear()
+
+
+def test_manual_trigger_endpoint_enqueues(api_db, monkeypatch) -> None:
     calls: list[tuple[str, str, int]] = []
     monkeypatch.setattr(
         reviews_api.review_worker,
@@ -99,13 +142,38 @@ def test_manual_trigger_endpoint_enqueues(monkeypatch) -> None:
         lambda owner, repo, pr: calls.append((owner, repo, pr)),
     )
     response = client.post(
-        "/reviews/trigger", json={"owner": "octo", "repo": "demo", "pr_number": 12}
+        "/reviews/trigger",
+        json={"owner": "octo", "repo": "demo", "pr_number": 12},
+        headers=api_db,
     )
     assert response.status_code == 202
     assert response.json() == {"status": "queued", "repo": "octo/demo", "pr_number": 12}
     assert calls == [("octo", "demo", 12)]
 
 
-def test_manual_trigger_validates_body() -> None:
-    response = client.post("/reviews/trigger", json={"owner": "octo", "repo": "demo", "pr_number": 0})
+def test_manual_trigger_validates_body(api_db) -> None:
+    response = client.post(
+        "/reviews/trigger",
+        json={"owner": "octo", "repo": "demo", "pr_number": 0},
+        headers=api_db,
+    )
     assert response.status_code == 422
+
+
+def test_review_task_ignores_unconnected_repo(session_factory, monkeypatch) -> None:
+    """The repo was disconnected between enqueue and execution.
+
+    Not worth retrying — there is nobody left to own the result.
+    """
+    monkeypatch.setattr(
+        review_worker, "GitHubClient", lambda: FakeGitHub(pr_meta=META, pr_diff=DIFF)
+    )
+    monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
+    monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
+    monkeypatch.setattr(review_worker, "OpenAIReviewLLM", lambda: FakeLLM([PAYLOAD]))
+
+    result = review_worker.review_pr_task("stranger", "unknown", 5)
+
+    assert result["status"] == "ignored"
+    with session_factory() as db:
+        assert db.scalars(select(Review)).all() == []

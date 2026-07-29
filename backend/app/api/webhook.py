@@ -1,9 +1,12 @@
 import json
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import get_db
 from app.services.github_service import verify_webhook_signature
+from app.services.review_service import resolve_repo_owner
 from app.workers import review_worker
 
 router = APIRouter()
@@ -12,10 +15,14 @@ router = APIRouter()
 _REVIEWABLE_ACTIONS = {"opened", "synchronize", "reopened"}
 
 
+# Deliberately unauthenticated: GitHub cannot present a JWT. This route is
+# authenticated by HMAC signature instead, which is the correct mechanism for
+# it — requiring a bearer token would break every real webhook delivery.
 @router.post("/github")
 async def github_webhook(
     request: Request,
     x_hub_signature_256: str | None = Header(default=None),
+    db: Session = Depends(get_db),
 ) -> dict[str, str | int]:
     body = await request.body()
     if not verify_webhook_signature(settings.github_webhook_secret, body, x_hub_signature_256):
@@ -36,6 +43,13 @@ async def github_webhook(
     if not pull_request or action not in _REVIEWABLE_ACTIONS or "/" not in full_name:
         # 200 so GitHub does not retry pings/irrelevant events.
         return {"status": "ignored"}
+
+    # A delivery for a repository nobody connected has no owner to attribute
+    # the review to. Before AUTH-4 a phantom system user absorbed these, which
+    # let an unsolicited webhook create rows; now it is ignored, and checking
+    # here rather than in the worker avoids queueing work that gets discarded.
+    if resolve_repo_owner(db, full_name) is None:
+        return {"status": "ignored", "reason": "repository not connected"}
 
     owner, repo_name = full_name.split("/", 1)
     pr_number = int(pull_request["number"])

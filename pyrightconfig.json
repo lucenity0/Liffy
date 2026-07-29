@@ -1,0 +1,26 @@
+{
+  "//": [
+    "Editors open this repo at the root, but the Python lives in backend/ and",
+    "its interpreter in backend/.venv. Without this, Pylance falls back to a",
+    "system Python and reports third-party imports (anthropic, langchain_openai,",
+    "fastembed) as unresolvable even though the tests pass — the code is fine,",
+    "the editor is just looking in the wrong place.",
+    "",
+    "pyrightconfig.json rather than .vscode/settings.json because .vscode/ is",
+    "gitignored, so a settings file there fixes one machine and nobody else's.",
+    "",
+    "extraPaths mirrors how the suite runs: `cd backend && PYTHONPATH=. pytest`,",
+    "which is what makes `from app.config import settings` resolve."
+  ],
+  "venvPath": "backend",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "extraPaths": ["backend"],
+  "include": ["backend/app", "backend/tests", "backend/migrations"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.venv",
+    "backend/chroma"
+  ]
+}

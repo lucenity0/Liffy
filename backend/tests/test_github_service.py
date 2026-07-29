@@ -4,6 +4,7 @@ import pytest
 from app.config import settings
 from app.services.github_service import (
     GITHUB_API_BASE,
+    _is_indexable,
     GitHubAuthError,
     GitHubClient,
     GitHubError,
@@ -143,3 +144,53 @@ def test_other_github_errors_stay_generic() -> None:
     with pytest.raises(GitHubError) as exc:
         gh.get_repository("octo", "demo")
     assert not isinstance(exc.value, GitHubAuthError)
+
+
+# ── Which files reach the indexer (LANG-1) ───────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "backend/app/services/chunker.py",
+        "frontend/src/components/review/ReviewComment.tsx",
+        "frontend/src/lib/utils.ts",
+        "frontend/src/main.jsx",
+        "scripts/build.mjs",
+    ],
+)
+def test_source_files_are_indexable(path: str) -> None:
+    assert _is_indexable(path) is True
+
+
+@pytest.mark.parametrize(
+    "path,reason",
+    [
+        ("frontend/node_modules/react/index.js", "vendored dependencies"),
+        ("frontend/dist/assets/index-abc123.js", "build output"),
+        ("frontend/package-lock.json", "lockfile"),
+        ("frontend/src/assets/hero.png", "binary"),
+        ("frontend/public/app.min.js", "minified"),
+        # Ambient declarations: signatures with no implementation. Harmless
+        # before LANG-1 because they were never parsed semantically; now they
+        # would chunk cleanly and crowd retrieval with declarations of the
+        # very functions someone wanted the body of.
+        ("frontend/src/vite-env.d.ts", "type declarations"),
+        ("frontend/src/types/global.d.ts", "type declarations"),
+    ],
+)
+def test_non_source_files_are_skipped(path: str, reason: str) -> None:
+    assert _is_indexable(path) is False, reason
+
+
+def test_node_modules_is_excluded_at_any_depth() -> None:
+    """Asserted rather than assumed.
+
+    Now that `.js` chunks semantically, indexing `node_modules` would take a
+    very long time and produce tens of thousands of junk chunks. LANG-2
+    depends on this holding.
+    """
+    assert _is_indexable("node_modules/left-pad/index.js") is False
+    assert _is_indexable("frontend/node_modules/react/cjs/react.production.js") is False
+    # A file merely *named* like it is fine.
+    assert _is_indexable("frontend/src/lib/node_modules_helper.ts") is True

@@ -194,3 +194,61 @@ def test_node_modules_is_excluded_at_any_depth() -> None:
     assert _is_indexable("frontend/node_modules/react/cjs/react.production.js") is False
     # A file merely *named* like it is fine.
     assert _is_indexable("frontend/src/lib/node_modules_helper.ts") is True
+
+
+# ── Secrets and datastores must never be indexed (LANG-2) ────────────────────
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".env",
+        "backend/.env",
+        "frontend/.env",
+        "backend/.env.local",
+        "backend/.env.production",
+        "services/api/.env.staging",
+    ],
+)
+def test_dotenv_files_are_never_indexed(path: str) -> None:
+    """Found by LANG-2's live run, which embedded `backend/.env`.
+
+    A dotenv holds the database password and API keys. Indexing one puts them
+    in the vector store, where they come back as review context — and under a
+    hosted embedding provider they are sent to a third party on the way in.
+    """
+    assert _is_indexable(path) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".env.example",
+        "backend/.env.example",
+        "backend/.env.sample",
+        "backend/.env.template",
+        "backend/.env.dist",
+    ],
+)
+def test_dotenv_templates_are_still_indexed(path: str) -> None:
+    """Templates carry no values and are useful context for config questions."""
+    assert _is_indexable(path) is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "chroma/chroma.sqlite3",
+        "backend/chroma/chroma.sqlite3",
+        "data/app.db",
+        "var/cache.sqlite",
+        "models/model.onnx",
+    ],
+)
+def test_datastores_are_not_indexed(path: str) -> None:
+    """Chroma's own persist dir holds an 11MB chroma.sqlite3.
+
+    Without this the index ingests its own storage: LANG-2's first live run
+    produced 60 chunks of SQLite page data.
+    """
+    assert _is_indexable(path) is False

@@ -114,7 +114,7 @@ rules     1 approval min · CI green · small PRs · say what/why/how-to-test
 
 ### `// docs`
 
-**[ setup ](docs/SETUP.md)** &nbsp;·&nbsp; **[ api reference ](docs/api.md)** &nbsp;·&nbsp; **[ llm pipeline ](docs/llm-pipeline.md)** &nbsp;·&nbsp; **[ decisions ](docs/decisions/)**
+**[ setup ](docs/SETUP.md)** &nbsp;·&nbsp; **[ api reference ](docs/api.md)** &nbsp;·&nbsp; **[ llm pipeline ](docs/llm-pipeline.md)** &nbsp;·&nbsp; **[ indexing coverage ](docs/indexing.md)** &nbsp;·&nbsp; **[ decisions ](docs/decisions/)**
 
 <br />
 

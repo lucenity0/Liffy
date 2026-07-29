@@ -31,7 +31,31 @@ _BINARY_SUFFIXES = (
     ".woff", ".woff2", ".ttf", ".eot", ".otf",
     ".lock", ".min.js", ".min.css", ".map",
     ".so", ".dylib", ".dll", ".pyc", ".class", ".jar", ".wasm",
+    # Datastores. Chroma's own persist directory holds an 11MB
+    # chroma.sqlite3, so without these the index ingests itself.
+    ".sqlite", ".sqlite3", ".db", ".mdb", ".bin", ".onnx", ".pack", ".idx",
 )
+
+# Suffixes that mark a dotenv file as a *template* rather than real secrets.
+_ENV_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
+
+
+def _is_dotenv_with_secrets(filename: str) -> bool:
+    """`.env`, `.env.local`, `.env.production` — but not `.env.example`.
+
+    Found by LANG-2's live run, which indexed `backend/.env` and
+    `frontend/.env`. A dotenv holds database passwords and API keys, and
+    indexing one embeds them into the vector store — where they are
+    retrievable as review context, and, under a hosted embedding provider,
+    are sent to a third party on the way in.
+
+    Templates are deliberately still indexed: they are documentation, they
+    carry no values, and they are genuinely useful retrieval context for
+    configuration questions.
+    """
+    if not (filename == ".env" or filename.startswith(".env.")):
+        return False
+    return not filename.endswith(_ENV_TEMPLATE_SUFFIXES)
 
 
 class GitHubError(RuntimeError):
@@ -85,6 +109,8 @@ def _is_indexable(path: str) -> bool:
     if any(part in _EXCLUDED_DIRS for part in parts):
         return False
     if parts[-1] in _EXCLUDED_FILENAMES:
+        return False
+    if _is_dotenv_with_secrets(parts[-1]):
         return False
     # Ambient type declarations: signatures with no implementation behind
     # them. They chunk cleanly now that TypeScript is indexed (LANG-1), which

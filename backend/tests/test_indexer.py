@@ -11,6 +11,7 @@ from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.models.user import User
 from app.services.chunker import chunk_source
+from app.services.github_service import _is_indexable
 from app.services.indexer import index_repository
 from app.services.rag_service import get_repo_collection
 
@@ -274,3 +275,85 @@ def test_chunk_index_stable_across_runs(db, repo) -> None:
     assert identity() == first
     # Which is the same thing the skip count is asserting from the other side.
     assert result2.chunks_skipped == len(first)
+
+
+# ── Remediation: re-indexing removes what was already embedded (LANG-2) ──────
+
+SECRET = "postgresql://postgres:hunter2@localhost:5432/liffy"
+
+FILES_WITH_DOTENV = {
+    "app/service.py": "def alpha():\n    return 1\n",
+    ".env": f"DATABASE_URL={SECRET}\nANTHROPIC_API_KEY=sk-ant-not-a-real-key\n",
+}
+
+
+class FilteringGitHub(FakeGitHub):
+    """FakeGitHub that applies the real indexability filter.
+
+    The plain fake returns every key it was given, which is what makes it
+    useful for building a *pre-fix* index. This one behaves like the real
+    ``GitHubClient``, whose ``list_repository_files`` filters through
+    ``_is_indexable``.
+    """
+
+    def list_repository_files(self, owner, repo, ref=None):
+        return [p for p in sorted(self.files) if _is_indexable(p)]
+
+
+def _chroma_docs(client, repo) -> list[str]:
+    return list(get_repo_collection(client, repo.id).get(include=["documents"])["documents"])
+
+
+def test_reindexing_purges_already_embedded_secrets(db, repo) -> None:
+    """Re-indexing *remediates*; it does not merely stop adding.
+
+    Matters for a repository that had a dotenv committed and indexed before
+    the exclusion existed. The purge is an emergent property of two unrelated
+    pieces of code — `.env` drops out of ``list_repository_files``, so its
+    keys never reach ``seen_keys``, so the stale-cleanup removes them from
+    Chroma *and* Postgres. Nothing else marks that path as load-bearing for a
+    security guarantee, so this does: disabling stale-cleanup fails here.
+
+    **Local purging cannot undo an embedding request that already went out.**
+    Under a hosted ``EMBEDDING_PROVIDER`` the values were transmitted when
+    they were first indexed, and deleting the vectors afterwards does not
+    reach them. Those have to be rotated. See docs/indexing.md.
+    """
+    # Pre-fix state: the unfiltered fake lets `.env` through, exactly as the
+    # indexer did before the exclusion existed.
+    _, client, _ = _run(db, repo, FILES_WITH_DOTENV)
+
+    assert any(SECRET in doc for doc in _chroma_docs(client, repo))
+    dotenv_rows = db.scalars(
+        select(RepoEmbedding).where(
+            RepoEmbedding.repo_id == repo.id, RepoEmbedding.file_path == ".env"
+        )
+    ).all()
+    assert len(dotenv_rows) >= 1
+
+    # Post-fix: the same tree, seen through the real filter.
+    result = index_repository(
+        db,
+        repo,
+        gh=FilteringGitHub(FILES_WITH_DOTENV),
+        chroma_client=client,
+        embedder=FakeEmbeddings(),
+    )
+
+    assert result.chunks_deleted >= 1
+    assert not any(SECRET in doc for doc in _chroma_docs(client, repo))
+    assert (
+        db.scalars(
+            select(RepoEmbedding).where(
+                RepoEmbedding.repo_id == repo.id, RepoEmbedding.file_path == ".env"
+            )
+        ).all()
+        == []
+    )
+    # The rest of the repo is untouched — this is a targeted purge, not a wipe.
+    assert ".env" not in set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert "app/service.py" in set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )

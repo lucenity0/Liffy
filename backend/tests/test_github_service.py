@@ -199,40 +199,44 @@ def test_node_modules_is_excluded_at_any_depth() -> None:
 # ── Secrets and datastores must never be indexed (LANG-2) ────────────────────
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        ".env",
-        "backend/.env",
-        "frontend/.env",
-        "backend/.env.local",
-        "backend/.env.production",
-        "services/api/.env.staging",
-    ],
-)
-def test_dotenv_files_are_never_indexed(path: str) -> None:
+# One table, accept and reject together, because the gaps that got through the
+# first version of this predicate (.envrc, staging.env, .ENV) were all things
+# nobody thought to write a separate test for.
+_DOTENV_CASES = [
+    # (path, must_be_excluded, why)
+    ("backend/.env", True, "plain dotenv"),
+    ("frontend/.env", True, "the one LANG-2's live run actually found indexed"),
+    ("frontend/.env.local", True, "local override"),
+    (".env.production.local", True, "compound suffix"),
+    ("backend/.envrc", True, "direnv: raw `export AWS_SECRET_ACCESS_KEY=...`"),
+    ("deploy/staging.env", True, "docker-compose env_file: convention"),
+    ("docker.env", True, "same convention"),
+    ("backend/.ENV", True, "git paths are case-sensitive even where the FS is not"),
+    ("backend/.Env.Local", True, "mixed case"),
+    ("PROD.ENV", True, "upper case, <name>.env form"),
+    # Templates carry no values and are useful context for config questions.
+    (".env.example", False, "template"),
+    ("backend/.env.example", False, "template"),
+    ("backend/.env.sample", False, "template"),
+    ("backend/.env.template", False, "template"),
+    ("backend/.env.dist", False, "template"),
+    ("backend/.ENV.EXAMPLE", False, "template, upper case"),
+    # Must not over-reach into ordinary source.
+    ("frontend/src/lib/env.ts", False, "a module that happens to be named env"),
+    ("backend/app/environment.py", False, "starts with 'env'"),
+    ("docs/environment.md", False, "prose about environments"),
+]
+
+
+@pytest.mark.parametrize("path,excluded,why", _DOTENV_CASES)
+def test_dotenv_exclusion(path: str, excluded: bool, why: str) -> None:
     """Found by LANG-2's live run, which embedded `backend/.env`.
 
     A dotenv holds the database password and API keys. Indexing one puts them
     in the vector store, where they come back as review context — and under a
     hosted embedding provider they are sent to a third party on the way in.
     """
-    assert _is_indexable(path) is False
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        ".env.example",
-        "backend/.env.example",
-        "backend/.env.sample",
-        "backend/.env.template",
-        "backend/.env.dist",
-    ],
-)
-def test_dotenv_templates_are_still_indexed(path: str) -> None:
-    """Templates carry no values and are useful context for config questions."""
-    assert _is_indexable(path) is True
+    assert _is_indexable(path) is (not excluded), why
 
 
 @pytest.mark.parametrize(

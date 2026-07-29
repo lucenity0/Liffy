@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
+import { clearReturnTo } from "@/lib/returnTo";
 import { cn } from "@/lib/utils";
 import type { UserOut } from "@/types/api";
 
@@ -9,10 +10,22 @@ import type { UserOut } from "@/types/api";
  * Who you are signed in as, and the way out.
  *
  * Hand-rolled rather than built on a primitive because `components/ui/` has
- * no dropdown — `Modal` is a native `<dialog>`, which is far too heavy for a
- * two-item menu and would trap focus for a control the user is only glancing
- * at. The keyboard contract below is the part that a hand-rolled menu
- * usually gets wrong, so it is explicit.
+ * no dropdown — `Modal` is a native `<dialog>`, which is far too heavy for
+ * two lines of content and would trap focus for a control the user is only
+ * glancing at.
+ *
+ * **A disclosure, not a `role="menu"`.** ARIA reserves `menu` for
+ * application menus, and its keyboard model is arrow-key navigation between
+ * `menuitem`s with a roving tabindex. What this actually implements is Tab
+ * through ordinary controls in DOM order — the right model for an account
+ * dropdown, and the honest markup for it is a button with `aria-expanded`
+ * over a plain container. Claiming `menu` while behaving like a disclosure
+ * is worse than either: assistive technology walking it in application mode
+ * moves between menuitems, so the "Signed in as …" line risks never being
+ * announced at all.
+ *
+ * The keyboard contract below is the part hand-rolled dropdowns usually get
+ * wrong, so it is explicit.
  */
 
 /**
@@ -59,7 +72,7 @@ export function UserMenu() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const menuId = useId();
+  const panelId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -95,6 +108,17 @@ export function UserMenu() {
     // `logout` never rejects: it clears local state even when the revoke call
     // fails, so a user who clicks Log out always ends up logged out.
     await logout();
+
+    // After the await, not before. `logout()` flips the status to anonymous,
+    // which re-renders `RequireAuth`, which stashes the current path — so the
+    // value being discarded here does not exist until that render has run.
+    //
+    // Only this call site can make the distinction: the guard stashes on
+    // every anonymous render and cannot tell "signed out on purpose" from
+    // "session expired", and expiry genuinely should return you to where you
+    // were.
+    clearReturnTo();
+
     navigate("/login", { replace: true });
   }
 
@@ -104,9 +128,8 @@ export function UserMenu() {
         ref={triggerRef}
         variant="ghost"
         onClick={() => setOpen((wasOpen) => !wasOpen)}
-        aria-haspopup="menu"
         aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
+        aria-controls={open ? panelId : undefined}
       >
         <Avatar user={user} />
         <span className="max-w-32 truncate">{user.username}</span>
@@ -114,20 +137,21 @@ export function UserMenu() {
 
       {open && (
         <div
-          id={menuId}
-          role="menu"
-          aria-label="Account"
+          id={panelId}
+          data-testid="user-menu"
           className={cn(
             "rounded-sheet absolute right-0 z-30 mt-1 min-w-44 overflow-hidden",
             "border border-rule-strong bg-card py-1 shadow-hard-lg",
           )}
         >
+          {/* An ordinary paragraph in an ordinary container, so it is read
+              like any other content. Under `role="menu"` this was a
+              non-conforming child and liable to be skipped entirely. */}
           <p className="label px-3 py-1.5 text-ink-sub">
             Signed in as <span className="text-ink">{user.username}</span>
           </p>
           <button
             type="button"
-            role="menuitem"
             onClick={() => void onLogout()}
             className="w-full px-3 py-1.5 text-left text-base text-ink hover:bg-recessed focus-visible:bg-recessed"
           >

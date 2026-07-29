@@ -57,6 +57,27 @@ export function stashReturnTo(path: string): void {
  * somewhere the user has since navigated away from. Falls back to the
  * dashboard.
  */
+/**
+ * Forget any stashed destination.
+ *
+ * For an *explicit* logout. `RequireAuth` stashes on every anonymous render,
+ * and logging out produces one — so without this, the next person to sign in
+ * on the same machine lands on the previous user's page. That URL is scoped
+ * to its owner, so they get a 404 immediately after a successful login:
+ * working as designed, reading as broken.
+ *
+ * A session that merely *expired* must still stash, which is why the guard
+ * cannot make this distinction itself — only the logout call site knows
+ * which of the two happened.
+ */
+export function clearReturnTo(): void {
+  try {
+    window.sessionStorage.removeItem(RETURN_TO_KEY);
+  } catch {
+    // Blocked storage had nothing to clear.
+  }
+}
+
 export function takeReturnTo(): string {
   try {
     const stored = window.sessionStorage.getItem(RETURN_TO_KEY);

@@ -79,6 +79,23 @@ describe("RequireAuth", () => {
     expect(window.sessionStorage.getItem(RETURN_TO_KEY)).toBe("/reviews?offset=40");
   });
 
+  it("keeps the fragment on the stashed path", () => {
+    renderGuard("anonymous", "/reviews/abc#comment-5");
+
+    // `ReviewComment` renders `id={commentAnchorId(comment.id)}`, so
+    // `#comment-<id>` addresses a real element. A link to one specific
+    // comment, pasted into Slack, is exactly the deep link this exists for.
+    expect(window.sessionStorage.getItem(RETURN_TO_KEY)).toBe("/reviews/abc#comment-5");
+  });
+
+  it("keeps a query and a fragment together", () => {
+    renderGuard("anonymous", "/reviews?offset=40#comment-5");
+
+    expect(window.sessionStorage.getItem(RETURN_TO_KEY)).toBe(
+      "/reviews?offset=40#comment-5",
+    );
+  });
+
   it("does not stash anything when authenticated", () => {
     renderGuard("authenticated", "/reviews/abc");
     expect(window.sessionStorage.getItem(RETURN_TO_KEY)).toBeNull();

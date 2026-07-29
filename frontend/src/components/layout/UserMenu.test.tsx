@@ -1,10 +1,12 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState, type ReactNode } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Route, Routes, useLocation } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fixtureUser, fixtureUserNoAvatar } from "@/mocks/fixtures";
 import { renderWithAuth } from "@/test/renderWithProviders";
-import type { AuthContextValue } from "@/hooks/useAuth";
+import { AuthContext, type AuthContextValue, type AuthStatus } from "@/hooks/useAuth";
+import { RequireAuth } from "./RequireAuth";
 import { UserMenu } from "./UserMenu";
 
 function LocationProbe() {
@@ -25,6 +27,9 @@ function renderMenu(auth: Partial<AuthContextValue> = {}) {
 }
 
 const trigger = () => screen.getByRole("button", { name: /lucenity0|gajalakshmi/i });
+/** The disclosure panel has no role of its own — it is a plain container. */
+const panel = () => screen.queryByTestId("user-menu");
+const logoutItem = () => screen.getByRole("button", { name: "Log out" });
 
 describe("UserMenu", () => {
   it("shows the logged-in username and avatar", () => {
@@ -68,15 +73,15 @@ describe("UserMenu", () => {
     renderMenu();
 
     expect(trigger()).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(panel()).not.toBeInTheDocument();
 
     await user.click(trigger());
 
     expect(trigger()).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("menu", { name: "Account" })).toBeInTheDocument();
+    expect(panel()).toBeInTheDocument();
 
     await user.click(trigger());
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(panel()).not.toBeInTheDocument();
   });
 
   it("closes on Escape and returns focus to the trigger", async () => {
@@ -84,11 +89,11 @@ describe("UserMenu", () => {
     renderMenu();
 
     await user.click(trigger());
-    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(panel()).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
 
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(panel()).not.toBeInTheDocument();
     // Focus must come back, or Escape silently loses the user's place in the
     // tab order.
     expect(trigger()).toHaveFocus();
@@ -99,10 +104,10 @@ describe("UserMenu", () => {
     renderMenu();
 
     await user.click(trigger());
-    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(panel()).toBeInTheDocument();
 
     await user.click(document.body);
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(panel()).not.toBeInTheDocument();
   });
 
   it("is reachable and operable by keyboard alone", async () => {
@@ -114,7 +119,7 @@ describe("UserMenu", () => {
     expect(trigger()).toHaveFocus();
 
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(panel()).toBeInTheDocument();
 
     await user.tab();
     await user.keyboard("{Enter}");
@@ -127,7 +132,7 @@ describe("UserMenu", () => {
     renderMenu({ logout });
 
     await user.click(trigger());
-    await user.click(screen.getByRole("menuitem", { name: "Log out" }));
+    await user.click(logoutItem());
 
     expect(logout).toHaveBeenCalledTimes(1);
     await waitFor(() =>
@@ -144,28 +149,126 @@ describe("UserMenu", () => {
     renderMenu({ logout });
 
     await user.click(trigger());
-    await user.click(screen.getByRole("menuitem", { name: "Log out" }));
+    await user.click(logoutItem());
 
     await waitFor(() =>
       expect(screen.getByTestId("path").textContent).toBe("/login"),
     );
   });
 
-  it("labels its controls and wires the menu to its trigger", async () => {
+  it("wires the trigger to the panel it discloses", async () => {
     const user = userEvent.setup();
     renderMenu();
 
     // The codebase's accessibility convention is structural assertions rather
     // than an axe pass — there is no axe dependency and adding one is outside
     // this issue.
-    expect(trigger()).toHaveAttribute("aria-haspopup", "menu");
     expect(trigger()).toHaveAccessibleName();
 
     await user.click(trigger());
 
-    const menu = screen.getByRole("menu");
-    expect(trigger()).toHaveAttribute("aria-controls", menu.id);
-    expect(menu).toHaveAccessibleName("Account");
-    expect(screen.getByRole("menuitem", { name: "Log out" })).toBeInTheDocument();
+    expect(trigger()).toHaveAttribute("aria-controls", panel()!.id);
+    expect(logoutItem()).toBeInTheDocument();
+  });
+
+  it("is a disclosure, not an ARIA menu", async () => {
+    const user = userEvent.setup();
+    renderMenu();
+    await user.click(trigger());
+
+    // The keyboard model here is Tab through ordinary controls, not arrow-key
+    // navigation between menuitems. Claiming `menu` while behaving like a
+    // disclosure is the mismatch that leaves "Signed in as …" unannounced,
+    // because AT walking a menu in application mode only visits menuitems.
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+    expect(trigger()).not.toHaveAttribute("aria-haspopup");
+  });
+
+  it("keeps the signed-in line readable, not skipped", async () => {
+    const user = userEvent.setup();
+    renderMenu();
+    await user.click(trigger());
+
+    // Plain content in a plain container: no role restricts what may live
+    // here, so it is announced like any other text.
+    expect(panel()).toHaveTextContent(`Signed in as ${fixtureUser.username}`);
+    expect(panel()!.querySelector("[aria-hidden='true']")).toBeNull();
+  });
+});
+
+/**
+ * Logout driven through the *real* guard, with a status that actually flips.
+ *
+ * The stubbed context used above cannot show this: `logout` there is a spy
+ * that leaves the status alone, so `RequireAuth` never re-renders and never
+ * gets the chance to stash. The bug only exists in the sequence
+ * logout() -> anonymous -> guard re-renders -> stash -> navigate.
+ */
+function StatefulAuth({
+  children,
+  initial = "authenticated",
+}: {
+  children: ReactNode;
+  initial?: AuthStatus;
+}) {
+  const [status, setStatus] = useState<AuthStatus>(initial);
+
+  const value: AuthContextValue = {
+    user: status === "authenticated" ? fixtureUser : null,
+    status,
+    login: async () => {},
+    // What the real provider does: clear local state, flip to anonymous.
+    logout: async () => setStatus("anonymous"),
+  };
+
+  return <AuthContext value={value}>{children}</AuthContext>;
+}
+
+function renderGuardedMenu(route: string, initial?: AuthStatus) {
+  return render(
+    <MemoryRouter initialEntries={[route]}>
+      <StatefulAuth initial={initial}>
+        <Routes>
+          <Route element={<RequireAuth />}>
+            <Route path="/reviews/:id" element={<UserMenu />} />
+          </Route>
+          <Route path="/login" element={<p>Login page</p>} />
+        </Routes>
+      </StatefulAuth>
+    </MemoryRouter>,
+  );
+}
+
+describe("logout and the return-to stash", () => {
+  afterEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("does not stash the page it logged out from", async () => {
+    const user = userEvent.setup();
+    renderGuardedMenu("/reviews/aaaaaaaa-1111-2222-3333-444444444444");
+
+    await user.click(screen.getByRole("button", { name: /lucenity0/ }));
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+
+    await waitFor(() => expect(screen.getByText("Login page")).toBeInTheDocument());
+
+    // The guard stashes on every anonymous render and logging out produces
+    // one. On a shared machine that means the next person to sign in lands on
+    // the previous user's review URL — which AUTH-4 scopes to a 404, so a
+    // successful login opens on "not found".
+    expect(window.sessionStorage.getItem("liffy.return_to")).toBeNull();
+  });
+
+  it("still stashes when the session ended without an explicit logout", () => {
+    // No logout click: the guard is refusing a visitor whose session expired
+    // or never existed. That is exactly when the deep link *should* be
+    // remembered, so the fix above must not suppress it.
+    renderGuardedMenu("/reviews/expired-session", "anonymous");
+
+    expect(window.sessionStorage.getItem("liffy.return_to")).toBe(
+      "/reviews/expired-session",
+    );
   });
 });

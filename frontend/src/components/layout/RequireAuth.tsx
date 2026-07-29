@@ -33,7 +33,12 @@ export function RequireAuth() {
     // Remember where they were headed so AUTH-7's callback can put them back
     // there. Someone deep-linking to a review should land on that review
     // after signing in, not on the dashboard having lost their place.
-    stashReturnTo(location.pathname + location.search);
+    //
+    // The hash is part of the destination, not decoration: review comments
+    // render `id={commentAnchorId(comment.id)}`, so `#comment-<uuid>`
+    // addresses a real element. A link pasted into Slack that points at one
+    // specific comment is precisely what this exists to preserve.
+    stashReturnTo(location.pathname + location.search + location.hash);
 
     // `replace`, not a push: without it the back button bounces between the
     // guarded page and /login, and the user cannot escape either way.

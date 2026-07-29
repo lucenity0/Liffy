@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     # after a provider switch and fail as an unhelpful 404 with a valid key.
     anthropic_model: str = Field(default="claude-opus-5")
     openai_model: str = Field(default="gpt-4o")
+    # Constrain generation to the review schema rather than just "valid JSON".
+    # Needed for small local models, which otherwise return well-formed
+    # documents of their own invention (see #178). Opt-in because support
+    # varies across OpenAI-compatible endpoints: Ollama and OpenAI implement
+    # it, and one that does not will reject the request rather than degrade.
+    openai_use_json_schema: bool = Field(default=False)
     # Thinking is on by default on this model family and bills as output tokens,
     # so effort — not max_tokens, which is only a ceiling — is the real cost
     # lever. "medium" is a deliberate cost choice for review specifically: the

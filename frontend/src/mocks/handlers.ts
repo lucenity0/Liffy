@@ -6,6 +6,8 @@ import {
   fixtureRepos,
   fixtureReviewDetailById,
   fixtureReviewListItems,
+  fixtureTokenPair,
+  fixtureUser,
 } from "./fixtures";
 
 /**
@@ -133,6 +135,28 @@ export const handlers = [
       { status: 202 },
     );
   }),
+
+  // ── Auth ───────────────────────────────────────────────────────────────────
+  // Happy-path defaults. The interesting auth cases (a refresh that 401s,
+  // endpoints that 401 until refreshed) are per-test `server.use` overrides —
+  // baking them in here would make every unrelated test authenticate.
+
+  http.get("*/auth/me", ({ request }) => {
+    if (!request.headers.get("Authorization")) {
+      return HttpResponse.json({ detail: "Not authenticated" }, { status: 401 });
+    }
+    return HttpResponse.json(fixtureUser);
+  }),
+
+  http.post("*/auth/refresh", async ({ request }) => {
+    const body = (await request.json()) as { refresh_token?: string };
+    if (!body.refresh_token) {
+      return HttpResponse.json({ detail: "Invalid refresh token" }, { status: 401 });
+    }
+    return HttpResponse.json(fixtureTokenPair);
+  }),
+
+  http.post("*/auth/logout", () => new HttpResponse(null, { status: 204 })),
 
   http.post("*/comments/:commentId/feedback", async ({ params, request }) => {
     const body = (await request.json()) as { rating?: number };

@@ -56,7 +56,9 @@ def connect_repo(
 
     owner, name = payload.full_name.split("/", 1)
     try:
-        with GitHubClient() as gh:
+        # Acts as the caller, not as the server-side PAT. This is the seam
+        # BASE-3 left open, finally used.
+        with GitHubClient(token=user.github_access_token) as gh:
             meta = gh.get_repository(owner, name)
     except GitHubAuthError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

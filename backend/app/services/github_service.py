@@ -124,7 +124,20 @@ class GitHubClient:
         params: dict[str, str] | None = None,
     ) -> httpx.Response:
         response = self._client.get(path, headers=self._headers(accept), params=params)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # A user can revoke the OAuth app's access from GitHub's settings
+            # at any time, so a token that worked yesterday returning 401
+            # today is normal operation, not a defect. Translating it into a
+            # typed error here is what lets the API answer "reconnect your
+            # GitHub account" instead of leaking an httpx exception as a 500.
+            if response.status_code in (401, 403):
+                raise GitHubAuthError(
+                    "GitHub rejected the credentials. If you revoked Liffy's "
+                    "access, reconnect your GitHub account."
+                ) from exc
+            raise GitHubError(f"GitHub returned HTTP {response.status_code}") from exc
         return response
 
     def get_pull_request(self, owner: str, repo: str, number: int) -> PullRequestMeta:

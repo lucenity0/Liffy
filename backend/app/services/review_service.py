@@ -36,16 +36,20 @@ class RepositoryNotConnected(RuntimeError):
     """
 
 
-def resolve_repo_owner(db: Session, full_name: str) -> uuid.UUID | None:
+def resolve_repo_owner(db: Session, full_name: str) -> User | None:
     """Which user a webhook-driven review belongs to.
 
     Nothing stops two users connecting the same repository — ``full_name`` has
     no unique constraint — and a webhook carries no user context to choose
     between them. First connector wins: it is deterministic, and it keeps the
     review attached to whoever set the integration up.
+
+    Returns the ``User`` rather than an id so the workers can read the owner's
+    GitHub token from the same lookup, keeping this rule in one place.
     """
     return db.scalar(
-        select(Repository.user_id)
+        select(User)
+        .join(Repository, Repository.user_id == User.id)
         .where(Repository.full_name == full_name)
         .order_by(Repository.created_at)
         .limit(1)
@@ -113,13 +117,13 @@ def run_review(
 ) -> Review:
     # Resolve the owner before spending a GitHub call: a review for a
     # repository nobody connected has no one to belong to.
-    user_id = resolve_repo_owner(db, f"{owner}/{repo_name}")
-    if user_id is None:
+    owner_user = resolve_repo_owner(db, f"{owner}/{repo_name}")
+    if owner_user is None:
         raise RepositoryNotConnected(f"{owner}/{repo_name}")
 
     meta = gh.get_pull_request(owner, repo_name, pr_number)
     raw_diff = gh.get_pull_request_diff(owner, repo_name, pr_number)
-    repo, pr = ensure_repo_and_pr(db, owner, repo_name, meta, user_id)
+    repo, pr = ensure_repo_and_pr(db, owner, repo_name, meta, owner_user.id)
 
     # Commit the processing row first: a crash mid-pipeline leaves an
     # inspectable record, and the API can report status while we work.

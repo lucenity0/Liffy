@@ -76,3 +76,201 @@ def test_fallback_line_windows_for_unknown_extension() -> None:
 def test_empty_source_yields_no_chunks() -> None:
     assert chunk_source("empty.py", "") == []
     assert chunk_source("blank.py", "   \n\n") == []
+
+
+# ── TypeScript / JavaScript (LANG-1) ─────────────────────────────────────────
+
+TS_SOURCE = """\
+import { useState } from "react";
+
+export interface Props {
+  title: string;
+}
+
+export type Alias = Props | null;
+
+export const EDGE: Record<string, string> = { a: "1" };
+
+export function declared(x: number): number {
+  return x + 1;
+}
+
+export class Widget {
+  private n = 0;
+
+  render(): number {
+    return this.n;
+  }
+}
+"""
+
+TSX_SOURCE = """\
+import type { ReactNode } from "react";
+
+interface CardProps {
+  title: string;
+  children: ReactNode;
+}
+
+export const Card = ({ title, children }: CardProps) => (
+  <section className="card">
+    <h2>{title}</h2>
+    {children}
+  </section>
+);
+
+export default function Page() {
+  return <Card title="hi">body</Card>;
+}
+"""
+
+JS_SOURCE = """\
+const PREFIX = "liffy";
+
+export function shout(text) {
+  return `${PREFIX}: ${text.toUpperCase()}`;
+}
+
+export const whisper = (text) => text.toLowerCase();
+
+export class Bell {
+  ring() {
+    return "ding";
+  }
+}
+"""
+
+
+def _by_name(chunks) -> dict[str, object]:
+    return {c.name: c for c in chunks if c.name is not None}
+
+
+def test_typescript_function_declaration() -> None:
+    chunks = chunk_source("app/sample.ts", "export function foo() { return 1; }\n")
+
+    named = _by_name(chunks)
+    assert "foo" in named
+    assert named["foo"].kind == "function"
+
+
+def test_typescript_class_and_methods() -> None:
+    named = _by_name(chunk_source("app/sample.ts", TS_SOURCE))
+
+    assert named["Widget"].kind == "class"
+    assert named["declared"].kind == "function"
+
+
+def test_exported_arrow_component_is_named() -> None:
+    """The arrow-function trap.
+
+    Most React components are ``export const Foo = () => {...}`` — an
+    ``arrow_function`` inside a ``lexical_declaration`` inside an
+    ``export_statement``. Matching only ``function_declaration`` indexes
+    almost none of a modern frontend, and the block-window fallback hides it:
+    chunks are still produced, so counts look right while ``kind`` and
+    ``name`` are silently wrong. Hence asserting on both, never on count.
+    """
+    named = _by_name(chunk_source("app/Card.tsx", TSX_SOURCE))
+
+    assert "Card" in named, "the exported arrow component was not chunked by name"
+    assert named["Card"].kind == "function"
+    assert named["Card"].name == "Card"
+
+
+def test_const_object_is_not_mistaken_for_a_function() -> None:
+    """`export const EDGE = {...}` shares its node type with an arrow component.
+
+    Type alone cannot separate them; only the declarator's value can. Getting
+    this wrong labels every exported constant a function.
+    """
+    chunks = chunk_source("app/sample.ts", TS_SOURCE)
+    named = _by_name(chunks)
+
+    assert "EDGE" not in named
+    # It is not dropped either — it joins the surrounding module text.
+    assert any(c.kind == "module" and "EDGE" in c.text for c in chunks)
+
+
+def test_tsx_parses_jsx_without_error() -> None:
+    chunks = chunk_source("app/Card.tsx", TSX_SOURCE)
+    named = _by_name(chunks)
+
+    assert named["Page"].kind == "function"
+    assert "<section" in named["Card"].text
+
+
+def test_tsx_uses_the_tsx_grammar_not_the_typescript_one() -> None:
+    """Asserted on the parse tree, because chunk output cannot catch it.
+
+    ``tree_sitter_typescript`` ships two grammars, and in the plain
+    TypeScript one ``<section>`` is a type assertion rather than an element.
+    The mis-parse is silent: top-level node types survive, so chunk names and
+    kinds still come out right and *every other test in this file stays
+    green* when ``.tsx`` is pointed at the wrong grammar. I checked — 15/15
+    passed with it swapped.
+
+    What does differ is the tree underneath, so that is what is asserted. The
+    second assertion keeps the first honest: it proves the check is
+    discriminating rather than vacuously true of both grammars.
+    """
+    from app.services.chunker import _parser_for
+
+    source = TSX_SOURCE.encode()
+
+    tsx_parser = _parser_for(".tsx")
+    assert tsx_parser is not None
+    assert not tsx_parser.parse(source).root_node.has_error
+
+    ts_parser = _parser_for(".ts")
+    assert ts_parser is not None
+    assert ts_parser.parse(source).root_node.has_error
+
+
+def test_interface_declaration() -> None:
+    named = _by_name(chunk_source("app/sample.ts", TS_SOURCE))
+
+    assert named["Props"].kind == "interface"
+    assert named["Alias"].kind == "interface"
+
+
+def test_javascript_file_uses_js_grammar() -> None:
+    named = _by_name(chunk_source("app/bell.js", JS_SOURCE))
+
+    assert named["shout"].kind == "function"
+    assert named["whisper"].kind == "function"  # arrow, again
+    assert named["Bell"].kind == "class"
+
+
+def test_every_javascript_flavour_chunks_semantically() -> None:
+    for extension in (".js", ".jsx", ".mjs", ".cjs"):
+        named = _by_name(chunk_source(f"app/bell{extension}", JS_SOURCE))
+        assert named["shout"].kind == "function", extension
+        assert named["whisper"].kind == "function", extension
+
+
+def test_unknown_extension_still_falls_back() -> None:
+    chunks = chunk_source("app/script.rb", "def hello\n  puts 'hi'\nend\n")
+
+    assert [c.kind for c in chunks] == ["block"]
+    assert all(c.name is None for c in chunks)
+
+
+def test_real_component_chunks_by_its_real_exports() -> None:
+    """A genuine file from the frontend, not a synthetic one-liner.
+
+    Synthetic snippets pass against a chunker that is subtly wrong; a real
+    component carries imports, a typed props object, a const map and a
+    doc comment all competing for the same top level.
+    """
+    from pathlib import Path
+
+    source = Path(__file__).parent.joinpath("fixtures/ReviewComment.tsx").read_text(
+        encoding="utf-8"
+    )
+    chunks = chunk_source("frontend/src/components/review/ReviewComment.tsx", source)
+    named = _by_name(chunks)
+
+    assert named["ReviewComment"].kind == "function"
+    # EDGE is a const map in that file and must not be labelled a function.
+    assert "EDGE" not in named
+    assert all(c.kind != "block" for c in chunks), "fell back to line windows"

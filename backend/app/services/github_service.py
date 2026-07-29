@@ -86,6 +86,12 @@ def _is_indexable(path: str) -> bool:
         return False
     if parts[-1] in _EXCLUDED_FILENAMES:
         return False
+    # Ambient type declarations: signatures with no implementation behind
+    # them. They chunk cleanly now that TypeScript is indexed (LANG-1), which
+    # is the problem — they would crowd retrieval results with declarations
+    # of the very functions someone was looking for the body of.
+    if path.lower().endswith(".d.ts"):
+        return False
     return not path.lower().endswith(_BINARY_SUFFIXES)
 
 

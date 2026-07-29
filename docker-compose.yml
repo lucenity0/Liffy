@@ -54,6 +54,10 @@ services:
       CHROMA_PORT: "8000"
       GITHUB_WEBHOOK_SECRET: change-me
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-http://localhost:8000/auth/github/callback}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o}
@@ -74,6 +78,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
+      # No OAuth vars here: the worker never runs the handshake nor verifies a
+      # JWT. It reaches GitHub with the PAT, and with per-user tokens read from
+      # the database once AUTH-5 lands.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}

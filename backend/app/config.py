@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # scheme, host, port and path, with no trailing slash. A mismatch fails at
     # GitHub's end with an unhelpful error rather than anywhere in this code.
     github_redirect_uri: str = Field(default="http://localhost:8000/auth/github/callback")
+    # Where /auth/github/callback hands the browser back to. The OAuth round
+    # trip is a top-level navigation, so the callback cannot answer with JSON —
+    # it has to redirect somewhere the SPA is actually mounted.
+    frontend_url: str = Field(default="http://localhost:5173")
     # Server-side PAT used until per-user OAuth lands (token seam in github_service).
     github_token: str = Field(default="")
     

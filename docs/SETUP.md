@@ -188,7 +188,7 @@ Swagger docs at: `http://localhost:8000/docs`
 ```bash
 cd backend
 source .venv/bin/activate
-celery -A app.workers.celery_app worker --loglevel=info
+celery -A app.workers.celery_app worker --loglevel=info --pool=solo
 ```
 
 **Windows:**
@@ -198,7 +198,20 @@ cd backend
 celery -A app.workers.celery_app worker --loglevel=info --pool=solo
 ```
 
-> ⚠️ Windows requires `--pool=solo` — Celery's default multiprocessing pool does not work on Windows.
+> ⚠️ **macOS and Windows both require `--pool=solo`.** On Windows, Celery's
+> default prefork pool is unsupported outright. On macOS it starts but the
+> forked child aborts before the task runs — the worker imports chromadb,
+> which loads onnxruntime and initialises Objective-C runtime state in the
+> parent, and `fork()` after that is unsafe:
+>
+> ```
+> objc[…]: +[NSCharacterSet initialize] may have been in progress in another
+> thread when fork() was called. … Crashing instead.
+> WorkerLostError: Worker exited prematurely: signal 6 (SIGABRT)
+> ```
+>
+> It surfaces as a lost task rather than an import error, so it reads like a
+> bug in the task body. Linux is unaffected — the Docker worker needs no change.
 
 ---
 
@@ -283,8 +296,11 @@ PostgreSQL service isn't running. Run `brew services start postgresql@15`.
 **`connection refused` on DATABASE_URL (Windows)**
 Make sure PostgreSQL service is running. Open Services (Win+R → `services.msc`) and check that `postgresql-x64-15` is running.
 
-**Celery worker crashes immediately on Windows**
-Add `--pool=solo` to the celery command. Windows does not support the default prefork pool.
+**Celery worker crashes immediately, or tasks die with `WorkerLostError` (macOS / Windows)**
+Add `--pool=solo` to the celery command. Windows does not support the default
+prefork pool at all; on macOS the fork is unsafe once onnxruntime has loaded
+(see the note in the Celery section above). On macOS the failure looks like
+`signal 6 (SIGABRT)` and a lost task, not an import error.
 
 **`Module not found` errors in FastAPI**
 Make sure you're running uvicorn from inside the `backend/` directory with the venv active.

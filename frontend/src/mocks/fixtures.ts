@@ -4,6 +4,8 @@ import type {
   ReviewCommentOut,
   ReviewDetailOut,
   ReviewListItem,
+  TokenPair,
+  UserOut,
 } from "@/types/api";
 
 /**
@@ -196,4 +198,35 @@ export const fixtureReviewDetailById: Record<string, ReviewDetailOut> = {
   [fixtureReviewPending.id]: fixtureReviewPending,
   [fixtureReviewProcessing.id]: fixtureReviewProcessing,
   [fixtureReviewFailed.id]: fixtureReviewFailed,
+};
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+export const fixtureUser: UserOut = {
+  id: "44444444-4444-4444-4444-444444444444",
+  github_id: 1837423,
+  username: "lucenity0",
+  email: "dev@example.com",
+  avatar_url: "https://avatars.githubusercontent.com/u/1837423?v=4",
+};
+
+/** No avatar — the initials-fallback case AUTH-8 has to render. */
+export const fixtureUserNoAvatar: UserOut = {
+  ...fixtureUser,
+  id: "55555555-5555-5555-5555-555555555555",
+  username: "gajalakshmishashir",
+  email: null,
+  avatar_url: null,
+};
+
+/**
+ * The pair a refresh hands back. Distinct token values from any "current"
+ * pair a test seeds, so an assertion can tell the two apart and prove the
+ * retry actually used the *new* access token.
+ */
+export const fixtureTokenPair: TokenPair = {
+  access_token: "refreshed-access-token",
+  refresh_token: "refreshed-refresh-token",
+  token_type: "bearer",
+  expires_in: 900,
 };

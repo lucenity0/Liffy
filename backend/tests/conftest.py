@@ -1,9 +1,31 @@
 import hashlib
 
 import chromadb
+from sqlalchemy.orm import Session
 
 from app.llm.chain import LLMResponse
+from app.models.user import User
+from app.services.auth_service import create_access_token
 from app.services.github_service import PullRequestMeta, RepositoryMeta
+
+
+def seed_user(db: Session, github_id: int = 1, username: str = "octo") -> User:
+    """Insert a user and flush so its id is available."""
+    user = User(github_id=github_id, username=username)
+    db.add(user)
+    db.flush()
+    return user
+
+
+def auth_headers(user: User) -> dict[str, str]:
+    """A real signed bearer header for ``user``.
+
+    Tests mint an actual JWT rather than overriding ``get_current_user``, so
+    the header parsing, signature check and user lookup all stay exercised by
+    the API tests instead of only by the auth tests.
+    """
+    token, _ = create_access_token(user)
+    return {"Authorization": f"Bearer {token}"}
 
 # One ephemeral Chroma client for the whole test session, created eagerly on
 # the MAIN thread: chromadb's in-process system DB misbehaves when clients are

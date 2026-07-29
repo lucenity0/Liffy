@@ -15,7 +15,7 @@ from app.llm.chain import OpenAIReviewLLM
 from app.llm.embeddings import get_embedding_provider
 from app.services.github_service import GitHubClient
 from app.services.rag_service import get_chroma_client
-from app.services.review_service import run_review
+from app.services.review_service import RepositoryNotConnected, run_review
 from app.workers.celery_app import celery
 
 
@@ -36,6 +36,11 @@ def review_pr_task(owner: str, repo_name: str, pr_number: int) -> dict:
                 llm=OpenAIReviewLLM(),
             )
             return {"review_id": str(review.id), "status": review.status}
+        except RepositoryNotConnected:
+            # The webhook already filters these, so reaching here means the
+            # repo was disconnected between enqueue and execution. Not an
+            # error worth retrying — there is nobody to own the result.
+            return {"status": "ignored", "repo": f"{owner}/{repo_name}"}
         finally:
             gh.close()
     finally:

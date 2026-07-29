@@ -3,7 +3,13 @@ import uuid
 
 import chromadb
 import pytest
-from conftest import DeterministicEmbeddings, FakeGitHub, FakeLLM, shared_chroma_client
+from conftest import (
+    DeterministicEmbeddings,
+    FakeGitHub,
+    FakeLLM,
+    seed_user,
+    shared_chroma_client,
+)
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
@@ -13,8 +19,14 @@ from app.llm.output_parser import LLMOutputError
 from app.models.pull_request import PullRequest
 from app.models.repository import Repository
 from app.models.review import Review
+from app.models.user import User
 from app.services.github_service import PullRequestMeta
-from app.services.review_service import get_review_with_comments, run_review
+from app.services.review_service import (
+    RepositoryNotConnected,
+    get_review_with_comments,
+    resolve_repo_owner,
+    run_review,
+)
 
 DIFF = """\
 diff --git a/app/util.py b/app/util.py
@@ -59,6 +71,12 @@ def db() -> Session:
     engine = create_engine("sqlite://", future=True)
     Base.metadata.create_all(engine)
     with Session(engine) as session:
+        # run_review resolves the owning user from a connected Repository row.
+        # Before AUTH-4 a phantom system user was invented on demand; now the
+        # repository has to have been connected by somebody first.
+        user = seed_user(session, github_id=1, username="octo")
+        session.add(Repository(user_id=user.id, github_repo_id=9, full_name="octo/demo"))
+        session.commit()
         yield session
 
 
@@ -134,3 +152,34 @@ def test_unindexed_repo_reviews_with_empty_context(db: Session) -> None:
 
 def test_get_review_with_comments_missing_id(db: Session) -> None:
     assert get_review_with_comments(db, uuid.uuid4()) is None
+
+
+def test_review_for_unconnected_repo_is_refused(db: Session) -> None:
+    """No connected repository means there is nobody to own the review.
+
+    Before AUTH-4 this silently invented a phantom system user, which let an
+    unsolicited webhook create rows in the database.
+    """
+    with pytest.raises(RepositoryNotConnected):
+        run_review(
+            db,
+            "stranger",
+            "unknown",
+            1,
+            gh=FakeGitHub(pr_meta=META, pr_diff=DIFF),
+            chroma_client=shared_chroma_client(),
+            embedder=DeterministicEmbeddings(),
+            llm=FakeLLM([_payload([])]),
+        )
+
+    assert db.scalars(select(Repository).where(Repository.full_name == "stranger/unknown")).all() == []
+
+
+def test_resolve_repo_owner_picks_first_connector(db: Session) -> None:
+    """full_name is not unique, so a webhook needs a deterministic owner."""
+    second = seed_user(db, github_id=2, username="hubot")
+    db.add(Repository(user_id=second.id, github_repo_id=9, full_name="octo/demo"))
+    db.commit()
+
+    first_owner = db.scalars(select(User).where(User.github_id == 1)).one()
+    assert resolve_repo_owner(db, "octo/demo") == first_owner.id

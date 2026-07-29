@@ -24,8 +24,8 @@
 **RAG over your codebase** — indexes your repo into a vector store so reviews are grounded in *your* conventions and surrounding code, not generic advice.
 <br /><sub>`ChromaDB` · `embeddings` · `LangChain chains`</sub>
 
-**Bring your own keys** — no hosted middleman reading your code. Point it at OpenAI, or Claude via Vertex AI (with prompt caching). Keys never leave your `.env`.
-<br /><sub>`BYO LLM` · `Vertex AI` · `prompt caching`</sub>
+**Runs without an API key** — point it at a local Ollama and the whole pipeline is free: no account, no quota, no billing, nothing leaving your machine. Embeddings are already local by default. Or bring a key and use Claude, Gemini's free tier, or your own Claude Code subscription.
+<br /><sub>`local models` · `BYO LLM` · `prompt caching`</sub>
 
 **GitHub-native** — OAuth sign-in, webhook-triggered reviews on every push, feedback posted right where you already argue about code.
 <br /><sub>`OAuth` · `webhooks` · `HMAC-verified`</sub>
@@ -80,6 +80,23 @@ Then three terminals (from the right directories, with the backend venv active):
 - `cd frontend && npm run dev`
 
 Full walkthrough (macOS + Windows, prerequisites, env vars, common issues): **[docs/SETUP.md](docs/SETUP.md)**
+
+<img src="./assets/divider.svg" width="100%" alt="" />
+
+### `// choosing a model`
+
+Every provider sits behind one `ReviewLLM` protocol, so switching is config, not code.
+
+| Provider | Cost | Account | `LLM_PROVIDER` |
+|---|---|---|---|
+| **Ollama** (local) | free | **none** | `openai` + `OPENAI_BASE_URL=http://localhost:11434/v1` |
+| **Gemini** free tier | free | free Google account | `openai` + Gemini's compat URL |
+| **Claude Code** | your subscription | one you already pay for | `claude_code` |
+| **Anthropic API** | metered | API key | `anthropic` *(default)* |
+
+Embeddings are local by default and never need a key, whichever LLM you pick.
+
+> **On local models:** Liffy asks for strict JSON matching a fixed schema, and small models struggle with it. `qwen2.5-coder:7b` was measured returning comments anchored to files that aren't in the diff — every one gets dropped, leaving an empty review. Set `OPENAI_USE_JSON_SCHEMA=true` to constrain generation to the schema, and prefer a larger model. See **[docs/SETUP.md](docs/SETUP.md#running-without-an-api-key-ollama)**.
 
 <img src="./assets/divider.svg" width="100%" alt="" />
 

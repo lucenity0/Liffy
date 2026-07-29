@@ -20,12 +20,27 @@ export const DEFAULT_RETURN_TO = "/";
  * Without this check the stash is an open redirect: anything that can write
  * the key — or a future caller that passes a value straight from a query
  * string — could bounce a freshly-authenticated user to an attacker's page
- * that looks like Liffy. `//evil.com` is the case a naive `startsWith("/")`
- * misses, since browsers read it as protocol-relative and treat it as an
- * absolute URL.
+ * that looks like Liffy.
+ *
+ * **Resolved by the URL parser, not by matching prefixes.** String checks on
+ * this look obviously correct and are not: browsers normalise `\` to `/`
+ * while parsing, and strip control characters first, so `/\evil.com`,
+ * `/\/evil.com` and `/<newline>//evil.com` all satisfy
+ * `startsWith("/") && !startsWith("//")` and all three resolve to
+ * `http://evil.com/`. Asking the same parser the browser uses is the only
+ * version that cannot drift out of sync with it.
+ *
+ * The `startsWith("/")` below is a *shape* constraint, not the security
+ * check — it rejects relative values like `reviews` and the empty string,
+ * and can only ever narrow what the parser already allowed.
  */
 function isSafePath(path: string): boolean {
-  return path.startsWith("/") && !path.startsWith("//");
+  if (!path.startsWith("/")) return false;
+  try {
+    return new URL(path, window.location.origin).origin === window.location.origin;
+  } catch {
+    return false;
+  }
 }
 
 export function stashReturnTo(path: string): void {

@@ -15,7 +15,13 @@ config = context.config
 
 # Use the application's configured database URL (env/.env) rather than the
 # static value in alembic.ini.
-config.set_main_option("sqlalchemy.url", settings.database_url)
+#
+# `%` is doubled because alembic.ini is read by configparser, which treats a
+# lone `%` as interpolation syntax and raises before any migration runs. This
+# bites any password containing a URL-encoded character — an `@` in a password
+# *must* be written `%40` for the URL to parse at all, so it is the common
+# case rather than an exotic one.
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

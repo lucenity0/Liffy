@@ -61,8 +61,8 @@ describe("reviews", () => {
 
   it("getReview maps a full detail fixture including comments", async () => {
     const review = await getReview(fixtureReviewCompleted.id);
-    expect(review.comments).toHaveLength(2);
-    expect(review.comments[0].file_path).toBe("src/lib/diff.ts");
+    expect(review.comments).toHaveLength(8);
+    expect(review.comments[0].file_path).toBe("setup-windows.bat");
     expect(review.raw_diff).toContain("diff --git");
   });
 

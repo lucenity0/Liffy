@@ -43,7 +43,9 @@ describe("ReviewDetail — completed", () => {
     expect(
       await screen.findByText(fixtureReviewCompleted.summary!),
     ).toBeInTheDocument();
-    expect(screen.getByText(/gpt-4o · 4,213 tokens · 2m 15s/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/claude-opus-5 · 25,043 tokens · 2m 7s/),
+    ).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Request changes")).toBeInTheDocument();
   });
@@ -57,12 +59,15 @@ describe("ReviewDetail — completed", () => {
     const comments = screen.getByRole("region", { name: "Comments" });
     const groups = within(comments).getAllByRole("group");
 
-    expect(groups).toHaveLength(2);
-    expect(within(groups[0]).getByText("setup-mac.sh")).toBeInTheDocument();
-    expect(within(groups[1]).getByText("src/lib/diff.ts")).toBeInTheDocument();
-    // The critical one is in diff.ts, and its group header says so.
+    expect(groups).toHaveLength(3);
     expect(
-      within(groups[1]).getAllByText("Critical").length,
+      within(groups[0]).getByText("backend/requirements.txt"),
+    ).toBeInTheDocument();
+    expect(within(groups[1]).getByText("setup-mac.sh")).toBeInTheDocument();
+    expect(within(groups[2]).getByText("setup-windows.bat")).toBeInTheDocument();
+    // The critical one is the Windows JWT-secret bug, and its header says so.
+    expect(
+      within(groups[2]).getAllByText("Critical").length,
     ).toBeGreaterThanOrEqual(1);
   });
 

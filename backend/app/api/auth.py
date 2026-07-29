@@ -8,7 +8,7 @@ in the service instead.
 import secrets
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -63,36 +63,68 @@ def github_login() -> RedirectResponse:
     return response
 
 
-@router.get("/github/callback", response_model=TokenPair)
+def _hand_back_to_frontend(**params: str) -> RedirectResponse:
+    """Redirect to the SPA's callback route with the result in the *fragment*.
+
+    A fragment, not a query string, and the difference matters: browsers never
+    send the part after ``#`` to a server, so the tokens stay out of access
+    logs, out of ``Referer`` headers, and out of any proxy in between. The
+    frontend reads ``location.hash`` and clears it immediately.
+
+    Every terminal path here goes through this function, including the
+    failures. This endpoint is only ever reached by a top-level browser
+    navigation from GitHub, so answering with a JSON 400 would render raw
+    JSON in the address bar — technically a correct status code and a dead end
+    for the user.
+    """
+    base = settings.frontend_url.rstrip("/")
+    response = RedirectResponse(f"{base}/auth/callback#{urlencode(params)}", status_code=302)
+    # One handshake per state value, whichever way the handshake ended.
+    response.delete_cookie(STATE_COOKIE)
+    return response
+
+
+@router.get("/github/callback", response_class=RedirectResponse, status_code=302)
 def github_callback(
-    response: Response,
     code: str | None = None,
     state: str | None = None,
+    error: str | None = None,
     liffy_oauth_state: str | None = Cookie(default=None),
     db: Session = Depends(get_db),
-) -> TokenPair:
-    """Complete the OAuth handshake and return our own token pair."""
+) -> RedirectResponse:
+    """Complete the OAuth handshake and hand the token pair to the frontend."""
+    # GitHub's own rejection, e.g. the user pressing Cancel on the consent
+    # screen — ``?error=access_denied`` and no code. A normal path, not an
+    # exception.
+    if error:
+        return _hand_back_to_frontend(error=error)
+
     if not code or not state:
-        raise HTTPException(status_code=400, detail="Missing code or state")
+        return _hand_back_to_frontend(error="missing_code_or_state")
 
     # The entire reason `state` exists. Constant-time comparison is free here
     # and keeps the value from leaking through response timing.
     if not liffy_oauth_state or not secrets.compare_digest(state, liffy_oauth_state):
-        raise HTTPException(status_code=400, detail="OAuth state mismatch")
+        return _hand_back_to_frontend(error="state_mismatch")
 
     try:
         github_token = auth_service.exchange_code_for_token(code)
         gh_user = auth_service.fetch_github_user(github_token)
-    except AuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AuthError:
+        # The detail is deliberately not forwarded: it comes from GitHub and
+        # would be reflected into our own page unfiltered.
+        return _hand_back_to_frontend(error="github_exchange_failed")
 
     user = auth_service.upsert_user(db, gh_user, access_token=github_token)
     pair = _issue_pair(db, user)
     db.commit()
 
-    # One handshake per state value.
-    response.delete_cookie(STATE_COOKIE)
-    return pair
+    return _hand_back_to_frontend(
+        access_token=pair.access_token,
+        refresh_token=pair.refresh_token,
+        token_type=pair.token_type,
+        expires_in=str(pair.expires_in),
+    )
 
 
 @router.post("/refresh", response_model=TokenPair)

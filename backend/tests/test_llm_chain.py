@@ -526,3 +526,50 @@ def test_anthropic_token_count_survives_missing_cache_fields() -> None:
     """Older SDK responses may not carry the cache attributes at all."""
     llm, _ = _anthropic_llm(_Response([_Block("text", "{}")], usage=_Usage(100, 50)))
     assert llm.complete("sys", "user").tokens_used == 150
+
+
+def test_openai_json_schema_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default stays json_object: not every OpenAI-compatible endpoint
+    implements json_schema, and one that does not rejects the request."""
+    from app.llm import chain
+
+    captured = {}
+
+    class _FakeChat:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(settings, "openai_use_json_schema", False)
+    monkeypatch.setitem(__import__("sys").modules, "langchain_openai",
+                        type("m", (), {"ChatOpenAI": _FakeChat}))
+    chain.OpenAIReviewLLM()
+    assert captured["model_kwargs"]["response_format"] == {"type": "json_object"}
+
+
+def test_openai_json_schema_constrains_to_the_review_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the flag on, generation is constrained to LLMReviewOutput.
+
+    qwen2.5-coder:7b returns a valid-JSON document of its own design under
+    json_object and fails validation three times; under json_schema it
+    produces a schema-valid review.
+    """
+    from app.llm import chain
+
+    captured = {}
+
+    class _FakeChat:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(settings, "openai_use_json_schema", True)
+    monkeypatch.setitem(__import__("sys").modules, "langchain_openai",
+                        type("m", (), {"ChatOpenAI": _FakeChat}))
+    chain.OpenAIReviewLLM()
+
+    fmt = captured["model_kwargs"]["response_format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["json_schema"]["strict"] is True
+    props = fmt["json_schema"]["schema"]["properties"]
+    assert {"summary", "verdict", "comments"} <= set(props)

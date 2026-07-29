@@ -47,13 +47,38 @@ class OpenAIReviewLLM:
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         from langchain_openai import ChatOpenAI
 
+        from app.schemas.review import LLMReviewOutput
+
         self.model_name = model or settings.openai_model
+
+        # "json_object" only demands *valid JSON* — not *our* JSON. Large models
+        # infer the schema from the system prompt anyway, but a small local one
+        # will happily return a well-formed document of its own invention:
+        # qwen2.5-coder:7b wrapped everything in a "review" key and added a
+        # "strengths" array, failing validation on all three attempts.
+        #
+        # "json_schema" constrains generation to the schema itself, which fixes
+        # that. It is opt-in because support varies across OpenAI-compatible
+        # endpoints — Ollama and OpenAI implement it, and a provider that does
+        # not will reject the request outright rather than degrade.
+        if settings.openai_use_json_schema:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "review",
+                    "strict": True,
+                    "schema": LLMReviewOutput.model_json_schema(),
+                },
+            }
+        else:
+            response_format = {"type": "json_object"}
+
         self._chat = ChatOpenAI(
             model=self.model_name,
             api_key=api_key or settings.openai_api_key,
             base_url=settings.openai_base_url or None,
             temperature=0,
-            model_kwargs={"response_format": {"type": "json_object"}},
+            model_kwargs={"response_format": response_format},
         )
 
     def complete(self, system: str, user: str) -> LLMResponse:

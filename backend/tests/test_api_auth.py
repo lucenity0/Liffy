@@ -66,10 +66,24 @@ def _begin_login() -> str:
     return parse_qs(urlparse(response.headers["location"]).query)["state"][0]
 
 
-def _login(factory) -> dict:
+def _callback(query: str) -> dict[str, str]:
+    """Drive the callback and decode the fragment it hands back.
+
+    The callback answers with a 302 whose fragment carries the result, so
+    every assertion in this file reads the fragment rather than a JSON body.
+    ``follow_redirects=False`` because the target is the SPA, which does not
+    exist in a test process.
+    """
+    response = client.get(f"/auth/github/callback?{query}", follow_redirects=False)
+    assert response.status_code == 302
+    fragment = urlparse(response.headers["location"]).fragment
+    return {k: v[0] for k, v in parse_qs(fragment).items()}
+
+
+def _login(factory) -> dict[str, str]:
     """Complete a full handshake and return the token pair."""
     state = _begin_login()
-    return client.get(f"/auth/github/callback?code=abc&state={state}").json()
+    return _callback(f"code=abc&state={state}")
 
 
 # ── /auth/github ──────────────────────────────────────────────────────────────
@@ -112,12 +126,47 @@ def test_each_login_gets_a_fresh_state() -> None:
 # ── /auth/github/callback ─────────────────────────────────────────────────────
 
 
+def test_callback_redirects_to_frontend_with_tokens_in_fragment(
+    factory, github_ok, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "frontend_url", "http://localhost:5173")
+    state = _begin_login()
+    response = client.get(
+        f"/auth/github/callback?code=abc&state={state}", follow_redirects=False
+    )
+
+    assert response.status_code == 302
+    location = urlparse(response.headers["location"])
+    assert f"{location.scheme}://{location.netloc}{location.path}" == (
+        "http://localhost:5173/auth/callback"
+    )
+    # The tokens must ride in the fragment, never the query string: a query
+    # string reaches server logs and Referer headers, a fragment does not.
+    assert location.query == ""
+    assert "access_token" in location.fragment
+    client.cookies.clear()
+
+
 def test_callback_success_returns_token_pair(factory, github_ok) -> None:
     body = _login(factory)
 
     assert body["token_type"] == "bearer"
-    assert body["expires_in"] == settings.access_token_expire_minutes * 60
+    assert body["expires_in"] == str(settings.access_token_expire_minutes * 60)
     assert body["access_token"] and body["refresh_token"]
+
+
+def test_callback_honours_a_trailing_slash_on_frontend_url(
+    factory, github_ok, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trailing slash in the env var must not produce a doubled slash."""
+    monkeypatch.setattr(settings, "frontend_url", "http://localhost:5173/")
+    state = _begin_login()
+    response = client.get(
+        f"/auth/github/callback?code=abc&state={state}", follow_redirects=False
+    )
+
+    assert response.headers["location"].startswith("http://localhost:5173/auth/callback#")
+    client.cookies.clear()
 
 
 def test_callback_creates_user_row(factory, github_ok) -> None:
@@ -131,9 +180,10 @@ def test_callback_creates_user_row(factory, github_ok) -> None:
 
 def test_callback_state_mismatch_rejected(factory, github_ok) -> None:
     _begin_login()  # sets a cookie we then contradict
-    response = client.get("/auth/github/callback?code=abc&state=not-the-cookie")
+    result = _callback("code=abc&state=not-the-cookie")
 
-    assert response.status_code == 400
+    assert result == {"error": "state_mismatch"}
+    assert "access_token" not in result
     with factory() as db:
         assert db.scalars(select(User)).all() == []
     client.cookies.clear()
@@ -141,20 +191,35 @@ def test_callback_state_mismatch_rejected(factory, github_ok) -> None:
 
 def test_callback_without_state_cookie_rejected(factory, github_ok) -> None:
     client.cookies.clear()  # as if the user never visited /auth/github
-    response = client.get("/auth/github/callback?code=abc&state=anything")
+    result = _callback("code=abc&state=anything")
 
-    assert response.status_code == 400
+    assert result == {"error": "state_mismatch"}
     with factory() as db:
         assert db.scalars(select(User)).all() == []
 
 
 def test_callback_missing_code_rejected(factory, github_ok) -> None:
     state = _begin_login()
-    assert client.get(f"/auth/github/callback?state={state}").status_code == 400
+    assert _callback(f"state={state}") == {"error": "missing_code_or_state"}
     client.cookies.clear()
 
 
-def test_callback_github_failure_is_400_not_500(
+def test_callback_user_cancelled_consent_is_a_normal_path(factory, github_ok) -> None:
+    """GitHub sends ``?error=access_denied`` when the user presses Cancel.
+
+    Landing them on a JSON error page is the most common way to ship this
+    half-done, so this asserts they get handed back to the SPA instead.
+    """
+    state = _begin_login()
+    result = _callback(f"error=access_denied&state={state}")
+
+    assert result == {"error": "access_denied"}
+    with factory() as db:
+        assert db.scalars(select(User)).all() == []
+    client.cookies.clear()
+
+
+def test_callback_github_failure_redirects_with_error(
     factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def boom(_code: str) -> str:
@@ -162,9 +227,25 @@ def test_callback_github_failure_is_400_not_500(
 
     monkeypatch.setattr(auth_service, "exchange_code_for_token", boom)
     state = _begin_login()
-    response = client.get(f"/auth/github/callback?code=bad&state={state}")
+    result = _callback(f"code=bad&state={state}")
 
-    assert response.status_code == 400
+    # Generic, not GitHub's own text: that string is upstream-controlled and
+    # would otherwise be reflected into our page unfiltered.
+    assert result == {"error": "github_exchange_failed"}
+    client.cookies.clear()
+
+
+def test_callback_clears_the_state_cookie(factory, github_ok) -> None:
+    """One handshake per state value, on the failure paths too."""
+    state = _begin_login()
+    response = client.get(
+        f"/auth/github/callback?code=abc&state={state}", follow_redirects=False
+    )
+
+    set_cookie = response.headers["set-cookie"]
+    assert STATE_COOKIE in set_cookie
+    # An expiry in the past is how a deletion is spelled on the wire.
+    assert "expires=Thu, 01 Jan 1970" in set_cookie.lower() or "max-age=0" in set_cookie.lower()
     client.cookies.clear()
 
 

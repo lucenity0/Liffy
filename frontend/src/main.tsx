@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import "./index.css";
 import App from "./App.tsx";
+import { AuthProvider } from "./contexts/AuthContext";
 import { createQueryClient } from "./lib/queryClient";
 
 const queryClient = createQueryClient();
@@ -10,8 +11,13 @@ const queryClient = createQueryClient();
 function render() {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
+      {/* Inside QueryClientProvider: the provider's rehydration call goes out
+          through the same axios client every query uses, and AUTH-8's guard
+          has to see the session before any guarded page mounts a query. */}
       <QueryClientProvider client={queryClient}>
-        <App />
+        <AuthProvider>
+          <App />
+        </AuthProvider>
       </QueryClientProvider>
     </StrictMode>,
   );

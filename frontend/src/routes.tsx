@@ -7,6 +7,8 @@ import { ReviewDetail } from "@/pages/ReviewDetail";
 import { RepoDetail } from "@/pages/RepoDetail";
 import { NotFound } from "@/pages/NotFound";
 import { StyleGuide } from "@/pages/StyleGuide";
+import { Login } from "@/pages/Login";
+import { AuthCallback } from "@/pages/AuthCallback";
 
 /**
  * The primitive gallery. Spliced in only under `import.meta.env.DEV`, so it
@@ -25,6 +27,18 @@ const styleGuideRoute: RouteObject = {
  * A module-level `createBrowserRouter` would pin every test to jsdom's URL.
  */
 export const routes: RouteObject[] = [
+  /**
+   * Both sit *outside* `AppShell`. The shell carries the authenticated nav —
+   * the Dashboard/Reviews tab strip, breadcrumbs, the user menu — and
+   * rendering navigation to places an anonymous visitor cannot go, around the
+   * page telling them to sign in, is worse than no chrome at all.
+   */
+  { path: "/login", element: <Login />, handle: { title: "Sign in" } },
+  {
+    path: "/auth/callback",
+    element: <AuthCallback />,
+    handle: { title: "Signing in" },
+  },
   {
     element: <AppShell />,
     errorElement: <RouteError />,

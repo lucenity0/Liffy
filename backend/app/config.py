@@ -1,6 +1,12 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
+# Placeholder so a fresh clone runs without setup. It is a public constant in a
+# public repo, so anything signed with it is forgeable by anyone who can read
+# this file — auth_service refuses to mint tokens with it outside debug mode.
+# 48 bytes clears the 32-byte RFC 7518 minimum for HS256.
+DEV_JWT_SECRET = "dev-only-insecure-secret-change-me-before-deploy"
+
 class Settings(BaseSettings):
     # Database
     database_url: str = Field(default="postgresql://localhost/liffy")
@@ -16,7 +22,7 @@ class Settings(BaseSettings):
     github_token: str = Field(default="")
     
     # JWT
-    jwt_secret_key: str = Field(default="dev-secret-change-in-production")
+    jwt_secret_key: str = Field(default=DEV_JWT_SECRET)
     jwt_algorithm: str = Field(default="HS256")
     access_token_expire_minutes: int = Field(default=15)
     refresh_token_expire_days: int = Field(default=30)

@@ -36,13 +36,16 @@ def _seed_reviews(db, user: User, full_name: str, summaries: tuple[str, str]) ->
     )
     db.add(pr)
     db.flush()
-    # `old` stands in for a review written before METRIC-1 landed: all three
-    # §8.1 columns NULL. Every row already in a real database looks like this,
-    # so it is worth having one in the fixture rather than only in one test.
+    # `old` stands in for a review written before METRIC-1 landed: every §8.1
+    # column NULL. Every row already in a real database looks like this, so it
+    # is worth having one in the fixture rather than only in one test. It now
+    # covers five NULLs rather than three — METRIC-2's two columns are exactly
+    # as absent from a legacy row as METRIC-1's were.
     old = Review(pr_id=pr.id, status="completed", summary=summaries[0], verdict="approve",
                  created_at=T0)
     new = Review(pr_id=pr.id, status="completed", summary=summaries[1], verdict="comment",
                  model_used="m", tokens_used=20, duration_ms=1234,
+                 queued_at=T0 + timedelta(hours=1) - timedelta(seconds=5), total_ms=6234,
                  created_at=T0 + timedelta(hours=1), raw_diff=RAW_DIFF)
     db.add_all([old, new])
     db.flush()
@@ -174,6 +177,21 @@ def test_review_detail_exposes_metrics(seeded) -> None:
     assert body["model_used"] == "m"
 
 
+def test_review_detail_exposes_queued_at_and_total_ms(seeded) -> None:
+    """§8.1's end-to-end figure, and the receipt it is measured from.
+
+    `startswith` rather than an exact string: SQLite stores the timestamp
+    naive, so the serialised value carries no offset suffix. The frontend
+    already handles that — see `ensureUtc` in lib/utils.ts.
+    """
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+
+    assert body["total_ms"] == 6234
+    assert body["queued_at"].startswith("2026-07-01T00:59:55")
+    # Queue wait is the difference, and it is derivable rather than stored.
+    assert body["total_ms"] - body["duration_ms"] == 5000
+
+
 def test_review_list_exposes_tokens_used(seeded) -> None:
     """On the list too, so a future analytics page can aggregate without an
     N+1 back to the detail endpoint."""
@@ -183,10 +201,12 @@ def test_review_list_exposes_tokens_used(seeded) -> None:
     assert newest["tokens_used"] == 20
     assert newest["duration_ms"] == 1234
     assert newest["model_used"] == "m"
+    assert newest["total_ms"] == 6234
+    assert newest["queued_at"] is not None
 
 
 def test_legacy_review_without_metrics_serializes(seeded) -> None:
-    """A row with all three columns NULL must serialize, not 500.
+    """A row with every §8.1 column NULL must serialize, not 500.
 
     Every review already in a real database is exactly this case, so the
     fields have to be present-and-null rather than absent — a consumer
@@ -199,6 +219,8 @@ def test_legacy_review_without_metrics_serializes(seeded) -> None:
     assert body["duration_ms"] is None
     assert body["tokens_used"] is None
     assert body["model_used"] is None
+    assert body["total_ms"] is None
+    assert body["queued_at"] is None
 
 
 def test_legacy_review_without_metrics_serializes_in_the_list(seeded) -> None:
@@ -208,6 +230,8 @@ def test_legacy_review_without_metrics_serializes_in_the_list(seeded) -> None:
     assert oldest["summary"] == "old"
     assert oldest["duration_ms"] is None
     assert oldest["tokens_used"] is None
+    assert oldest["total_ms"] is None
+    assert oldest["queued_at"] is None
 
 
 def test_get_review_404(seeded) -> None:

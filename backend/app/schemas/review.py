@@ -77,7 +77,16 @@ class ReviewOut(BaseModel):
     # on any review still in flight — so every consumer has to tolerate None
     # rather than assume a number.
     duration_ms: int | None
+    # Report §8.1's time-to-review: webhook receipt -> complete, the figure the
+    # < 90s target is about. Also null on manual triggers and re-reviews, which
+    # have no receipt — and it deliberately does not fall back to duration_ms.
+    #
+    # Queue wait is `total_ms - duration_ms`. Both operands are nullable and
+    # measured by different clocks in different processes, so the subtraction
+    # is left to the caller rather than shipped as a third field.
+    total_ms: int | None
     created_at: datetime
+    queued_at: datetime | None
     completed_at: datetime | None
 
 

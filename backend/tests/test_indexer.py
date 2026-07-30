@@ -1,4 +1,5 @@
 import hashlib
+import logging
 
 import chromadb
 import pytest
@@ -357,3 +358,107 @@ def test_reindexing_purges_already_embedded_secrets(db, repo) -> None:
     assert "app/service.py" in set(
         db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
     )
+
+
+# ── One bad file must not cost the run (INDEXER) ─────────────────────────────
+
+
+def _raise_on(monkeypatch, bad_path: str) -> None:
+    """Make ``chunk_source`` throw for one path and behave for every other."""
+    real = chunk_source
+
+    def flaky(file_path: str, source: str):
+        if file_path == bad_path:
+            raise RuntimeError(f"synthetic chunker failure on {file_path}")
+        return real(file_path, source)
+
+    monkeypatch.setattr("app.services.indexer.chunk_source", flaky)
+
+
+def test_unchunkable_file_does_not_abort_the_run(db, repo, monkeypatch) -> None:
+    """The whole point: one throw skips one file, not the repository.
+
+    Asserted against *committed* state rather than the return value, because
+    the failure mode is precisely that ``db.commit()`` at the end of
+    ``index_repository`` never runs — a return value cannot tell you the
+    transaction was thrown away.
+    """
+    _raise_on(monkeypatch, "app/b.py")
+
+    result, client, _ = _run(db, repo, FILES)
+
+    assert result.files_failed == 1
+    assert result.files_seen == 3
+    assert result.chunks_added > 0
+
+    db.expire_all()  # force a real read; the identity map would hide a rollback
+    assert repo.indexed_at is not None
+    paths = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert "app/a.py" in paths and "README.md" in paths
+    assert "app/b.py" not in paths  # never chunked, so nothing to record
+    assert get_repo_collection(client, repo.id).count() == result.chunks_added
+
+
+def test_unchunkable_file_keeps_its_existing_chunks(db, repo, monkeypatch) -> None:
+    """A file that fails on re-index keeps what it already had.
+
+    Without the ``seen_keys`` update the stale-cleanup deletes every row for
+    that file from Chroma *and* Postgres, which makes "could not re-chunk"
+    strictly worse than doing nothing. Same trap, same fix as
+    ``test_oversized_file_keeps_existing_chunks``.
+    """
+    _, client, _ = _run(db, repo, FILES)
+    before = get_repo_collection(client, repo.id).count()
+
+    _raise_on(monkeypatch, "app/b.py")
+    result, _, _ = _run(db, repo, FILES, client=client)
+
+    assert result.files_failed == 1
+    assert result.chunks_deleted == 0
+    assert get_repo_collection(client, repo.id).count() == before
+    paths = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert "app/b.py" in paths
+
+
+def test_unchunkable_file_is_logged_with_its_path(db, repo, monkeypatch, caplog) -> None:
+    """A silent skip is barely better than a crash.
+
+    ``files_failed`` says how many; only the log says which, and the path has
+    to be in the rendered message rather than in ``extra`` — nothing here
+    configures a structured handler.
+    """
+    _raise_on(monkeypatch, "app/b.py")
+
+    with caplog.at_level(logging.ERROR, logger="app.services.indexer"):
+        _run(db, repo, FILES)
+
+    assert "app/b.py" in caplog.text
+    # exc_info, so the traceback reaches the worker log rather than just a line.
+    assert any(record.exc_info for record in caplog.records)
+
+
+def test_a_file_dropped_from_the_listing_is_still_purged(db, repo, monkeypatch) -> None:
+    """The preservation above must not soften stale-cleanup in general.
+
+    Files that leave the listing still have to be purged — that path is what
+    remediates an already-embedded secret, and
+    ``test_reindexing_purges_already_embedded_secrets`` depends on it. A
+    failing file and a departed file are different cases and must stay so,
+    which this pins by exercising both in the same run.
+    """
+    _, client, _ = _run(db, repo, FILES)
+
+    _raise_on(monkeypatch, "app/b.py")
+    remaining = {k: v for k, v in FILES.items() if k != "README.md"}
+    result, _, _ = _run(db, repo, remaining, client=client)
+
+    paths = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert "README.md" not in paths  # dropped from the listing -> purged
+    assert "app/b.py" in paths  # present but unchunkable -> kept
+    assert result.chunks_deleted >= 1

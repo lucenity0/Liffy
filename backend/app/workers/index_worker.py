@@ -41,6 +41,10 @@ def index_repo_task(repo_id: str) -> dict:
             "chunks_added": result.chunks_added,
             "chunks_skipped": result.chunks_skipped,
             "chunks_deleted": result.chunks_deleted,
+            # This dict is the only place the count reaches a caller — the
+            # fields are enumerated, so a counter left out here is invisible
+            # outside the worker log, which is the thing it exists to avoid.
+            "files_failed": result.files_failed,
         }
     finally:
         db.close()

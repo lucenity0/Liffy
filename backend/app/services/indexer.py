@@ -3,6 +3,7 @@
 so re-runs only embed new or changed chunks (idempotent by content hash).
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -19,6 +20,11 @@ from app.services.rag_service import get_repo_collection
 # Files larger than this are skipped (vendored bundles, fixtures, etc.).
 MAX_FILE_BYTES = 200_000
 
+# The first logger in the backend. Celery captures stdlib loggers on the worker,
+# which is the only process this module runs in, so a skipped file surfaces in
+# the worker log without any logging configuration to add.
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class IndexResult:
@@ -26,6 +32,7 @@ class IndexResult:
     chunks_added: int = 0  # embedded + upserted this run
     chunks_skipped: int = 0  # unchanged (hash match)
     chunks_deleted: int = 0  # stale (file removed or shrank)
+    files_failed: int = 0  # raised during chunking; skipped, chunks preserved
 
 
 def _chunk_id(file_path: str, chunk_index: int) -> str:
@@ -60,7 +67,30 @@ def index_repository(
             # grew past the limit must not be purged by the stale-cleanup below.
             seen_keys.update(key for key in existing_rows if key[0] == file_path)
             continue
-        for chunk in chunk_source(file_path, content):
+        try:
+            chunks = chunk_source(file_path, content)
+        except Exception:
+            # One unchunkable file must not cost the run. Unguarded, anything
+            # raised here propagates out of this loop, out of the task, and
+            # past `repo.indexed_at` and `db.commit()` below — so the
+            # repository stays permanently "never indexed" and every chunk
+            # already prepared is discarded.
+            #
+            # `except Exception` rather than a bare `except`: KeyboardInterrupt
+            # and SystemExit should still stop the worker.
+            #
+            # The path goes in the message rather than in `extra=`, because
+            # nothing in this project configures a structured handler and
+            # `extra` would leave the one useful detail invisible.
+            logger.exception("chunking failed, skipping %s", file_path)
+            # Same preservation as the oversized branch, for the same reason:
+            # without this the stale-cleanup below deletes the file's existing
+            # chunks, turning "could not re-chunk" into "index destroyed".
+            seen_keys.update(key for key in existing_rows if key[0] == file_path)
+            result.files_failed += 1
+            continue
+
+        for chunk in chunks:
             key = (chunk.file_path, chunk.chunk_index)
             seen_keys.add(key)
             row = existing_rows.get(key)

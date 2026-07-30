@@ -114,6 +114,9 @@ def test_index_task_indexes_repo(session_factory, monkeypatch) -> None:
     assert result["status"] == "ok"
     assert result["files_seen"] == 1
     assert result["chunks_added"] >= 1
+    # The task dict enumerates its fields, so a counter added to IndexResult
+    # and forgotten here never reaches a caller.
+    assert result["files_failed"] == 0
 
 
 def test_index_task_missing_repo(session_factory) -> None:

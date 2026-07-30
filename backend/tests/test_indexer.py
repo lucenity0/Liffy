@@ -14,7 +14,7 @@ from app.models.repository import Repository
 from app.models.user import User
 from app.services.chunker import chunk_source
 from app.services.github_service import GitHubAuthError, GitHubError, _is_indexable
-from app.services.indexer import index_repository
+from app.services.indexer import IndexingError, index_repository
 from app.services.rag_service import get_repo_collection
 
 
@@ -603,3 +603,111 @@ def test_a_file_dropped_from_the_listing_is_still_purged_when_another_fails(db, 
     assert "README.md" not in paths  # dropped from the listing -> purged
     assert "app/b.py" in paths  # present but unfetchable -> kept
     assert result.chunks_deleted >= 1
+
+
+# ── A run that indexed nothing must not claim it did (INDEXER) ───────────────
+
+
+def _all_fetches_fail(files, exc: Exception | None = None) -> FakeGitHub:
+    """A FakeGitHub where every ``get_file_content`` throws — a partition."""
+
+    class DeadGitHub(FakeGitHub):
+        def get_file_content(self, owner, repo, path, ref=None):
+            raise exc or httpx.ConnectError("network partition")
+
+    return DeadGitHub(files)
+
+
+def test_a_run_where_every_file_fails_is_not_an_index(db, repo) -> None:
+    """The failure mode the per-file skip introduces if left unbounded.
+
+    Skipping a file is right because the *rest* of the run still produces an
+    index. When there is no rest, that premise is gone — and marking the
+    repository indexed is worse than the crash it replaced. ``repo.indexed_at``
+    is what the API turns into ``status="indexed"``, and ``useRepoStatus``
+    stops polling the moment it sees that, so the repository would sit at
+    "Indexed - 0 chunks" with no poll left to correct it.
+    """
+    with pytest.raises(IndexingError, match="every file failed"):
+        _run(db, repo, FILES, gh=_all_fetches_fail(FILES))
+
+    db.expire_all()
+    assert repo.indexed_at is None  # never indexed, and still says so
+
+
+def test_a_totally_failed_rerun_does_not_overwrite_a_good_index(db, repo) -> None:
+    """A partition during re-index must not erase or restamp a real index.
+
+    The previous ``indexed_at`` is the truthful value here — that *is* when the
+    repository was last successfully indexed — and the existing chunks have to
+    survive, since a run that read nothing has learned nothing about them.
+    """
+    _, client, _ = _run(db, repo, FILES)
+    db.expire_all()
+    first_indexed_at = repo.indexed_at
+    before = get_repo_collection(client, repo.id).count()
+    paths_before = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+
+    with pytest.raises(IndexingError):
+        _run(db, repo, FILES, client=client, gh=_all_fetches_fail(FILES))
+
+    db.expire_all()
+    assert repo.indexed_at == first_indexed_at  # not restamped
+    assert get_repo_collection(client, repo.id).count() == before
+    paths_after = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert paths_after == paths_before
+
+
+def test_nothing_is_written_to_chroma_when_a_run_is_refused(db, repo) -> None:
+    """The refusal happens before any store is touched.
+
+    Chroma is not transactional, so raising after the stale-cleanup would
+    delete vectors that the Postgres rollback then "restores" as rows pointing
+    at nothing. A file dropped from the listing is the case that reaches it:
+    it is not preserved by ``keep_existing_chunks``, so it would be purged on
+    the way past.
+    """
+    _, client, _ = _run(db, repo, FILES)
+    before = get_repo_collection(client, repo.id).count()
+
+    # README.md leaves the listing *and* every remaining fetch fails.
+    remaining = {k: v for k, v in FILES.items() if k != "README.md"}
+    with pytest.raises(IndexingError):
+        _run(db, repo, remaining, client=client, gh=_all_fetches_fail(remaining))
+
+    assert get_repo_collection(client, repo.id).count() == before  # nothing purged
+    db.expire_all()
+    rows = db.scalars(select(RepoEmbedding).where(RepoEmbedding.repo_id == repo.id)).all()
+    assert len(rows) == before  # Postgres and Chroma still agree
+
+
+def test_a_partial_failure_still_indexes(db, repo) -> None:
+    """The guard must not fire when the run did real work.
+
+    One failure out of three is exactly what the per-file skip exists for, and
+    turning that back into a hard failure would undo this whole PR.
+    """
+    gh = _fetch_raises(FILES, "app/b.py", GitHubError("GitHub returned HTTP 500"))
+
+    result, _, _ = _run(db, repo, FILES, gh=gh)
+
+    assert result.files_failed == 1
+    db.expire_all()
+    assert repo.indexed_at is not None
+
+
+def test_an_empty_repository_is_legitimately_indexed(db, repo) -> None:
+    """``files_seen == 0`` is not a failure — there was nothing to fail at.
+
+    Guarding on the ratio alone (``0 == 0``) would refuse to index an empty
+    repository forever, leaving it polling "Indexing" with nothing coming.
+    """
+    result, _, _ = _run(db, repo, {})
+
+    assert result.files_seen == 0 and result.files_failed == 0
+    db.expire_all()
+    assert repo.indexed_at is not None

@@ -26,6 +26,18 @@ MAX_FILE_BYTES = 200_000
 logger = logging.getLogger(__name__)
 
 
+class IndexingError(RuntimeError):
+    """A run that could not produce an index at all.
+
+    Distinct from the per-file skips this module absorbs: those leave a real,
+    if incomplete, index behind. This says the run has nothing to show and the
+    repository must not be marked indexed.
+
+    Not ``GitHubError`` — the condition counts chunking failures as well as
+    fetch failures, so a GitHub-specific type would be a lie half the time.
+    """
+
+
 @dataclass
 class IndexResult:
     files_seen: int = 0
@@ -132,6 +144,32 @@ def index_repository(
                 result.chunks_skipped += 1
                 continue
             to_embed.append(chunk)
+
+    # A run in which nothing could be read is not an index, and must not be
+    # reported as one. `repo.indexed_at` below is what the API turns into
+    # `status="indexed"`, and `useRepoStatus` stops polling the moment it sees
+    # that — so a first index whose every fetch failed would sit at
+    # "Indexed - 0 chunks" with nothing behind it and no poll left running to
+    # correct it. Every review against that repository then retrieves no
+    # context and quietly gets worse.
+    #
+    # Skipping a file is the right call precisely because the *rest* of the run
+    # still produced an index. When there is no rest, the premise is gone.
+    #
+    # Raised here rather than just before `indexed_at`: Chroma is not
+    # transactional. A file that also dropped out of the listing is not
+    # preserved by `keep_existing_chunks`, so the stale-cleanup below would
+    # already have deleted its vectors by then, and rolling the Postgres
+    # transaction back would leave rows pointing at vectors that no longer
+    # exist. Nothing has been written yet at this point.
+    #
+    # `files_seen` guards the empty repository, which is legitimately indexed
+    # with zero chunks.
+    if result.files_seen and result.files_failed == result.files_seen:
+        raise IndexingError(
+            f"every file failed ({result.files_failed} of {result.files_seen}); "
+            "refusing to mark the repository indexed"
+        )
 
     if to_embed:
         vectors = embedder.embed_texts([c.text for c in to_embed])

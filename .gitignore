@@ -39,6 +39,10 @@ Thumbs.db
 *.log
 celerybeat-schedule
 
+#deploy
+.preview-slug
+deploy-preview.sh
+build-report.py
 create_liffy_issues.sh
 front_end_issues.sh
 create_issues.sh

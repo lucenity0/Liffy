@@ -1,0 +1,1913 @@
+<title>Liffy — How It Works</title>
+
+<style>
+/* ==================================================================== *
+ * Fonts — Monaspace, the two faces Liffy itself ships. Inlined because
+ * the Artifact CSP blocks font CDNs and a silent fallback would lose
+ * the whole identity.
+ * ==================================================================== */
+@font-face {
+  font-family: "Monaspace Neon";
+  src: __NEON_SRC__;
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Monaspace Argon";
+  src: __ARGON_SRC__;
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+/* Metric-matched fallback, same overrides as src/styles/fonts.css:
+   Monaspace advances 0.62em against the system stack's 0.60em, so
+   unadjusted fallback text is ~3% narrow and the page shifts on swap. */
+@font-face {
+  font-family: "Monaspace Fallback";
+  src: local("SF Mono"), local("SFMono-Regular"), local("Menlo"),
+       local("Consolas"), local("DejaVu Sans Mono");
+  size-adjust: 103.3%;
+  ascent-override: 94.5%;
+  descent-override: 20%;
+  line-gap-override: 10%;
+}
+
+/* ==================================================================== *
+ * Palette — taken verbatim from frontend/src/index.css so this page and
+ * the product are literally the same ink. Contrast ratios in the
+ * comments are the ones measured there, against --paper.
+ * ==================================================================== */
+:root {
+  --paper: #f4f1ea;
+  --card: #faf8f3;
+  --recessed: #efebe2;
+  --rule: #ded8cb;
+  --rule-strong: #c9c1b0;
+  --shadow-edge: #c9c1b0;
+
+  --ink: #2b2925;      /* 12.9:1 */
+  --ink-dim: #6b6459;  /*  5.2:1 */
+  --ink-sub: #8e8678;  /*  3.2:1 — large text and non-text only */
+
+  --oxide: #9a3f2b;    /* critical · request_changes · failed */
+  --sage: #4a6b4a;     /* approve · completed · indexed */
+  --ochre: #7d6019;    /* warning · processing */
+  --payne: #3f5a73;    /* info · comment */
+
+  --tint: 9%;
+  --oxide-tint: color-mix(in oklab, var(--oxide) var(--tint), var(--card));
+  --sage-tint: color-mix(in oklab, var(--sage) var(--tint), var(--card));
+  --ochre-tint: color-mix(in oklab, var(--ochre) var(--tint), var(--card));
+  --payne-tint: color-mix(in oklab, var(--payne) var(--tint), var(--card));
+
+  --grain-opacity: 0.034;
+  --grain-blend: multiply;
+
+  --f-display: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+  --f-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
+
+  --step: 1.5rem;
+  --measure: 64ch;
+}
+
+/* Graphite. A structural inversion, not a lightness flip: card stays the
+   lightest of the three surfaces so elevation still reads as "closer".
+ *
+ * Two opt-out hooks because this file is served two ways. On
+ * liffy.lucenity.dev the site's own contract puts `.dark` / `.light` on
+ * <html> before first paint (see frontend/index.html); inside a Claude
+ * artifact the host stamps `data-theme` instead. Both have to beat the
+ * media query in both directions, so both are named everywhere. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) {
+    --paper: #1d1b18;
+    --card: #28251f;
+    --recessed: #141311;
+    --rule: #423d36;
+    --rule-strong: #5a5349;
+    --shadow-edge: #0d0c0a;
+
+    --ink: #e6e1d6;
+    --ink-dim: #9c9280;
+    --ink-sub: #786f60;
+
+    --oxide: #dd8462;
+    --sage: #7ba171;
+    --ochre: #bd9433;
+    --payne: #84a5c2;
+
+    --tint: 17%;
+    --grain-opacity: 0.05;
+    --grain-blend: screen;
+  }
+}
+:root[data-theme="dark"],
+:root.dark {
+  --paper: #1d1b18;
+  --card: #28251f;
+  --recessed: #141311;
+  --rule: #423d36;
+  --rule-strong: #5a5349;
+  --shadow-edge: #0d0c0a;
+
+  --ink: #e6e1d6;
+  --ink-dim: #9c9280;
+  --ink-sub: #786f60;
+
+  --oxide: #dd8462;
+  --sage: #7ba171;
+  --ochre: #bd9433;
+  --payne: #84a5c2;
+
+  --tint: 17%;
+  --grain-opacity: 0.05;
+  --grain-blend: screen;
+}
+
+/* ==================================================================== *
+ * Ground
+ * ==================================================================== */
+.pg {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-display);
+  font-size: clamp(0.94rem, 0.3vw + 0.88rem, 1rem);
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+  padding-bottom: 5rem;
+}
+.pg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.wrap {
+  position: relative;
+  z-index: 1;
+  max-width: 70rem;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 3rem);
+}
+
+/* ==================================================================== *
+ * Type roles
+ * ==================================================================== */
+.lbl {
+  font-family: var(--f-ui);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  line-height: 1.4;
+}
+.num { font-family: var(--f-ui); font-variant-numeric: tabular-nums; }
+
+.h2 {
+  font-family: var(--f-display);
+  font-size: clamp(1.3rem, 2.4vw, 1.7rem);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  text-wrap: balance;
+  margin: 0;
+}
+.h3 {
+  font-family: var(--f-display);
+  font-size: 1.02rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  margin: 0;
+  text-wrap: balance;
+}
+.p { margin: 0; max-width: var(--measure); }
+.p + .p { margin-top: 0.85rem; }
+.dim { color: var(--ink-dim); }
+.sub { color: var(--ink-sub); }
+.tight { line-height: 1.55; }
+
+code, .mono {
+  font-family: var(--f-ui);
+  font-size: 0.88em;
+  background: var(--recessed);
+  border: 1px solid var(--rule);
+  padding: 0.05em 0.34em;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+/* ==================================================================== *
+ * Masthead
+ * ==================================================================== */
+/* padding-bottom matches .mast-meta's padding-top so the meta row sits
+   optically centred between its own rule and the masthead's, rather than
+   hanging off the top one with a hole underneath. */
+.mast {
+  padding: clamp(3rem, 9vw, 6rem) 0 1.1rem;
+  border-bottom: 1px solid var(--rule);
+}
+.mast-top {
+  display: flex;
+  align-items: flex-start;
+  gap: clamp(1.25rem, 4vw, 2.5rem);
+  flex-wrap: wrap;
+}
+/* The front door's cat is 26 cells wide to 16 tall, so it needs
+   noticeably more width than a square sprite to read at the same weight
+   beside the wordmark. */
+.cat { flex: 0 0 auto; padding-top: 0.35rem; }
+.cat svg { display: block; width: clamp(104px, 15vw, 148px); height: auto; }
+.mast-id { flex: 1 1 18rem; min-width: 0; }
+
+.wordmark {
+  font-family: var(--f-display);
+  font-size: clamp(2.9rem, 10vw, 5rem);
+  font-weight: 500;
+  letter-spacing: -0.055em;
+  line-height: 0.92;
+  margin: 0.15em 0 0;
+  display: block;
+}
+.tagline {
+  font-family: var(--f-ui);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 0.9rem 0 0;
+}
+/* The one block on the page set to the full column width and justified,
+   so its edges land flush against the rules above and below it. Body copy
+   inside the plates keeps its ~64ch measure — this treatment is for the
+   opening statement only, where the line is a banner rather than
+   something you read paragraph after paragraph. */
+.thesis {
+  font-size: clamp(1.05rem, 1.6vw, 1.28rem);
+  line-height: 1.62;
+  max-width: none;
+  margin: clamp(1.75rem, 4vw, 2.5rem) 0 0;
+  text-align: justify;
+  hyphens: none;
+}
+.thesis b { font-weight: 600; }
+/* Justified monospace needs enough words per line to absorb the extra
+   space at the breaks. Narrow viewports do not have them, so the gaps
+   turn into rivers — ragged right is the better failure there. */
+@media (max-width: 40rem) {
+  .thesis { text-align: left; text-wrap: pretty; }
+}
+
+.mast-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.75rem;
+  margin-top: 2rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--rule);
+}
+.mast-meta .lbl span { color: var(--ink-dim); }
+
+/* ==================================================================== *
+ * Plates — the repeating unit. Hard offset shadow, no radius anywhere.
+ * ==================================================================== */
+.plate {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  box-shadow: 4px 4px 0 var(--shadow-edge);
+  margin-top: clamp(2.5rem, 6vw, 4rem);
+}
+.plate-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.7rem clamp(1rem, 3vw, 1.75rem);
+  background: var(--recessed);
+  border-bottom: 1px solid var(--rule);
+  flex-wrap: wrap;
+}
+.plate-no {
+  font-family: var(--f-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--ink-sub);
+  flex: 0 0 auto;
+}
+.plate-ti {
+  font-family: var(--f-ui);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.plate-bd { padding: clamp(1.25rem, 3.5vw, 2rem); }
+
+.act-hd { margin-bottom: 1.5rem; }
+.act-hd .h2 { margin-top: 0.4rem; }
+.act-hd .p { margin-top: 0.85rem; }
+
+/* ==================================================================== *
+ * Act divider
+ * ==================================================================== */
+.act-rule {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: clamp(3rem, 7vw, 4.5rem);
+}
+.act-rule .line { flex: 1; height: 1px; background: var(--rule); }
+.act-rule .lbl { color: var(--ink-dim); white-space: nowrap; }
+.act-rule svg { display: block; width: 28px; height: auto; flex: 0 0 auto; }
+
+/* ==================================================================== *
+ * The one-minute cards
+ * ==================================================================== */
+.minute {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-top: clamp(2.5rem, 6vw, 3.5rem);
+}
+.minute-cell { background: var(--card); padding: 1.4rem clamp(1rem, 2.5vw, 1.5rem); }
+.minute-cell .lbl { margin-bottom: 0.65rem; }
+.minute-cell .p { font-size: 0.94rem; line-height: 1.62; }
+
+/* ==================================================================== *
+ * Cast table — who does what
+ * ==================================================================== */
+.cast { display: grid; gap: 1px; background: var(--rule); }
+.cast-row {
+  background: var(--card);
+  display: grid;
+  grid-template-columns: 2.5rem minmax(9rem, 13rem) 1fr;
+  gap: 0 clamp(0.75rem, 2vw, 1.5rem);
+  padding: 1.1rem clamp(0.75rem, 2vw, 1.25rem);
+  align-items: start;
+}
+.cast-key {
+  font-family: var(--f-ui);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--ink-sub);
+  border: 1px solid var(--rule-strong);
+  text-align: center;
+  padding: 0.15rem 0;
+  line-height: 1.5;
+}
+.cast-name .h3 { font-size: 0.98rem; }
+.cast-tech {
+  font-family: var(--f-ui);
+  font-size: 0.72rem;
+  color: var(--ink-sub);
+  letter-spacing: 0.01em;
+  margin-top: 0.2rem;
+  line-height: 1.5;
+}
+.cast-what { font-size: 0.94rem; line-height: 1.62; color: var(--ink-dim); }
+@media (max-width: 46rem) {
+  .cast-row { grid-template-columns: 2.5rem 1fr; }
+  .cast-what { grid-column: 2; margin-top: 0.55rem; }
+}
+
+/* ==================================================================== *
+ * The ladder — the flow itself. A left spine with numbered nodes.
+ * ==================================================================== */
+.ladder { display: grid; gap: 0; margin-top: 0.5rem; }
+.rung {
+  display: grid;
+  grid-template-columns: 2.15rem 1fr;
+  gap: 0 clamp(0.85rem, 2.5vw, 1.4rem);
+  position: relative;
+  padding-bottom: 1.35rem;
+}
+.rung:last-child { padding-bottom: 0; }
+.spine {
+  grid-column: 1;
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+/* The connector, drawn from under one node to the top of the next. `left`
+   is set explicitly rather than left to the flex static position, which
+   browsers resolve inconsistently for absolutely-positioned children. */
+.rung:not(:last-child) .spine::after {
+  content: "";
+  position: absolute;
+  top: 2.15rem;
+  bottom: -1.35rem;
+  left: calc(50% - 0.5px);
+  width: 1px;
+  background: var(--rule-strong);
+}
+.node {
+  width: 2.15rem;
+  height: 2.15rem;
+  border: 1px solid var(--ink-sub);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  font-family: var(--f-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--ink-dim);
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+}
+.rung-bd { padding-top: 0.15rem; min-width: 0; }
+.rung-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.3rem;
+}
+.rung-bd .p { font-size: 0.94rem; line-height: 1.64; color: var(--ink-dim); }
+.rung-bd .plain {
+  color: var(--ink);
+  font-size: 0.94rem;
+  line-height: 1.64;
+  margin-top: 0.45rem;
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--rule-strong);
+  max-width: var(--measure);
+}
+
+/* who does it — a small right-aligned chip */
+.owner {
+  font-family: var(--f-ui);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  border: 1px solid var(--rule);
+  padding: 0.08rem 0.4rem;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* Scroll reveal. Gated on `.anim`, which a script at the top of the page
+   adds before any of this content is parsed. Without it the rungs are
+   simply visible — a blocked script must never leave the flow invisible,
+   which is exactly what a bare `.rvl { opacity: 0 }` would do. */
+.anim .rvl { opacity: 0; transform: translateY(8px); }
+.anim .rvl.in {
+  opacity: 1;
+  transform: none;
+  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .anim .rvl { opacity: 1; transform: none; }
+  .anim .rvl.in { transition: none; }
+}
+
+/* ==================================================================== *
+ * Strip — the at-a-glance horizontal summary above each act's ladder
+ * ==================================================================== */
+/* A wrapping grid rather than a scrolling row: the hairline between stops
+   is the 1px gap showing the rule colour through, which survives wrapping
+   where a shared `border-left: none` would not. */
+.strip-scroll { margin-bottom: 1.75rem; }
+.strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 1px;
+  background: var(--rule-strong);
+  border: 1px solid var(--rule-strong);
+}
+.stop {
+  background: var(--recessed);
+  padding: 0.6rem 0.85rem;
+  min-width: 0;
+}
+.stop-n {
+  font-family: var(--f-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-sub);
+  display: block;
+}
+.stop-t {
+  font-family: var(--f-ui);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--ink-dim);
+  margin-top: 0.25rem;
+  display: block;
+}
+
+/* ==================================================================== *
+ * Diagram primitives — boxes and hairline arrows
+ * ==================================================================== */
+/* Boxes share the row and shrink to fit it — `min-width: 0` is what stops
+   a long label forcing the container wider than the plate and putting a
+   scrollbar under the diagram. */
+.dg-scroll { padding-bottom: 0.25rem; }
+.dg {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  font-family: var(--f-ui);
+}
+.dg-box {
+  border: 1px solid var(--ink-sub);
+  background: var(--card);
+  padding: 0.7rem 0.75rem;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.dg-box.fill { background: var(--recessed); }
+.dg-box.dash { border-style: dashed; }
+.dg-t {
+  font-size: clamp(0.7rem, 1.15vw, 0.78rem);
+  color: var(--ink);
+  display: block;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.dg-s {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  display: block;
+  margin-top: 0.25rem;
+}
+.dg-arrow {
+  flex: 0 0 auto;
+  width: clamp(1.1rem, 2.4vw, 2rem);
+  align-self: center;
+  height: 1px;
+  background: var(--ink-sub);
+  position: relative;
+}
+.dg-arrow::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: -3px;
+  border-left: 6px solid var(--ink-sub);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+}
+
+/* Below this the five-across row gets too cramped to read, so the flow
+   turns and runs downward. The arrow is the same element rotated a
+   quarter turn — one arrow definition, two orientations. */
+@media (max-width: 44rem) {
+  .dg { flex-direction: column; align-items: stretch; }
+  .dg-arrow {
+    width: 1px;
+    height: 1.5rem;
+    align-self: center;
+  }
+  .dg-arrow::after {
+    right: -2.5px;
+    top: auto;
+    bottom: 0;
+    border-left: 3.5px solid transparent;
+    border-right: 3.5px solid transparent;
+    border-top: 6px solid var(--ink-sub);
+    border-bottom: none;
+  }
+}
+
+/* ==================================================================== *
+ * Side-by-side compare (prompt wrapper vs RAG)
+ * ==================================================================== */
+.vs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-top: 1.5rem;
+}
+.vs-col { background: var(--card); padding: 1.25rem clamp(1rem, 2.5vw, 1.4rem); }
+.vs-col.bad { background: var(--recessed); }
+.vs-hd { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.9rem; }
+.quote {
+  font-family: var(--f-display);
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--ink);
+  border-left: 2px solid var(--rule-strong);
+  padding-left: 0.85rem;
+  margin: 0 0 0.9rem;
+}
+.vs-col.good .quote { border-left-color: var(--sage); }
+.verdict-note { font-size: 0.86rem; line-height: 1.6; color: var(--ink-dim); margin: 0; }
+
+/* ==================================================================== *
+ * State colour — the ONLY colour on the page.
+ * ==================================================================== */
+.pill {
+  font-family: var(--f-ui);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 1.6;
+}
+.pill.crit { color: var(--oxide); border-color: var(--oxide); background: var(--oxide-tint); }
+.pill.warn { color: var(--ochre); border-color: var(--ochre); background: var(--ochre-tint); }
+.pill.info { color: var(--payne); border-color: var(--payne); background: var(--payne-tint); }
+.pill.ok   { color: var(--sage);  border-color: var(--sage);  background: var(--sage-tint); }
+.pill.none { color: var(--ink-sub); border-color: var(--rule-strong); background: var(--recessed); }
+
+/* ==================================================================== *
+ * Proof plate — the real review
+ * ==================================================================== */
+.receipt {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-bottom: 1.75rem;
+}
+.receipt-cell { background: var(--recessed); padding: 0.85rem 1rem; }
+.receipt-v {
+  font-family: var(--f-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  color: var(--ink);
+  display: block;
+  margin-top: 0.25rem;
+  line-height: 1.3;
+}
+
+.cmt {
+  border: 1px solid var(--rule);
+  background: var(--card);
+  padding: 1rem 1.15rem;
+  margin-top: 1rem;
+}
+.cmt-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+.cmt-file {
+  font-family: var(--f-ui);
+  font-size: 0.74rem;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+.cmt-body { font-size: 0.93rem; line-height: 1.65; margin: 0; overflow-wrap: anywhere; }
+.cmt-plain {
+  font-size: 0.9rem;
+  line-height: 1.62;
+  color: var(--ink-dim);
+  margin: 0.75rem 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--rule);
+}
+.cmt-plain b { color: var(--ink); font-weight: 600; }
+
+/* distribution bars */
+.dist { display: grid; gap: 0.5rem; margin-top: 1.25rem; }
+.dist-row {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 8rem) 1fr 2rem;
+  align-items: center;
+  gap: 0.75rem;
+}
+.dist-l { font-family: var(--f-ui); font-size: 0.7rem; color: var(--ink-dim); }
+.dist-track { height: 12px; background: var(--recessed); border: 1px solid var(--rule); position: relative; }
+.dist-fill { position: absolute; inset: 0 auto 0 0; background: var(--ink-sub); }
+.dist-n {
+  font-family: var(--f-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+  text-align: right;
+}
+
+/* ==================================================================== *
+ * Status board
+ * ==================================================================== */
+.board { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.board-row {
+  background: var(--card);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem 1rem;
+  padding: 0.85rem clamp(0.85rem, 2vw, 1.25rem);
+  align-items: center;
+}
+.board-row.done { background: var(--card); }
+.board-row.now { background: var(--recessed); }
+.board-t { font-size: 0.93rem; line-height: 1.55; }
+.board-t small { display: block; color: var(--ink-sub); font-family: var(--f-ui); font-size: 0.68rem; margin-top: 0.15rem; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-top: 1.75rem;
+}
+.stat { background: var(--recessed); padding: 0.9rem 1rem; }
+.stat-v {
+  font-family: var(--f-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.4rem;
+  line-height: 1.2;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+/* ==================================================================== *
+ * Notes / callout
+ * ==================================================================== */
+.note {
+  border: 1px solid var(--rule-strong);
+  border-left-width: 3px;
+  background: var(--recessed);
+  padding: 0.95rem 1.15rem;
+  margin-top: 1.5rem;
+}
+.note .p { font-size: 0.9rem; line-height: 1.62; color: var(--ink-dim); }
+.note .lbl { margin-bottom: 0.4rem; }
+
+/* ==================================================================== *
+ * Colophon
+ * ==================================================================== */
+/* Three columns so the footer fills the same width as the rule above it:
+   the cat, the note, and the credit block pushed to the right edge. */
+.colo {
+  margin-top: clamp(3.5rem, 8vw, 5rem);
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 1.5rem 2.5rem;
+  align-items: start;
+}
+.colo .p { font-size: 0.86rem; line-height: 1.65; color: var(--ink-sub); max-width: 60ch; }
+.colo [data-sprite] { opacity: 0.75; }
+.colo svg { width: 56px; height: auto; display: block; }
+.act-rule [data-sprite] { flex: 0 0 auto; display: block; }
+
+.colo-credit {
+  text-align: right;
+  display: grid;
+  gap: 0.3rem;
+  justify-items: end;
+}
+.colo-credit .lbl { color: var(--ink-sub); }
+.colo-credit .colo-credit-v { font-family: var(--f-ui); font-size: 0.78rem; color: var(--ink-dim); }
+
+/* The bottom meta row, mirroring .mast-meta so the page closes the way it
+   opened. Spans all three columns. */
+.colo-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.75rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--rule);
+}
+.colo-foot .lbl span { color: var(--ink-dim); }
+
+@media (max-width: 48rem) {
+  .colo { grid-template-columns: auto minmax(0, 1fr); }
+  .colo-credit { grid-column: 1 / -1; text-align: left; justify-items: start; }
+}
+
+a { color: inherit; text-decoration-color: var(--rule-strong); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--ink-dim); }
+:focus-visible { outline: 2px solid var(--payne); outline-offset: 2px; }
+</style>
+
+<script>
+/* Runs before the flow below is parsed, so the reveal never flashes. Its
+   only job is to confirm scripting is on: everything the reveal hides is
+   hidden by `.anim`, which only exists if this line ran. */
+document.documentElement.classList.add("anim");
+</script>
+
+<div class="pg">
+<div class="wrap">
+
+  <!-- ============================================================== -->
+  <!-- MASTHEAD                                                        -->
+  <!-- ============================================================== -->
+  <header class="mast">
+    <div class="mast-top">
+      <div class="cat" data-sprite="cat" data-cell="6" aria-hidden="true"></div>
+      <div class="mast-id">
+        <p class="lbl">Architecture, explained without the jargon</p>
+        <h1 class="wordmark">Liffy</h1>
+        <p class="tagline">AI-powered peer code review</p>
+      </div>
+    </div>
+
+    <p class="thesis">
+      Liffy reads a programmer's proposed change to a piece of software and writes
+      back the kind of feedback a <b>senior engineer</b> would give &mdash; except it has
+      already read the entire project, and it never runs out of time.
+    </p>
+
+    <div class="mast-meta">
+      <p class="lbl">Built by <span>Nafees&nbsp;S &amp; Gajalakshmi</span></p>
+      <p class="lbl">Report <span>v1.0</span></p>
+      <p class="lbl">Status <span>Working end to end</span></p>
+    </div>
+  </header>
+
+  <!-- ============================================================== -->
+  <!-- THE ONE-MINUTE VERSION                                          -->
+  <!-- ============================================================== -->
+  <section class="minute" aria-label="The one minute version">
+    <div class="minute-cell">
+      <p class="lbl">The situation</p>
+      <p class="p">Before new code joins a project, another programmer is supposed to read it
+        and catch the mistakes. This is called <b>code review</b>. It is the single best
+        moment to catch a bug &mdash; and the one everybody is too busy to do properly.</p>
+    </div>
+    <div class="minute-cell">
+      <p class="lbl">The gap</p>
+      <p class="p">Automated checkers already exist, but they only catch spelling-level
+        problems. They cannot tell you <i>"this contradicts how the rest of your project
+        works."</i> For that you need something that has read the whole project.</p>
+    </div>
+    <div class="minute-cell">
+      <p class="lbl">What Liffy does</p>
+      <p class="p">It reads the entire codebase once and remembers it. Then, every time
+        someone proposes a change, it pulls up the parts of the project that are relevant,
+        reads the change against them, and writes specific, line-by-line feedback.</p>
+    </div>
+    <div class="minute-cell">
+      <p class="lbl">Why it is not just "ask an AI"</p>
+      <p class="p">An AI asked cold gives generic advice. Liffy hands the AI the surrounding
+        code first. That is the whole product &mdash; and it is the difference between
+        <i>"consider adding error handling"</i> and <i>"this breaks the pattern in line 40."</i></p>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- PLATE 01 — THE CAST                                             -->
+  <!-- ============================================================== -->
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 01</span>
+      <span class="plate-ti">The cast &mdash; who does what</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <h2 class="h2">Six parts, each with one job</h2>
+        <p class="p dim">Liffy is not one program. It is six pieces that hand work to each
+          other, and none of them knows how the others are built internally &mdash; they only
+          know what to pass along. That is deliberate: any one piece can be swapped out
+          without touching the rest.</p>
+      </div>
+
+      <div class="cast">
+        <div class="cast-row">
+          <div class="cast-key">A</div>
+          <div class="cast-name">
+            <h3 class="h3">The front desk</h3>
+            <p class="cast-tech">FastAPI &middot; Nginx</p>
+          </div>
+          <p class="cast-what">Every request from a browser or from GitHub arrives here first.
+            It checks who is asking, then passes the work to whoever handles it.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">B</div>
+          <div class="cast-name">
+            <h3 class="h3">The doorman</h3>
+            <p class="cast-tech">GitHub OAuth 2.0 &middot; JWT</p>
+          </div>
+          <p class="cast-what">Nobody creates a Liffy password. You sign in with the GitHub
+            account you already have, and Liffy is handed a permission slip for exactly the
+            repositories you approve.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">C</div>
+          <div class="cast-name">
+            <h3 class="h3">The receiving dock</h3>
+            <p class="cast-tech">Webhook &middot; Diff parser</p>
+          </div>
+          <p class="cast-what">GitHub knocks here the instant someone proposes a change.
+            This piece verifies the knock is genuinely from GitHub, then breaks the change
+            into readable pieces.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">D</div>
+          <div class="cast-name">
+            <h3 class="h3">The librarian</h3>
+            <p class="cast-tech">Tree-sitter &middot; ChromaDB</p>
+          </div>
+          <p class="cast-what">Reads the whole codebase and files every function away by
+            <i>meaning</i>, so it can later be asked "show me the code most similar to this"
+            and answer in milliseconds.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">E</div>
+          <div class="cast-name">
+            <h3 class="h3">The reviewer</h3>
+            <p class="cast-tech">LangChain &middot; Claude Opus 5</p>
+          </div>
+          <p class="cast-what">Gets the change plus the relevant surrounding code, and writes
+            the actual review. It is required to answer in a strict format so nothing
+            downstream has to guess.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">F</div>
+          <div class="cast-name">
+            <h3 class="h3">The examiner</h3>
+            <p class="cast-tech">Scoring engine &middot; Feedback store</p>
+          </div>
+          <p class="cast-what">Collects the thumbs-up and thumbs-down a developer gives each
+            comment, and turns them into a score for how good Liffy's reviews actually are.
+            <span class="pill warn">being built now</span></p>
+        </div>
+      </div>
+
+      <div class="note">
+        <p class="lbl">Supporting cast</p>
+        <p class="p">Three more pieces do the unglamorous work: <b>PostgreSQL</b> is the
+          filing cabinet where every review is permanently stored; <b>Redis</b> is the
+          ticket queue holding jobs waiting to be done; <b>Celery</b> is the back-room
+          worker that picks tickets off that queue. They exist because a review takes
+          up to a minute, and nobody should stare at a spinner while it happens.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- ACT I — SIGNING IN                                              -->
+  <!-- ============================================================== -->
+  <div class="act-rule">
+    <span class="lbl">Act I</span>
+    <span class="line"></span>
+    <span data-sprite="key" data-cell="4" aria-hidden="true"></span>
+  </div>
+
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 02</span>
+      <span class="plate-ti">Signing in</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <p class="lbl">Where it starts</p>
+        <h2 class="h2">Liffy never sees your password</h2>
+        <p class="p dim">A code review tool has to be trusted with private source code, so
+          the sign-in has to be beyond question. Liffy sidesteps the problem entirely:
+          it has no accounts and no passwords of its own. GitHub vouches for you.</p>
+      </div>
+
+      <div class="dg-scroll">
+        <div class="dg">
+          <div class="dg-box"><span class="dg-t">You click<br>"Sign in"</span><span class="dg-s">Browser</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box fill"><span class="dg-t">GitHub asks<br>your permission</span><span class="dg-s">GitHub</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box"><span class="dg-t">Liffy swaps<br>the receipt</span><span class="dg-s">Doorman</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box fill"><span class="dg-t">You are<br>signed in</span><span class="dg-s">Dashboard</span></div>
+        </div>
+      </div>
+
+      <div class="ladder" style="margin-top:1.75rem">
+        <div class="rung rvl">
+          <div class="spine"><div class="node">1</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">You click "Sign in with GitHub"</h3><span class="owner">Doorman</span></div>
+            <p class="p">Liffy sends your browser to GitHub, attaching a one-time random
+              string it also stores in a cookie.</p>
+            <p class="plain">That random string is an anti-forgery measure. If the reply that
+              comes back doesn't carry the same string, Liffy knows the reply was manufactured
+              by somebody else and throws it away.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">2</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">GitHub asks you to approve</h3><span class="owner">GitHub</span></div>
+            <p class="p">GitHub shows its own consent screen listing what Liffy is asking for:
+              permission to read your repositories, and your username.</p>
+            <p class="plain">This screen is GitHub's, not Liffy's. Your password is typed into
+              GitHub and never travels anywhere near Liffy.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">3</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Liffy trades the receipt for a key</h3><span class="owner">Doorman</span></div>
+            <p class="p">GitHub sends your browser back to Liffy carrying a short-lived code.
+              Liffy exchanges that code, server to server, for an access key tied to your
+              account.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">4</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Liffy issues you two passes</h3><span class="owner">Doorman</span></div>
+            <p class="p">A short-lived <b>day pass</b> that expires after fifteen minutes, and
+              a long-lived <b>membership card</b> good for thirty days that can be traded for
+              a fresh day pass at any time.</p>
+            <p class="plain">Two passes instead of one because of what happens if a pass leaks.
+              A stolen day pass is worthless in fifteen minutes. The membership card is
+              stored in Liffy's own database, so if it is ever stolen it can be cancelled
+              immediately &mdash; and it is replaced with a new one every single time it is used,
+              so a copied card stops working the moment the real owner uses theirs.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- ACT II — READING THE CODEBASE                                   -->
+  <!-- ============================================================== -->
+  <div class="act-rule">
+    <span class="lbl">Act II</span>
+    <span class="line"></span>
+    <span data-sprite="book" data-cell="4" aria-hidden="true"></span>
+  </div>
+
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 03</span>
+      <span class="plate-ti">Reading the codebase &mdash; "indexing"</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <p class="lbl">The part that makes Liffy different</p>
+        <h2 class="h2">Studying the whole book before the exam</h2>
+        <p class="p dim">When you connect a repository, Liffy sits down and reads every file
+          in it. This happens once, in the background, and takes a few minutes. Everything
+          Liffy ever says afterwards is grounded in what it learned here.</p>
+      </div>
+
+      <div class="dg-scroll">
+        <div class="dg">
+          <div class="dg-box"><span class="dg-t">Source files</span><span class="dg-s">01 &middot; fetch</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box fill"><span class="dg-t">Grammar tree</span><span class="dg-s">02 &middot; parse</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box"><span class="dg-t">One chunk<br>per function</span><span class="dg-s">03 &middot; split</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box fill"><span class="dg-t">384 numbers<br>per chunk</span><span class="dg-s">04 &middot; embed</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box"><span class="dg-t">Searchable<br>library</span><span class="dg-s">05 &middot; store</span></div>
+        </div>
+      </div>
+
+      <div class="ladder" style="margin-top:1.75rem">
+        <div class="rung rvl">
+          <div class="spine"><div class="node">1</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Download every file worth reading</h3><span class="owner">Librarian</span></div>
+            <p class="p">Liffy walks the repository through GitHub's API, skipping images,
+              compiled binaries and anything over 200&nbsp;KB &mdash; those are almost always
+              machine-generated bundles, not code a human wrote.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">2</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Parse each file into a grammar tree</h3><span class="owner">Tree-sitter</span></div>
+            <p class="p">A parser called Tree-sitter reads the file the way a linguist diagrams
+              a sentence &mdash; identifying which lines form a function, which form a class,
+              where each one begins and ends.</p>
+            <p class="plain">This is the same technology code editors use to colour your code.
+              Liffy uses it to find the natural seams in a file.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">3</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Cut along the seams, never through them</h3><span class="owner">Librarian</span></div>
+            <p class="p">The file is split into chunks &mdash; one complete function or class each.
+              A file in a language Liffy has no grammar for still gets chunked, just by fixed
+              line windows instead.</p>
+            <p class="plain">This is the decision the whole system rests on. Chopping code every
+              50 lines regardless of content would cut functions in half, and half a function
+              means nothing to anybody. Cutting at the seams means every chunk is a complete
+              thought.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">4</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Turn each chunk into coordinates</h3><span class="owner">Embedding model</span></div>
+            <p class="p">Every chunk is passed through a model that converts it into a list of
+              384 numbers. Chunks that do similar things end up with similar numbers.</p>
+            <p class="plain">Think of it as giving every function a position on a map, where
+              distance means "how alike are these two pieces of code." Two functions that both
+              validate an email address land near each other even if they share not one word.
+              This model runs on Liffy's own machine &mdash; nothing is sent anywhere to do it.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">5</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">File them in the library</h3><span class="owner">ChromaDB</span></div>
+            <p class="p">The coordinates go into ChromaDB, a database built for exactly one
+              question: <i>given this position, what are the nearest neighbours?</i> Every
+              repository gets its own private shelf.</p>
+            <p class="plain">Separate shelves per repository, deliberately. Letting one project's
+              code turn up while reviewing another's would produce confident, irrelevant
+              advice &mdash; and would be impossible to debug.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">6</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Remember a fingerprint of each chunk</h3><span class="owner">PostgreSQL</span></div>
+            <p class="p">Liffy records a fingerprint of every chunk's contents. Next time it
+              re-reads the repository, anything whose fingerprint is unchanged is skipped.</p>
+            <p class="plain">So the first read is slow and every read after it is nearly
+              instant &mdash; only what actually changed gets re-read.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- ACT III — REVIEWING A PULL REQUEST                              -->
+  <!-- ============================================================== -->
+  <div class="act-rule">
+    <span class="lbl">Act III</span>
+    <span class="line"></span>
+    <span data-sprite="eye" data-cell="4" aria-hidden="true"></span>
+  </div>
+
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 04</span>
+      <span class="plate-ti">Reviewing a change &mdash; the main event</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <p class="lbl">Thirteen steps, about a minute, nobody watching</p>
+        <h2 class="h2">A developer proposes a change</h2>
+        <p class="p dim">On GitHub, a proposed change is called a <b>pull request</b> &mdash;
+          "please pull my work into the main project." Everything below happens
+          automatically, in the seconds after that button is pressed.</p>
+      </div>
+
+      <div class="strip-scroll">
+        <div class="strip">
+          <div class="stop"><span class="stop-n">01&ndash;03</span><span class="stop-t">GitHub knocks, Liffy checks the knock is real</span></div>
+          <div class="stop"><span class="stop-n">04&ndash;06</span><span class="stop-t">Fetch the change, cut it up, take a ticket</span></div>
+          <div class="stop"><span class="stop-n">07&ndash;08</span><span class="stop-t">Look up the most similar code in the library</span></div>
+          <div class="stop"><span class="stop-n">09&ndash;10</span><span class="stop-t">Brief the AI and let it write the review</span></div>
+          <div class="stop"><span class="stop-n">11&ndash;12</span><span class="stop-t">Check the answer, pin it to line numbers, file it</span></div>
+          <div class="stop"><span class="stop-n">13</span><span class="stop-t">The review appears on the dashboard</span></div>
+        </div>
+      </div>
+
+      <div class="ladder">
+        <div class="rung rvl">
+          <div class="spine"><div class="node">01</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Someone opens a pull request</h3><span class="owner">GitHub</span></div>
+            <p class="p">A developer finishes a piece of work and asks for it to be merged into
+              the project.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">02</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">GitHub knocks on Liffy's door</h3><span class="owner">Receiving dock</span></div>
+            <p class="p">GitHub immediately sends a message to a dedicated address on Liffy's
+              server. This is called a <b>webhook</b> &mdash; GitHub pushing news out, rather than
+              Liffy repeatedly asking "anything new?"</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">03</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Liffy verifies the knock is really GitHub</h3><span class="owner">Receiving dock</span></div>
+            <p class="p">The address is public, so anyone could send it a fake message. GitHub
+              signs every message with a shared secret; Liffy recomputes that signature and
+              compares. Anything that doesn't match is discarded unread.</p>
+            <p class="plain">Like a wax seal. Only someone who holds the same stamp can produce
+              a matching impression &mdash; and the comparison is done in a way that gives an
+              attacker no clue how close a guess was.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">04</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Fetch the change itself</h3><span class="owner">Receiving dock</span></div>
+            <p class="p">The knock carries only headline details, so Liffy calls GitHub back for
+              the full <b>diff</b> &mdash; the exact list of lines added and removed.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">05</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Break the diff into per-file pieces</h3><span class="owner">Diff parser</span></div>
+            <p class="p">The raw diff is one long block of text. Liffy parses it into structured
+              pieces &mdash; which file, which lines, added or removed &mdash; keeping a map back
+              to the real line numbers.</p>
+            <p class="plain">That map matters at step 11. A comment is only useful if it lands
+              on the right line of the right file.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">06</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Take a ticket and let GitHub go</h3><span class="owner">Redis &middot; Celery</span></div>
+            <p class="p">The job is put on a queue and Liffy answers GitHub instantly. A
+              separate background worker picks the ticket up and does the slow part.</p>
+            <p class="plain">Reviews take tens of seconds. If Liffy held the line until it was
+              finished, GitHub would give up waiting and the review would be lost. The queue
+              also means a crash costs nothing: the ticket is still there when the worker
+              restarts.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">07</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Convert the changed code into coordinates</h3><span class="owner">Embedding model</span></div>
+            <p class="p">Each changed piece goes through the same model used during indexing,
+              producing a position on the same map.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">08</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Ask the library for the nearest neighbours</h3><span class="owner">ChromaDB</span></div>
+            <p class="p">For each changed piece, Liffy pulls the <b>five</b> most similar pieces
+              of existing code from that repository's shelf.</p>
+            <p class="plain">This is the retrieval step &mdash; the "R" in RAG, and the reason Liffy
+              can say "you've written this before, over here" instead of guessing.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">09</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Write the briefing</h3><span class="owner">LangChain</span></div>
+            <p class="p">Liffy assembles one document for the AI: who it is meant to be (a
+              senior engineer), exactly what shape its answer must take, the change under
+              review, and the retrieved surrounding code.</p>
+            <p class="plain">The order is fixed on purpose &mdash; the unchanging part goes first so
+              it can be cached between reviews, which cuts both cost and waiting time.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">10</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">The AI writes the review</h3><span class="owner">Claude Opus 5</span></div>
+            <p class="p">The model returns an overall summary, a verdict, and a list of
+              comments &mdash; each pinned to a file and line, tagged with a category and a
+              severity.</p>
+            <p class="plain">Liffy is not tied to one AI. The same slot accepts Claude, OpenAI,
+              or a model running on your own laptop for free &mdash; the rest of the system
+              doesn't change.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">11</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">Check the answer, then pin it to real lines</h3><span class="owner">Pydantic</span></div>
+            <p class="p">The reply is validated field by field against a strict schema. Anything
+              malformed is rejected and the model is asked again. Then each comment's line
+              numbers are translated from diff coordinates back to real file line numbers.</p>
+            <p class="plain">An AI can produce beautifully-worded nonsense. This step makes
+              structural nonsense literally unable to enter the database.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">12</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">File it permanently</h3><span class="owner">PostgreSQL</span></div>
+            <p class="p">Review and comments are written to the database, along with which model
+              was used, how many tokens it consumed and how long it took &mdash; the raw material
+              for measuring quality later.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">13</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">It appears on screen</h3><span class="owner">React &middot; Monaco</span></div>
+            <p class="p">The dashboard has been checking for updates the whole time. The finished
+              review renders over the code diff in the same editor component that powers VS Code,
+              each comment attached to the line it is about.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <p class="lbl">The clock</p>
+        <p class="p">Liffy's target is <b>under 90 seconds</b> from GitHub's knock to a finished
+          review. Measuring that honestly is harder than it sounds: the knock arrives at one
+          program and the review finishes in a different one, so the time spent waiting in the
+          queue sits between them and is easy to accidentally leave out. Liffy now stamps the
+          arrival time onto the ticket itself so the full wait is counted, not just the
+          working time.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- PLATE 05 — WHY RAG                                              -->
+  <!-- ============================================================== -->
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 05</span>
+      <span class="plate-ti">The core idea, in one comparison</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <p class="lbl">Steps 08 and 09, and why they exist</p>
+        <h2 class="h2">The same AI, briefed two different ways</h2>
+        <p class="p dim">Every AI code review tool sends the change to a model. The question is
+          what else it sends. On the left, nothing. On the right, the five most relevant pieces
+          of the project's existing code. Same model, same change.</p>
+      </div>
+
+      <div class="vs">
+        <div class="vs-col bad">
+          <div class="vs-hd">
+            <span class="lbl">Without retrieval</span>
+            <span class="pill none">generic</span>
+          </div>
+          <p class="quote">"Consider adding error handling to this function, and make sure
+            the variable names are descriptive."</p>
+          <p class="verdict-note">True of almost any code ever written. Nothing here required
+            reading <i>this</i> project, so nothing here tells the developer something they
+            did not already know.</p>
+        </div>
+        <div class="vs-col good">
+          <div class="vs-hd">
+            <span class="lbl">With retrieval</span>
+            <span class="pill ok">grounded</span>
+          </div>
+          <p class="quote">"The macOS script replaces the whole line here; this one replaces
+            only the prefix, so the generated secret gets written <i>in front of</i> the
+            placeholder instead of over it."</p>
+          <p class="verdict-note">Only possible because the other script was retrieved and put
+            in front of the model. This is a real comment Liffy wrote &mdash; and the bug was
+            real. See Plate 06.</p>
+        </div>
+      </div>
+
+      <div class="note">
+        <p class="lbl">Where the name comes from</p>
+        <p class="p"><b>RAG</b> &mdash; retrieval-augmented generation. Retrieve the relevant
+          material first, then generate the answer with it in hand. It is the difference between
+          an open-book exam and a closed-book one, and it is why Liffy is a system rather than
+          a wrapper around somebody else's model.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- PLATE 06 — PROOF                                                -->
+  <!-- ============================================================== -->
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 06</span>
+      <span class="plate-ti">Evidence &mdash; a real review, on this project</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <p class="lbl">Pull request #58 &middot; lucenity0/Liffy</p>
+        <h2 class="h2">Liffy reviewing its own codebase</h2>
+        <p class="p dim">The change added one-command setup scripts for macOS and Windows.
+          Liffy read it with no human help and returned eight comments. Every one was then
+          checked by hand.</p>
+      </div>
+
+      <div class="receipt">
+        <div class="receipt-cell">
+          <span class="lbl">Verdict</span>
+          <span class="receipt-v"><span class="pill crit">request changes</span></span>
+        </div>
+        <div class="receipt-cell">
+          <span class="lbl">Comments</span>
+          <span class="receipt-v">8</span>
+        </div>
+        <div class="receipt-cell">
+          <span class="lbl">Model</span>
+          <span class="receipt-v" style="font-size:0.86rem">claude-opus-5</span>
+        </div>
+        <div class="receipt-cell">
+          <span class="lbl">Tokens read</span>
+          <span class="receipt-v">25,043</span>
+        </div>
+        <div class="receipt-cell">
+          <span class="lbl">Time taken</span>
+          <span class="receipt-v">2m 07s</span>
+        </div>
+      </div>
+
+      <p class="p sub tight" style="font-size:0.82rem;margin-bottom:1.5rem">Note the clock:
+        two minutes, against a target of ninety seconds. That gap is the honest reason the
+        timing measurement described in Plate 04 is being built &mdash; a target nobody measures
+        properly is a target nobody misses.</p>
+
+      <h3 class="h3" style="margin-bottom:0.4rem">The one that mattered</h3>
+      <p class="p dim tight" style="font-size:0.92rem">Liffy rated this <span class="pill crit">critical</span>
+        &mdash; its highest severity. It was correct, and the bug was already sitting in the
+        project's main branch where nobody had noticed it.</p>
+
+      <div class="cmt">
+        <div class="cmt-hd">
+          <span class="pill crit">critical</span>
+          <span class="pill none">logic error</span>
+          <span class="cmt-file">setup-windows.bat &middot; line 125</span>
+        </div>
+        <p class="cmt-body">"This replaces the substring <code>JWT_SECRET_KEY=</code> with
+          <code>JWT_SECRET_KEY=&lt;hex&gt;</code>, which <i>prepends</i> the generated secret to
+          whatever placeholder value is already there. The macOS script correctly replaces the
+          whole line. Rewrite the line, not the key prefix."</p>
+        <p class="cmt-plain"><b>In plain terms:</b> the Windows setup script was supposed to
+          write a freshly generated security key into a settings file. Instead of replacing the
+          placeholder text, it wrote the new key <i>in front of</i> it &mdash; producing a key with
+          the word <code>changeme</code> stuck on the end. Every Windows user would have got a
+          silently broken installation. Liffy caught it by comparing the Windows script against
+          the macOS one, which does it correctly.</p>
+      </div>
+
+      <h3 class="h3" style="margin-top:2rem;margin-bottom:0.4rem">Scored honestly</h3>
+      <p class="p dim tight" style="font-size:0.92rem">All eight comments were verified by hand.
+        This is the real result, not a highlight reel.</p>
+
+      <div class="dist">
+        <div class="dist-row">
+          <span class="dist-l">Verified correct</span>
+          <span class="dist-track"><span class="dist-fill" style="width:37.5%;background:var(--sage)"></span></span>
+          <span class="dist-n">3</span>
+        </div>
+        <div class="dist-row">
+          <span class="dist-l">Plausible, unchecked</span>
+          <span class="dist-track"><span class="dist-fill" style="width:50%"></span></span>
+          <span class="dist-n">4</span>
+        </div>
+        <div class="dist-row">
+          <span class="dist-l">Verified wrong</span>
+          <span class="dist-track"><span class="dist-fill" style="width:12.5%;background:var(--oxide)"></span></span>
+          <span class="dist-n">1</span>
+        </div>
+      </div>
+
+      <h3 class="h3" style="margin-top:2rem;margin-bottom:0.4rem">What kinds of problem it found</h3>
+      <div class="dist">
+        <div class="dist-row">
+          <span class="dist-l">Logic errors</span>
+          <span class="dist-track"><span class="dist-fill" style="width:62.5%"></span></span>
+          <span class="dist-n">5</span>
+        </div>
+        <div class="dist-row">
+          <span class="dist-l">Improvements</span>
+          <span class="dist-track"><span class="dist-fill" style="width:25%"></span></span>
+          <span class="dist-n">2</span>
+        </div>
+        <div class="dist-row">
+          <span class="dist-l">Conventions</span>
+          <span class="dist-track"><span class="dist-fill" style="width:12.5%"></span></span>
+          <span class="dist-n">1</span>
+        </div>
+      </div>
+      <p class="p dim tight" style="font-size:0.9rem;margin-top:1rem">Liffy sorts every comment
+        into one of six categories &mdash; logic error, security, performance, architecture,
+        convention, improvement. Tracking that spread is how the team will notice if it starts
+        obsessing over one kind of problem and going blind to the others.</p>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- ACT IV — LEARNING                                               -->
+  <!-- ============================================================== -->
+  <div class="act-rule">
+    <span class="lbl">Act IV</span>
+    <span class="line"></span>
+    <span data-sprite="star" data-cell="4" aria-hidden="true"></span>
+  </div>
+
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 07</span>
+      <span class="plate-ti">Learning from the humans</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <p class="lbl">Steps 14 and 15 &mdash; currently being built</p>
+        <h2 class="h2">A review nobody scores cannot improve</h2>
+        <p class="p dim">Everything up to here produces a review. This last act is what stops
+          the quality being a matter of opinion. Without it, there would be no way to answer
+          the only question that matters: <i>is Liffy actually any good?</i></p>
+      </div>
+
+      <div class="dg-scroll">
+        <div class="dg">
+          <div class="dg-box"><span class="dg-t">Developer rates<br>each comment</span><span class="dg-s">Dashboard</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box fill"><span class="dg-t">Stored against<br>the comment</span><span class="dg-s">Database</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box dash"><span class="dg-t">Weekly job<br>scores reviews</span><span class="dg-s">Celery beat</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box dash"><span class="dg-t">Bad reviews<br>flagged</span><span class="dg-s">Examiner</span></div>
+          <div class="dg-arrow"></div>
+          <div class="dg-box dash"><span class="dg-t">Briefing<br>rewritten</span><span class="dg-s">Humans</span></div>
+        </div>
+      </div>
+
+      <div class="ladder" style="margin-top:1.75rem">
+        <div class="rung rvl">
+          <div class="spine"><div class="node">14</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">The developer votes on every comment</h3><span class="owner">Dashboard</span></div>
+            <p class="p">Each comment carries a thumbs up and a thumbs down. One click, stored
+              immediately against that specific comment and that specific person.</p>
+            <p class="plain">Deliberately the smallest possible ask. A feedback form nobody
+              fills in produces no data, and no data means no way to improve.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">15</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">A weekly job turns votes into scores</h3><span class="owner">Examiner</span></div>
+            <p class="p">Once a week, a scheduled task walks every completed review and computes
+              its approval rate. Reviews scoring below 50% are flagged for a human to read.</p>
+          </div>
+        </div>
+        <div class="rung rvl">
+          <div class="spine"><div class="node">16</div></div>
+          <div class="rung-bd">
+            <div class="rung-hd"><h3 class="h3">The patterns rewrite the briefing</h3><span class="owner">Humans</span></div>
+            <p class="p">The flagged reviews get read. If the same kind of wrong comment keeps
+              appearing, the instructions given to the AI at step 09 are rewritten to prevent
+              it &mdash; and the next week's scores show whether that worked.</p>
+            <p class="plain">This is the loop that closes. Liffy does not learn on its own; it
+              produces the evidence its builders need in order to improve it deliberately.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="h3" style="margin-top:2rem;margin-bottom:0.75rem">The five things measured</h3>
+      <div class="board">
+        <div class="board-row">
+          <div class="board-t">How often developers agree with a comment<small>User approval rate</small></div>
+          <span class="pill none">target &gt; 70%</span>
+        </div>
+        <div class="board-row">
+          <div class="board-t">How often Liffy raises a non-issue<small>False positive rate</small></div>
+          <span class="pill none">target &lt; 20%</span>
+        </div>
+        <div class="board-row">
+          <div class="board-t">Whether "critical" really means critical<small>Severity calibration</small></div>
+          <span class="pill none">monthly audit</span>
+        </div>
+        <div class="board-row">
+          <div class="board-t">Whether it is over-focused on one kind of problem<small>Category distribution</small></div>
+          <span class="pill none">even spread</span>
+        </div>
+        <div class="board-row">
+          <div class="board-t">How much value per unit of AI cost<small>Token efficiency</small></div>
+          <span class="pill none">tracked as trend</span>
+        </div>
+      </div>
+
+      <div class="note">
+        <p class="lbl">A contradiction found in our own specification</p>
+        <p class="p">The first two targets cannot both be met as written. If a developer's only
+          options are thumbs up and thumbs down, then "comments marked as not an issue" is
+          exactly "comments not given a thumbs up" &mdash; so the second number is always
+          100% minus the first. Asking for above 70% <i>and</i> below 20% asks for
+          <span class="mono">70&nbsp;+&nbsp;80&nbsp;=&nbsp;150%</span>. Fixing it means either
+          adding a third option to the vote or admitting the two metrics are one. This was
+          caught while writing the code, and is being resolved and documented rather than
+          quietly implemented wrong.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- PLATE 08 — WHERE THINGS ARE KEPT                                -->
+  <!-- ============================================================== -->
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 08</span>
+      <span class="plate-ti">Where everything is kept</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <h2 class="h2">Eight drawers in the filing cabinet</h2>
+        <p class="p dim">Nothing in Liffy is held in memory and hoped for. Every drawer below is
+          a real table in the database, and each one links to the next so a single comment can
+          always be traced back to the person, project and change it came from.</p>
+      </div>
+
+      <div class="cast">
+        <div class="cast-row">
+          <div class="cast-key">01</div>
+          <div class="cast-name"><h3 class="h3">People</h3><p class="cast-tech">users</p></div>
+          <p class="cast-what">Everyone who has signed in through GitHub.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">02</div>
+          <div class="cast-name"><h3 class="h3">Projects</h3><p class="cast-tech">repositories</p></div>
+          <p class="cast-what">Which repositories are connected, who connected them, and when each was last read.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">03</div>
+          <div class="cast-name"><h3 class="h3">Proposed changes</h3><p class="cast-tech">pull_requests</p></div>
+          <p class="cast-what">Every pull request Liffy has been asked to look at.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">04</div>
+          <div class="cast-name"><h3 class="h3">Reviews</h3><p class="cast-tech">reviews</p></div>
+          <p class="cast-what">One per attempt: the summary, the verdict, which AI wrote it, what it cost, how long it took.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">05</div>
+          <div class="cast-name"><h3 class="h3">Comments</h3><p class="cast-tech">review_comments</p></div>
+          <p class="cast-what">The individual remarks &mdash; file, line, category, severity, the text, and any suggested fix.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">06</div>
+          <div class="cast-name"><h3 class="h3">Votes</h3><p class="cast-tech">comment_feedback</p></div>
+          <p class="cast-what">Who gave which comment a thumbs up or down.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">07</div>
+          <div class="cast-name"><h3 class="h3">Reading log</h3><p class="cast-tech">repo_embeddings</p></div>
+          <p class="cast-what">The chunk fingerprints, so re-reading a project only touches what changed.</p>
+        </div>
+        <div class="cast-row">
+          <div class="cast-key">08</div>
+          <div class="cast-name"><h3 class="h3">Scores</h3><p class="cast-tech">eval_scores</p></div>
+          <p class="cast-what">The weekly quality result for each review.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- PLATE 09 — STATUS                                               -->
+  <!-- ============================================================== -->
+  <section class="plate">
+    <div class="plate-hd">
+      <span class="plate-no">PLATE 09</span>
+      <span class="plate-ti">What is built, and what is next</span>
+    </div>
+    <div class="plate-bd">
+      <div class="act-hd">
+        <h2 class="h2">Thirteen of the fifteen steps run today</h2>
+        <p class="p dim">Steps 1 to 13 &mdash; sign in, connect a project, read it, receive a pull
+          request, retrieve context, write the review, display it &mdash; all work end to end
+          against real repositories and a real AI. Steps 14 and 15, the scoring loop, are the
+          milestone currently in progress.</p>
+      </div>
+
+      <div class="board">
+        <div class="board-row done">
+          <div class="board-t">Sign in with GitHub, with rotating passes<small>Act I &middot; steps 1&ndash;4</small></div>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row done">
+          <div class="board-t">Read and index a whole repository<small>Act II &middot; Python and TypeScript parsed semantically</small></div>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row done">
+          <div class="board-t">Receive and verify GitHub webhooks<small>Act III &middot; steps 02&ndash;03</small></div>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row done">
+          <div class="board-t">Retrieve context and generate a real review<small>Act III &middot; steps 07&ndash;12</small></div>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row done">
+          <div class="board-t">Dashboard with inline comments on the diff<small>Act III &middot; step 13</small></div>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row now">
+          <div class="board-t">Thumbs up / down on every comment<small>Act IV &middot; step 14</small></div>
+          <span class="pill warn">in progress</span>
+        </div>
+        <div class="board-row now">
+          <div class="board-t">Weekly scoring job and an analytics page<small>Act IV &middot; step 15</small></div>
+          <span class="pill warn">in progress</span>
+        </div>
+        <div class="board-row now">
+          <div class="board-t">Posting the review back onto the GitHub pull request<small>Deliberately last &mdash; see below</small></div>
+          <span class="pill warn">in progress</span>
+        </div>
+      </div>
+
+      <div class="note">
+        <p class="lbl">Why posting to GitHub was left until last</p>
+        <p class="p">Liffy could have posted its comments straight onto the pull request from
+          day one. It deliberately did not. An automated reviewer that starts commenting on
+          people's work before anyone has established whether it is any good is just noise &mdash;
+          and noise gets muted permanently. The dashboard came first so the quality could be
+          judged privately. Now that a real review has been checked comment by comment, posting
+          is being added &mdash; switched off by default.</p>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span class="stat-v">655</span><span class="lbl">Automated tests</span></div>
+        <div class="stat"><span class="stat-v">130</span><span class="lbl">Commits</span></div>
+        <div class="stat"><span class="stat-v">37</span><span class="lbl">Merged changes</span></div>
+        <div class="stat"><span class="stat-v">2</span><span class="lbl">People</span></div>
+      </div>
+      <p class="p sub tight" style="font-size:0.82rem;margin-top:0.85rem">Every one of those 655
+        tests runs automatically before any change is allowed into the project. Nothing merges
+        red.</p>
+    </div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- COLOPHON                                                        -->
+  <!-- ============================================================== -->
+  <footer class="colo">
+    <span data-sprite="cat" data-cell="3" aria-hidden="true"></span>
+
+    <p class="p">Set in Monaspace Argon and Neon, the two typefaces Liffy's own interface
+      uses. The palette is lifted directly from the product's stylesheet &mdash; warm paper,
+      soft black, and four muted inks. Colour appears on this page only where Liffy itself
+      would report a state: a severity, a verdict, a status. Everything else is ink on paper.</p>
+
+    <div class="colo-credit">
+      <span class="lbl">Architecture &amp; Project Report</span>
+      <span class="colo-credit-v">Version 1.0</span>
+      <span class="colo-credit-v">Nafees&nbsp;S &amp; Gajalakshmi</span>
+    </div>
+
+    <div class="colo-foot">
+      <p class="lbl">Source <span>github.com/lucenity0/Liffy</span></p>
+      <p class="lbl">Read the flow <span>liffy.lucenity.dev/report</span></p>
+      <p class="lbl">Steps live <span>13 of 15</span></p>
+    </div>
+  </footer>
+
+</div>
+</div>
+
+<script>
+/* ==================================================================== *
+ * Pixel sprites. Written as text maps and expanded into <rect>s at run
+ * time — shorter and far more legible in source than hand-authored path
+ * data, and it renders crisp at any size.
+ * ==================================================================== */
+(function () {
+  var MAPS = {
+    /* The sleeping cat from the under-construction page, character for
+       character — same animal on the front door and in here. Face on the
+       right, back sloping down-left, two closed-eye dashes, a paw out at
+       the bottom-left. */
+    cat: [
+      "..#.......#...............",
+      ".###.....###..............",
+      ".#.##....#.##.............",
+      ".#..##..##..##............",
+      ".#.########..##...........",
+      ".################.........",
+      ".#################........",
+      ".##################.......",
+      ".##################.......",
+      "###################.......",
+      "###################.#####.",
+      "##...####...##############",
+      "##########################",
+      "####################...###",
+      ".################.........",
+      "..#############..........."
+    ],
+    key: [
+      ".###.",
+      "#...#",
+      "#...#",
+      ".###.",
+      "..#..",
+      "..##.",
+      "..#..",
+      "..##."
+    ],
+    book: [
+      "########",
+      "#......#",
+      "#.####.#",
+      "#......#",
+      "#.####.#",
+      "#......#",
+      "#.####.#",
+      "########"
+    ],
+    eye: [
+      "..####..",
+      ".#....#.",
+      "#..##..#",
+      "#.####.#",
+      "#..##..#",
+      ".#....#.",
+      "..####..",
+      "........"
+    ],
+    star: [
+      "...#...",
+      "...#...",
+      ".#####.",
+      "..###..",
+      ".##.##.",
+      "##...##",
+      "#.....#"
+    ]
+  };
+
+  function build(map, cell) {
+    var w = map[0].length * cell;
+    var h = map.length * cell;
+    var rects = "";
+    for (var y = 0; y < map.length; y++) {
+      var row = map[y];
+      var x = 0;
+      while (x < row.length) {
+        if (row.charAt(x) === "#") {
+          var run = 0;
+          while (x + run < row.length && row.charAt(x + run) === "#") run++;
+          rects +=
+            '<rect x="' + x * cell + '" y="' + y * cell +
+            '" width="' + run * cell + '" height="' + cell + '"/>';
+          x += run;
+        } else {
+          x++;
+        }
+      }
+    }
+    return (
+      '<svg viewBox="0 0 ' + w + " " + h + '" width="' + w + '" height="' + h +
+      '" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true">' +
+      rects + "</svg>"
+    );
+  }
+
+  var nodes = document.querySelectorAll("[data-sprite]");
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    var map = MAPS[el.getAttribute("data-sprite")];
+    if (!map) continue;
+    el.innerHTML = build(map, parseInt(el.getAttribute("data-cell"), 10) || 4);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Scroll reveal. Staggered within each ladder so a flow reads as a
+   * sequence arriving, not a block appearing. Skipped entirely when the
+   * viewer has asked for reduced motion.
+   * ------------------------------------------------------------------ */
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var rungs = document.querySelectorAll(".rvl");
+
+  if (reduce || !("IntersectionObserver" in window)) {
+    for (var j = 0; j < rungs.length; j++) rungs[j].classList.add("in");
+    return;
+  }
+
+  var io = new IntersectionObserver(
+    function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        var el = entry.target;
+        var sibs = Array.prototype.slice.call(el.parentNode.children);
+        var idx = sibs.indexOf(el);
+        el.style.transitionDelay = Math.min(idx, 4) * 55 + "ms";
+        el.classList.add("in");
+        io.unobserve(el);
+      });
+    },
+    { rootMargin: "0px 0px -8% 0px", threshold: 0.12 }
+  );
+  for (var k = 0; k < rungs.length; k++) io.observe(rungs[k]);
+})();
+</script>

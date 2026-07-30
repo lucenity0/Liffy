@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import datetime, timezone
 
 import chromadb
 import pytest
@@ -144,11 +145,14 @@ def api_db(session_factory):
 
 
 def test_manual_trigger_endpoint_enqueues(api_db, monkeypatch) -> None:
-    calls: list[tuple[str, str, int]] = []
+    # `received_at` defaulted, and recorded: a manual trigger has no webhook
+    # receipt, and the None is asserted rather than ignored — §8.1's figure
+    # must stay NULL here rather than borrow `duration_ms`.
+    calls: list[tuple[str, str, int, str | None]] = []
     monkeypatch.setattr(
         reviews_api.review_worker,
         "enqueue_review",
-        lambda owner, repo, pr: calls.append((owner, repo, pr)),
+        lambda owner, repo, pr, received_at=None: calls.append((owner, repo, pr, received_at)),
     )
     response = client.post(
         "/reviews/trigger",
@@ -157,7 +161,7 @@ def test_manual_trigger_endpoint_enqueues(api_db, monkeypatch) -> None:
     )
     assert response.status_code == 202
     assert response.json() == {"status": "queued", "repo": "octo/demo", "pr_number": 12}
-    assert calls == [("octo", "demo", 12)]
+    assert calls == [("octo", "demo", 12, None)]
 
 
 def test_manual_trigger_validates_body(api_db) -> None:
@@ -244,3 +248,106 @@ def test_index_worker_resolves_token_from_repo_owner(session_factory, monkeypatc
     index_worker.index_repo_task(str(repo_id))
 
     assert [gh.token for gh in built] == ["gho_owner"]
+
+
+# ── §8.1 receipt threading (METRIC-2) ────────────────────────────────────────
+
+
+def _review_deps(monkeypatch) -> None:
+    monkeypatch.setattr(
+        review_worker,
+        "GitHubClient",
+        lambda token=None: FakeGitHub(pr_meta=META, pr_diff=DIFF, token=token),
+    )
+    monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
+    monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
+    monkeypatch.setattr(review_worker, "get_llm", lambda: FakeLLM([PAYLOAD]))
+
+
+def test_task_accepts_received_at(session_factory, monkeypatch) -> None:
+    """The only test that walks the real ISO-string parse in production code.
+
+    ``run_review`` takes a ``datetime``; Celery delivers a string. The
+    conversion happens here in the task, and nothing else exercises it.
+    """
+    _connect(session_factory)
+    _review_deps(monkeypatch)
+
+    result = review_worker.review_pr_task(
+        "octo", "demo", 5, datetime.now(timezone.utc).isoformat()
+    )
+
+    assert result["status"] == "completed"
+    with session_factory() as db:
+        review = db.scalars(select(Review)).one()
+        assert review.queued_at is not None
+        assert review.total_ms is not None
+
+
+def test_task_without_received_at_still_runs(session_factory, monkeypatch) -> None:
+    """The backwards-compatible default.
+
+    A message enqueued by the old three-argument code must drain rather than
+    raise ``TypeError`` on a rolling deploy — and it must record NULL rather
+    than substituting the pipeline duration.
+    """
+    _connect(session_factory)
+    _review_deps(monkeypatch)
+
+    result = review_worker.review_pr_task("octo", "demo", 5)
+
+    assert result["status"] == "completed"
+    with session_factory() as db:
+        review = db.scalars(select(Review)).one()
+        assert review.total_ms is None
+        assert review.queued_at is None
+
+
+def test_task_with_malformed_received_at_still_completes(session_factory, monkeypatch) -> None:
+    """A metric is not worth failing a review over.
+
+    An unparseable stamp costs one row of analytics; raising would cost the
+    review itself, and the review is the product.
+    """
+    _connect(session_factory)
+    _review_deps(monkeypatch)
+
+    result = review_worker.review_pr_task("octo", "demo", 5, "not-a-timestamp")
+
+    assert result["status"] == "completed"
+    with session_factory() as db:
+        assert db.scalars(select(Review)).one().total_ms is None
+
+
+def test_naive_received_at_is_refused_rather_than_assumed_utc(
+    session_factory, monkeypatch
+) -> None:
+    """Assuming UTC would record the API host's offset as queue wait.
+
+    On a machine at UTC+05:30 that is a 5.5-hour latency figure that parses,
+    stores and renders perfectly — far worse than no number.
+    """
+    _connect(session_factory)
+    _review_deps(monkeypatch)
+
+    review_worker.review_pr_task("octo", "demo", 5, "2026-07-30T12:00:00")
+
+    with session_factory() as db:
+        assert db.scalars(select(Review)).one().total_ms is None
+
+
+def test_enqueue_passes_a_json_serialisable_received_at(monkeypatch) -> None:
+    """A ``datetime`` would fail at ``.delay()``, not at execution.
+
+    ``celery_app`` sets ``task_serializer="json"``, so the broker rejects it
+    before the task ever runs and the traceback points at infrastructure.
+    """
+    captured: list[tuple] = []
+    monkeypatch.setattr(
+        review_worker.review_pr_task, "delay", lambda *args: captured.append(args)
+    )
+
+    review_worker.enqueue_review("octo", "demo", 7, datetime.now(timezone.utc).isoformat())
+
+    assert len(captured) == 1
+    json.dumps(captured[0])  # raises TypeError on a datetime

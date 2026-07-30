@@ -28,6 +28,25 @@ from app.services.rag_service import RetrievedChunk, retrieve_for_file_diff
 MAX_CONTEXT_CHUNKS = 10
 
 
+def _wall_clock_ms(start: datetime | None, end: datetime) -> int | None:
+    """Milliseconds between two wall-clock instants, or None if unmeasured.
+
+    Wall clock unavoidably, unlike ``duration_ms``: the start is stamped in the
+    API process and the end here in the worker, and ``time.monotonic()`` is
+    only comparable within one process. That means METRIC-1's warning about
+    NTP corrections and DST jumps genuinely applies to this number, and two
+    hosts can also simply disagree with each other.
+
+    Clamped at 0 rather than stored negative. A negative end-to-end latency is
+    a nonsense value that would poison the first average anyone computes; a 0
+    reads honestly as "receipt and completion were indistinguishable, or the
+    clocks disagree".
+    """
+    if start is None:
+        return None
+    return max(0, int((end - start).total_seconds() * 1000))
+
+
 class RepositoryNotConnected(RuntimeError):
     """A review was requested for a repository nobody has connected.
 
@@ -115,6 +134,7 @@ def run_review(
     chroma_client,
     embedder: EmbeddingProvider,
     llm: ReviewLLM,
+    received_at: datetime | None = None,
 ) -> Review:
     # Report §8.1's clock. First statement in the function on purpose: the two
     # GitHub calls below are the largest network payload in the pipeline
@@ -142,7 +162,13 @@ def run_review(
 
     # Commit the processing row first: a crash mid-pipeline leaves an
     # inspectable record, and the API can report status while we work.
-    review = Review(pr_id=pr.id, status="processing", raw_diff=raw_diff)
+    #
+    # `queued_at` goes on here rather than in the tails below so it survives
+    # that crash: a review whose worker is killed still records when the
+    # webhook asked for it, which is the case where queue wait is most worth
+    # knowing. The rollback on the failure path rewinds to this commit, so the
+    # failure path inherits it for free.
+    review = Review(pr_id=pr.id, status="processing", raw_diff=raw_diff, queued_at=received_at)
     db.add(review)
     db.commit()
 
@@ -170,7 +196,11 @@ def run_review(
         review.model_used = result.model_used
         review.tokens_used = result.tokens_used
         review.duration_ms = elapsed_ms()
-        review.completed_at = datetime.now(timezone.utc)
+        # One instant for both, so `total_ms` stays reconstructible from the
+        # row as `completed_at - queued_at`.
+        completed = datetime.now(timezone.utc)
+        review.completed_at = completed
+        review.total_ms = _wall_clock_ms(received_at, completed)
         db.commit()
         return review
     except Exception:
@@ -186,7 +216,9 @@ def run_review(
         # point in the table, so the failure path records the clock too.
         review.status = "failed"
         review.duration_ms = elapsed_ms()
-        review.completed_at = datetime.now(timezone.utc)
+        completed = datetime.now(timezone.utc)
+        review.completed_at = completed
+        review.total_ms = _wall_clock_ms(received_at, completed)
         db.commit()
         raise
 

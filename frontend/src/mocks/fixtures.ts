@@ -85,7 +85,13 @@ export const fixtureReviewCompleted: ReviewDetailOut = {
   model_used: "gpt-4o",
   tokens_used: 4213,
   duration_ms: 41200,
+  // Receipt to completion: 2m17s, so this fixture *misses* §8.1's < 90s
+  // target. Deliberately kept — the span was already 135s before METRIC-2, and
+  // a fixture that exercises the miss case is worth more than one that quietly
+  // passes. Queue wait here is total_ms - duration_ms = 95.8s.
+  total_ms: 137000,
   created_at: "2026-07-25T14:30:00Z",
+  queued_at: "2026-07-25T14:29:58Z",
   completed_at: "2026-07-25T14:32:15Z",
   comments: [fixtureCommentCritical, fixtureComment],
   raw_diff: `diff --git a/setup-mac.sh b/setup-mac.sh
@@ -121,7 +127,9 @@ export const fixtureReviewApproved: ReviewDetailOut = {
   model_used: "gpt-4o",
   tokens_used: 1802,
   duration_ms: 18400,
+  total_ms: 102000,
   created_at: "2026-07-24T09:00:00Z",
+  queued_at: "2026-07-24T08:59:58Z",
   completed_at: "2026-07-24T09:01:40Z",
   comments: [],
   raw_diff: "diff --git a/README.md b/README.md\n@@ -1 +1 @@\n-old\n+new\n",
@@ -138,7 +146,11 @@ export const fixtureReviewPending: ReviewDetailOut = {
   model_used: null,
   tokens_used: null,
   duration_ms: null,
+  // Queued but not finished: the receipt exists, the end-to-end figure cannot
+  // yet. This is the shape every in-flight review has.
+  total_ms: null,
   created_at: "2026-07-26T08:00:00Z",
+  queued_at: "2026-07-26T07:59:58Z",
   completed_at: null,
   comments: [],
   raw_diff: null,
@@ -166,7 +178,11 @@ export const fixtureReviewFailed: ReviewDetailOut = {
   // most useful row in the table when something is going wrong, and matching
   // completed_at - created_at here keeps the fixture internally consistent.
   duration_ms: 42000,
+  // And how long it took end to end, for the same reason: the failure path
+  // records both.
+  total_ms: 45000,
   created_at: "2026-07-23T11:00:00Z",
+  queued_at: "2026-07-23T10:59:57Z",
   completed_at: "2026-07-23T11:00:42Z",
   comments: [],
   raw_diff: null,
@@ -189,7 +205,9 @@ const detailToListItem = (review: ReviewDetailOut): ReviewListItem => ({
   model_used: review.model_used,
   tokens_used: review.tokens_used,
   duration_ms: review.duration_ms,
+  total_ms: review.total_ms,
   created_at: review.created_at,
+  queued_at: review.queued_at,
   completed_at: review.completed_at,
 });
 

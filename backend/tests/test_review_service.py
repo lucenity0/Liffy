@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import chromadb
 import pytest
@@ -81,7 +82,7 @@ def db() -> Session:
         yield session
 
 
-def _run(db: Session, llm: FakeLLM) -> Review:
+def _run(db: Session, llm: FakeLLM, received_at: datetime | None = None) -> Review:
     return run_review(
         db,
         "octo",
@@ -91,7 +92,20 @@ def _run(db: Session, llm: FakeLLM) -> Review:
         chroma_client=shared_chroma_client(),
         embedder=DeterministicEmbeddings(),
         llm=llm,
+        received_at=received_at,
     )
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """Re-attach UTC to a timestamp read back from SQLite.
+
+    SQLAlchemy's SQLite dialect drops ``tzinfo`` on write, and
+    ``expire_on_commit`` reloads the object at ``db.commit()`` — so a column
+    declared ``DateTime(timezone=True)`` still comes back naive here, and
+    comparing it to an aware ``datetime`` raises ``TypeError`` rather than
+    failing an assertion. ``timezone=True`` is real only on Postgres.
+    """
+    return value if value is None or value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def test_run_review_persists_review_and_comments(db: Session) -> None:
@@ -322,3 +336,179 @@ def test_duration_is_measured_not_defaulted(db: Session) -> None:
     # Generous floor: the sleep is 150ms, so this clears platform jitter
     # while still failing a zero or a constant.
     assert slow.duration_ms >= 100
+
+
+# ── §8.1 end-to-end timing (METRIC-2) ────────────────────────────────────────
+
+
+def test_records_queued_at_and_total_ms_when_provided(db: Session) -> None:
+    received = datetime.now(timezone.utc)
+    review = _run(db, FakeLLM([_payload([VALID_COMMENT])]), received_at=received)
+
+    assert _utc(review.queued_at) == received
+    assert review.total_ms is not None
+    assert isinstance(review.total_ms, int)
+    assert review.total_ms >= 0
+
+
+def test_total_ms_is_none_for_manual_trigger(db: Session) -> None:
+    """Manual triggers have no webhook receipt, so §8.1 has nothing to say.
+
+    The point is what it must *not* do: fall back to ``duration_ms``. That
+    would report a pipeline duration as an end-to-end one, which is exactly
+    the confusion this column exists to remove — and it would be invisible,
+    because the substituted number looks entirely plausible.
+
+    ``duration_ms`` is asserted alongside so this cannot pass on a run that
+    measured nothing at all.
+    """
+    review = _run(db, FakeLLM([_payload([])]))
+
+    assert review.total_ms is None
+    assert review.queued_at is None
+    assert review.duration_ms is not None
+
+
+def test_total_ms_is_at_least_duration_ms(db: Session) -> None:
+    """End to end can never be shorter than the pipeline inside it.
+
+    Written with a *known* second of pre-pipeline time rather than stamping
+    ``now()`` immediately before the call. The naive form is true only up to
+    cross-clock granularity — the two numbers come off different clocks in
+    what is normally different processes — and would be the flakiest
+    assertion in this file. A known offset makes it a real claim.
+    """
+    received = datetime.now(timezone.utc) - timedelta(seconds=1)
+    review = _run(db, FakeLLM([_payload([])]), received_at=received)
+
+    assert review.total_ms is not None and review.duration_ms is not None
+    assert review.total_ms >= review.duration_ms + 900
+
+
+def test_failed_review_still_records_total_ms(db: Session) -> None:
+    """The rollback-path case METRIC-1 got wrong on its first attempt.
+
+    ``total_ms`` is written in the same block as ``duration_ms``, after
+    ``db.rollback()``, so it inherits that constraint rather than needing its
+    own. This is where it will break again if anything moves.
+    """
+    received = datetime.now(timezone.utc)
+    with pytest.raises(LLMOutputError):
+        _run(db, FakeLLM(["nonsense"] * 3), received_at=received)
+
+    review = db.scalars(select(Review)).one()
+    assert review.status == "failed"
+    assert review.total_ms is not None
+    assert review.total_ms >= 0
+
+
+def test_failed_review_total_ms_survives_a_refetch(db: Session) -> None:
+    """Not just set on the in-memory object — actually committed."""
+    with pytest.raises(LLMOutputError):
+        _run(db, FakeLLM(["nonsense"] * 3), received_at=datetime.now(timezone.utc))
+
+    review_id = db.scalars(select(Review)).one().id
+    db.expire_all()  # force a real read rather than trusting the identity map
+
+    refetched = db.get(Review, review_id)
+    assert refetched is not None
+    assert refetched.total_ms is not None
+    assert refetched.queued_at is not None
+
+
+def test_queued_at_is_recorded_even_when_the_review_fails(db: Session) -> None:
+    """Set on the `processing` row, not in the tails.
+
+    The rollback rewinds to that first commit, so the failure path gets it
+    for free — and a review whose worker is killed outright still records
+    when the webhook asked for it, which is the case where queue wait is
+    most worth knowing.
+    """
+    received = datetime.now(timezone.utc)
+    with pytest.raises(LLMOutputError):
+        _run(db, FakeLLM(["nonsense"] * 3), received_at=received)
+
+    review = db.scalars(select(Review)).one()
+    assert _utc(review.queued_at) == received
+
+
+def test_clock_skew_clamps_to_zero(db: Session) -> None:
+    """Two hosts, two clocks — a receipt can land in the future.
+
+    A negative end-to-end latency is a nonsense value that would poison the
+    first average anyone computes over the column, so it clamps.
+    """
+    received = datetime.now(timezone.utc) + timedelta(seconds=30)
+    review = _run(db, FakeLLM([_payload([])]), received_at=received)
+
+    assert review.total_ms == 0
+
+
+def test_naive_received_at_is_rejected_before_any_row_exists(db: Session) -> None:
+    """A caller's naive datetime must cost nothing, not strand a review.
+
+    Subtracting a naive ``received_at`` from the aware ``datetime.now`` in the
+    tails raises — and both writes sit after the ``processing`` row is
+    committed and before the tail's own commit. Unguarded, that leaves the
+    review in ``processing`` **forever** and, on the failure path, replaces the
+    original exception with a datetime error: the two things those writes exist
+    to prevent, defeated at once.
+
+    So the check lives at ``run_review``'s entry rather than in
+    ``_wall_clock_ms``. Guarding the helper would only change which exception
+    strands the row; refusing at entry means there is no row yet to strand,
+    which is what the second assertion pins.
+
+    Rejected rather than coerced to UTC: assuming is how a caller's offset
+    becomes a 5.5-hour queue wait that parses and renders perfectly.
+    """
+    with pytest.raises(ValueError, match="timezone-aware"):
+        _run(db, FakeLLM([_payload([])]), received_at=datetime.now())
+
+    db.expire_all()
+    assert db.scalars(select(Review)).all() == []
+
+
+def test_naive_received_at_is_rejected_before_the_pipeline_runs(db: Session) -> None:
+    """Entry validation, not late validation.
+
+    The row assertion above proves nothing was stranded; this proves nothing
+    was *spent* either — a bad argument should not cost two GitHub round trips
+    and an LLM call before anyone notices.
+    """
+
+    class CountingGitHub(FakeGitHub):
+        calls = 0
+
+        def get_pull_request(self, owner, repo, number):
+            type(self).calls += 1
+            return super().get_pull_request(owner, repo, number)
+
+    gh = CountingGitHub(pr_meta=META, pr_diff=DIFF)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        run_review(
+            db, "octo", "demo", 7,
+            gh=gh,
+            chroma_client=shared_chroma_client(),
+            embedder=DeterministicEmbeddings(),
+            llm=FakeLLM([_payload([])]),
+            received_at=datetime.now(),
+        )
+
+    assert CountingGitHub.calls == 0
+
+
+def test_total_ms_matches_the_stored_timestamps(db: Session) -> None:
+    """The number is reconstructible from the row it sits on.
+
+    ``completed_at`` and ``total_ms`` are computed from one instant rather
+    than two ``now()`` calls, so `completed_at - queued_at` agrees with the
+    stored figure instead of drifting from it by the width of the tail.
+    """
+    review = _run(db, FakeLLM([_payload([])]), received_at=datetime.now(timezone.utc))
+
+    assert review.queued_at is not None and review.completed_at is not None
+    span = review.completed_at - review.queued_at
+
+    assert review.total_ms == int(span.total_seconds() * 1000)

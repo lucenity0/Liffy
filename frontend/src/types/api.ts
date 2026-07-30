@@ -50,14 +50,34 @@ export interface ReviewOut {
    *
    * A *lower bound* on report §8.1's time-to-review, not that figure: §8.1
    * counts from webhook receipt, and the queue wait before the worker picks
-   * the job up is not included here. Do not present this as "time to review"
-   * against the < 90s target without saying so.
+   * the job up is not included here. `total_ms` is that figure — present this
+   * one as "time to review" against the < 90s target and it will read low.
    *
    * Null on reviews still in flight, and on any row written before the
    * instrumentation landed.
    */
   duration_ms: number | null;
+  /**
+   * Report §8.1's time-to-review: webhook receipt -> review complete, against
+   * the < 90s target. This is the figure; `duration_ms` is a lower bound on it.
+   *
+   * Null on manual triggers and re-reviews — those have no webhook receipt,
+   * and it deliberately does *not* fall back to `duration_ms`, which would
+   * report a pipeline duration as an end-to-end one. Also null on legacy rows
+   * and on reviews still in flight.
+   *
+   * Queue wait is `total_ms - duration_ms` — the number that says whether a
+   * missed target is Liffy's pipeline or the broker's backlog. The two are
+   * measured by different clocks in different processes, so treat a small
+   * negative as skew rather than as data.
+   */
+  total_ms: number | null;
   created_at: string;
+  /**
+   * When the webhook delivery arrived, stamped in the API process. Null on
+   * manual triggers, re-reviews, and legacy rows.
+   */
+  queued_at: string | null;
   completed_at: string | null;
 }
 

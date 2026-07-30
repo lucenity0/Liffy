@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -28,6 +29,27 @@ async def github_webhook(
     if not verify_webhook_signature(settings.github_webhook_secret, body, x_hub_signature_256):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
 
+    # Report §8.1's clock starts here — this is the "webhook received" the
+    # < 90s target is measured from.
+    #
+    # Not at the top of the function: an unsigned request is not a review, and
+    # `await request.body()` includes a slow client's upload, which would let
+    # anyone inflate the metric by trickling a body. Not just before
+    # `enqueue_review` either: the JSON parse and the `resolve_repo_owner`
+    # round trip below are real work a user waits through, and hiding a
+    # saturated connection pool from the number is the class of bug METRIC-1
+    # existed to fix.
+    #
+    # Deliveries that turn out to be ignorable are stamped too. It is a local
+    # that dies on the `return {"status": "ignored"}` paths — never written,
+    # never enqueued — and one `datetime.now()` on a request that already paid
+    # for an HMAC over the whole body is not worth branching around.
+    #
+    # `timezone.utc` explicitly: a naive `datetime.now()` would record the API
+    # host's offset as latency, and the worker that reads it is a different
+    # process that may not share the host.
+    received_at = datetime.now(timezone.utc)
+
     try:
         payload = json.loads(body.decode("utf-8") or "{}")
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -53,5 +75,5 @@ async def github_webhook(
 
     owner, repo_name = full_name.split("/", 1)
     pr_number = int(pull_request["number"])
-    review_worker.enqueue_review(owner, repo_name, pr_number)
+    review_worker.enqueue_review(owner, repo_name, pr_number, received_at.isoformat())
     return {"status": "queued", "pr_number": pr_number}

@@ -14,7 +14,7 @@ from app.llm.embeddings import EmbeddingProvider
 from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.services.chunker import CodeChunk, chunk_source
-from app.services.github_service import GitHubClient
+from app.services.github_service import GitHubAuthError, GitHubClient
 from app.services.rag_service import get_repo_collection
 
 # Files larger than this are skipped (vendored bundles, fixtures, etc.).
@@ -32,7 +32,7 @@ class IndexResult:
     chunks_added: int = 0  # embedded + upserted this run
     chunks_skipped: int = 0  # unchanged (hash match)
     chunks_deleted: int = 0  # stale (file removed or shrank)
-    files_failed: int = 0  # raised during chunking; skipped, chunks preserved
+    files_failed: int = 0  # fetch or chunk raised; skipped, existing chunks kept
 
 
 def _chunk_id(file_path: str, chunk_index: int) -> str:
@@ -58,14 +58,51 @@ def index_repository(
     }
     seen_keys: set[tuple[str, int]] = set()
 
+    def keep_existing_chunks(file_path: str) -> None:
+        """Mark a skipped file's chunks as still current.
+
+        Every path that gives up on a file mid-run has to call this. The
+        stale-cleanup below deletes every existing row whose key is not in
+        ``seen_keys``, so skipping without it deletes that file's chunks from
+        Chroma *and* Postgres — turning "could not read it this run" into
+        "destroyed its index", which is strictly worse than doing nothing.
+
+        Named rather than repeated inline because forgetting it is silent: the
+        run succeeds, the counters look right, and the data is gone.
+        """
+        seen_keys.update(key for key in existing_rows if key[0] == file_path)
+
     to_embed: list[CodeChunk] = []
     for file_path in gh.list_repository_files(owner, name, ref=ref):
         result.files_seen += 1
-        content = gh.get_file_content(owner, name, file_path, ref=ref)
+        try:
+            content = gh.get_file_content(owner, name, file_path, ref=ref)
+        except GitHubAuthError:
+            # Scope is the whole run, not this file. The credential will not
+            # start working three files later, so skipping would spend one
+            # doomed request per file in the repository and report "800 files
+            # failed" instead of "the token is dead". Caught before the
+            # broader clause below because it is a `GitHubError` subclass.
+            raise
+        except Exception:
+            # Deliberately wider than `GitHubError`: `_get` only wraps
+            # `httpx.HTTPStatusError`, so a connect error or a read timeout
+            # arrives as a raw `httpx` exception and is not a `GitHubError` at
+            # all — and at a per-file network call site those are the likeliest
+            # failures of the lot. Anything that is not the global auth case
+            # above is treated as "this file, this run".
+            #
+            # `except Exception` rather than a bare `except`, so
+            # KeyboardInterrupt and SystemExit still stop the worker.
+            logger.exception("fetch failed, skipping %s", file_path)
+            keep_existing_chunks(file_path)
+            result.files_failed += 1
+            continue
+
         if len(content.encode("utf-8", "replace")) > MAX_FILE_BYTES:
             # Too large to re-embed, but keep its existing chunks: a file that
             # grew past the limit must not be purged by the stale-cleanup below.
-            seen_keys.update(key for key in existing_rows if key[0] == file_path)
+            keep_existing_chunks(file_path)
             continue
         try:
             chunks = chunk_source(file_path, content)
@@ -83,10 +120,7 @@ def index_repository(
             # nothing in this project configures a structured handler and
             # `extra` would leave the one useful detail invisible.
             logger.exception("chunking failed, skipping %s", file_path)
-            # Same preservation as the oversized branch, for the same reason:
-            # without this the stale-cleanup below deletes the file's existing
-            # chunks, turning "could not re-chunk" into "index destroyed".
-            seen_keys.update(key for key in existing_rows if key[0] == file_path)
+            keep_existing_chunks(file_path)
             result.files_failed += 1
             continue
 

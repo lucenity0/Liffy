@@ -2,6 +2,7 @@ import hashlib
 import logging
 
 import chromadb
+import httpx
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -12,7 +13,7 @@ from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.models.user import User
 from app.services.chunker import chunk_source
-from app.services.github_service import _is_indexable
+from app.services.github_service import GitHubAuthError, GitHubError, _is_indexable
 from app.services.indexer import index_repository
 from app.services.rag_service import get_repo_collection
 
@@ -48,11 +49,11 @@ def repo(db: Session) -> Repository:
     return repository
 
 
-def _run(db, repo, files, embedder=None, client=None):
+def _run(db, repo, files, embedder=None, client=None, gh=None):
     client = client or shared_chroma_client()
     embedder = embedder or FakeEmbeddings()
     result = index_repository(
-        db, repo, gh=FakeGitHub(files), chroma_client=client, embedder=embedder
+        db, repo, gh=gh or FakeGitHub(files), chroma_client=client, embedder=embedder
     )
     return result, client, embedder
 
@@ -461,4 +462,144 @@ def test_a_file_dropped_from_the_listing_is_still_purged(db, repo, monkeypatch) 
     )
     assert "README.md" not in paths  # dropped from the listing -> purged
     assert "app/b.py" in paths  # present but unchunkable -> kept
+    assert result.chunks_deleted >= 1
+
+
+# ── A file we cannot fetch must not cost the run (INDEXER) ───────────────────
+
+
+def _fetch_raises(files, bad_path: str, exc: Exception) -> FakeGitHub:
+    """A FakeGitHub whose ``get_file_content`` throws for exactly one path."""
+
+    class FetchFailingGitHub(FakeGitHub):
+        def get_file_content(self, owner, repo, path, ref=None):
+            if path == bad_path:
+                raise exc
+            return super().get_file_content(owner, repo, path, ref)
+
+    return FetchFailingGitHub(files)
+
+
+def test_fetch_failure_on_one_file_does_not_abort_the_run(db, repo) -> None:
+    """The twin of the chunker guard, on the likelier call site.
+
+    ``get_file_content`` is a network call executed once per file, so a
+    transient 500 or a 404 on a file that vanished mid-run is ordinary
+    operation. Unguarded it propagates out of the loop and past
+    ``repo.indexed_at`` and ``db.commit()``, so one blip leaves the repository
+    permanently "never indexed" and discards every chunk already prepared.
+
+    Asserted against *committed* state, because the failure mode is precisely
+    that the commit never happens — a return value cannot tell you the
+    transaction was thrown away.
+    """
+    gh = _fetch_raises(FILES, "app/b.py", GitHubError("GitHub returned HTTP 500"))
+
+    result, client, _ = _run(db, repo, FILES, gh=gh)
+
+    assert result.files_failed == 1
+    assert result.files_seen == 3
+    assert result.chunks_added > 0
+
+    db.expire_all()  # force a real read; the identity map would hide a rollback
+    assert repo.indexed_at is not None
+    paths = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert "app/a.py" in paths and "README.md" in paths
+    assert "app/b.py" not in paths  # never fetched, so nothing to record
+    assert get_repo_collection(client, repo.id).count() == result.chunks_added
+
+
+def test_transport_error_is_treated_as_one_file_failing(db, repo) -> None:
+    """The case a ``GitHubError``-only guard would miss entirely.
+
+    ``_get`` wraps ``httpx.HTTPStatusError`` and nothing else, so a connect
+    error or a read timeout arrives as a raw ``httpx`` exception that is *not*
+    a ``GitHubError``. At a per-file network call site those are the likeliest
+    failures of the lot, which is why the guard is wider than the typed error.
+    """
+    gh = _fetch_raises(FILES, "app/b.py", httpx.ConnectError("connection refused"))
+
+    result, _, _ = _run(db, repo, FILES, gh=gh)
+
+    assert result.files_failed == 1
+    db.expire_all()
+    assert repo.indexed_at is not None
+
+
+def test_auth_error_aborts_the_whole_run(db, repo) -> None:
+    """The one failure whose scope is the run, not the file.
+
+    A revoked or expired credential will not start working three files later.
+    Skipping per file would spend one doomed request for every file in the
+    repository and report "N files failed" instead of "the token is dead" —
+    so this must propagate, and must *not* be absorbed into ``files_failed``.
+
+    ``GitHubAuthError`` subclasses ``GitHubError``, so this is entirely a
+    statement about clause order in ``index_repository``; collapsing the two
+    branches is the mistake it exists to catch.
+    """
+    gh = _fetch_raises(FILES, "app/b.py", GitHubAuthError("GitHub rejected the credentials."))
+
+    with pytest.raises(GitHubAuthError):
+        _run(db, repo, FILES, gh=gh)
+
+    db.expire_all()
+    assert repo.indexed_at is None  # the run did not complete
+
+
+def test_fetch_failure_keeps_the_files_existing_chunks(db, repo) -> None:
+    """A file that fails to fetch on re-index keeps what it already had.
+
+    Without the ``seen_keys`` preservation the stale-cleanup deletes every row
+    for that file from Chroma *and* Postgres, which makes "GitHub blipped"
+    strictly worse than not running at all.
+    """
+    _, client, _ = _run(db, repo, FILES)
+    before = get_repo_collection(client, repo.id).count()
+
+    gh = _fetch_raises(FILES, "app/b.py", GitHubError("GitHub returned HTTP 500"))
+    result, _, _ = _run(db, repo, FILES, client=client, gh=gh)
+
+    assert result.files_failed == 1
+    assert result.chunks_deleted == 0
+    assert get_repo_collection(client, repo.id).count() == before
+    paths = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert "app/b.py" in paths
+
+
+def test_fetch_failure_is_logged_with_its_path(db, repo, caplog) -> None:
+    """``files_failed`` says how many; only the log says which."""
+    gh = _fetch_raises(FILES, "app/b.py", GitHubError("GitHub returned HTTP 500"))
+
+    with caplog.at_level(logging.ERROR, logger="app.services.indexer"):
+        _run(db, repo, FILES, gh=gh)
+
+    assert "app/b.py" in caplog.text
+    # exc_info, so the traceback reaches the worker log rather than just a line.
+    assert any(record.exc_info for record in caplog.records)
+
+
+def test_a_file_dropped_from_the_listing_is_still_purged_when_another_fails(db, repo) -> None:
+    """Preserving an unfetchable file must not soften stale-cleanup in general.
+
+    Files that leave the listing still have to be purged — that path is what
+    remediates an already-embedded secret, and
+    ``test_reindexing_purges_already_embedded_secrets`` depends on it. Both
+    cases run together here so the distinction cannot be quietly collapsed.
+    """
+    _, client, _ = _run(db, repo, FILES)
+
+    remaining = {k: v for k, v in FILES.items() if k != "README.md"}
+    gh = _fetch_raises(remaining, "app/b.py", GitHubError("GitHub returned HTTP 500"))
+    result, _, _ = _run(db, repo, remaining, client=client, gh=gh)
+
+    paths = set(
+        db.scalars(select(RepoEmbedding.file_path).where(RepoEmbedding.repo_id == repo.id))
+    )
+    assert "README.md" not in paths  # dropped from the listing -> purged
+    assert "app/b.py" in paths  # present but unfetchable -> kept
     assert result.chunks_deleted >= 1

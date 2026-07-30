@@ -274,3 +274,53 @@ def test_real_component_chunks_by_its_real_exports() -> None:
     # EDGE is a const map in that file and must not be labelled a function.
     assert "EDGE" not in named
     assert all(c.kind != "block" for c in chunks), "fell back to line windows"
+
+
+# ── Registry integrity (CHUNKER) ─────────────────────────────────────────────
+
+
+def test_every_registered_extension_takes_the_parser_path() -> None:
+    """The guarded path, walked once per registered extension.
+
+    ``chunk_source`` looks a language name up in ``_DEFINITION_TYPES``
+    whenever a parser exists, and an extension whose name is missing from that
+    map raises ``KeyError``. The indexer calls ``chunk_source`` in a bare loop
+    with no per-file ``try``, so that is not one skipped file — it aborts the
+    whole repository index run before ``indexed_at`` is ever written.
+
+    Nothing else in this file catches it. The two fallback tests use ``.md``
+    and ``.rb``, which have no parser and so never reach the lookup at all,
+    which is why the suite stayed green with the drift present. This walks
+    ``_LANGUAGES`` itself, so an extension added later is covered without
+    anyone remembering to write a test for it.
+
+    ``kind != "block"`` is what proves the parser path actually ran — "block"
+    is emitted only by the line-window fallback.
+    """
+    from app.services.chunker import _LANGUAGES
+
+    for extension in _LANGUAGES:
+        chunks = chunk_source(f"probe{extension}", "x = 1\n")
+
+        assert chunks, extension
+        assert all(c.kind != "block" for c in chunks), extension
+
+
+def test_every_registered_language_has_definition_types() -> None:
+    """The one drift a single registry cannot make unrepresentable.
+
+    Folding the grammar and language-name maps into one entry per extension
+    means a half-added extension is no longer valid data. ``_DEFINITION_TYPES``
+    is a third registry keyed by language *name* rather than by extension,
+    though, so adding a language is still two edits — and forgetting the
+    second one is the same ``KeyError`` in the same place.
+
+    Asserted against the registries directly so it fails at test time rather
+    than inside a Celery worker, and so it still holds for a language whose
+    grammar is too awkward to exercise in the test above.
+    """
+    from app.services.chunker import _DEFINITION_TYPES, _LANGUAGES
+
+    names = {name for name, _ in _LANGUAGES.values()}
+
+    assert names <= _DEFINITION_TYPES.keys(), sorted(names - _DEFINITION_TYPES.keys())

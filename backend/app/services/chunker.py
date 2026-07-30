@@ -100,31 +100,29 @@ def _javascript_language() -> Language:
     return Language(tree_sitter_javascript.language())
 
 
-# Language registry: extension -> language factory. Adding a language is one
-# entry here, one in _EXTENSION_LANGUAGE below, and its grammar package in
-# requirements.txt.
-_LANGUAGES: dict[str, Callable[[], Language]] = {
-    ".py": _python_language,
-    ".ts": _typescript_language,
-    ".tsx": _tsx_language,
-    ".js": _javascript_language,
+# Language registry: extension -> (language name, grammar factory). Adding a
+# language is one entry here and its grammar package in requirements.txt.
+#
+# One entry per extension, rather than a grammar map and a parallel
+# extension -> language map. The two were keyed identically and read together
+# on every call, so an extension added to one and forgotten in the other was
+# a KeyError out of `chunk_source` — and the indexer calls it in a bare loop,
+# which turns one missing line here into a failed run over the whole
+# repository. A single map makes half-adding a language unrepresentable.
+#
+# The name is the join to _DEFINITION_TYPES above and is genuinely many-to-one
+# with the factory: `.ts` and `.tsx` need different grammars but share one set
+# of node names.
+_LANGUAGES: dict[str, tuple[str, Callable[[], Language]]] = {
+    ".py": ("python", _python_language),
+    ".ts": ("typescript", _typescript_language),
+    ".tsx": ("typescript", _tsx_language),
+    ".js": ("javascript", _javascript_language),
     # JSX is valid in plain `.js` across the React ecosystem, and the
     # JavaScript grammar accepts it.
-    ".jsx": _javascript_language,
-    ".mjs": _javascript_language,
-    ".cjs": _javascript_language,
-}
-
-# Which set of node names applies. Several extensions share one language, so
-# this is deliberately separate from the grammar registry above.
-_EXTENSION_LANGUAGE: dict[str, str] = {
-    ".py": "python",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
+    ".jsx": ("javascript", _javascript_language),
+    ".mjs": ("javascript", _javascript_language),
+    ".cjs": ("javascript", _javascript_language),
 }
 
 _parsers: dict[str, Parser] = {}
@@ -134,7 +132,7 @@ def _parser_for(extension: str) -> Parser | None:
     if extension not in _LANGUAGES:
         return None
     if extension not in _parsers:
-        _parsers[extension] = Parser(_LANGUAGES[extension]())
+        _parsers[extension] = Parser(_LANGUAGES[extension][1]())
     return _parsers[extension]
 
 
@@ -234,7 +232,10 @@ def chunk_source(file_path: str, source: str) -> list[CodeChunk]:
 
     extension = "." + file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
     parser = _parser_for(extension)
-    definition_types = _DEFINITION_TYPES[_EXTENSION_LANGUAGE[extension]] if parser else frozenset()
+    # Read off the same registry entry the parser came from — `parser` is
+    # non-None exactly when the extension is registered, so the name and the
+    # grammar cannot disagree about which language this is.
+    definition_types = _DEFINITION_TYPES[_LANGUAGES[extension][0]] if parser else frozenset()
     raw: list[tuple[str, int, int, str, str | None]] = []  # (text, start, end, kind, name)
 
     if parser is not None:

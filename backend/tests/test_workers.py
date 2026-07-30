@@ -319,6 +319,31 @@ def test_task_with_malformed_received_at_still_completes(session_factory, monkey
         assert db.scalars(select(Review)).one().total_ms is None
 
 
+def test_non_string_received_at_still_completes(session_factory, monkeypatch) -> None:
+    """The broker boundary is untrusted in type, not only in format.
+
+    ``fromisoformat`` raises ``TypeError`` — not ``ValueError`` — for a
+    non-string, and the parse sits in ``run_review``'s argument list, so
+    catching only ``ValueError`` lets it escape the task before a review row is
+    ever created. Nothing enforces the ``str`` annotation across Celery: a
+    caller passing an int, or a replayed message, delivers an int.
+    """
+    _connect(session_factory)
+    _review_deps(monkeypatch)
+
+    result = review_worker.review_pr_task("octo", "demo", 5, 1753900000)
+
+    assert result["status"] == "completed"
+    with session_factory() as db:
+        assert db.scalars(select(Review)).one().total_ms is None
+
+
+def test_parse_received_at_never_raises() -> None:
+    """The contract, pinned directly — the helper's whole job is not to throw."""
+    for value in (None, "", "garbage", "2026-13-45T99:99:99", 1753900000, 17539.0, ["x"], {}):
+        assert review_worker._parse_received_at(value) is None
+
+
 def test_naive_received_at_is_refused_rather_than_assumed_utc(
     session_factory, monkeypatch
 ) -> None:

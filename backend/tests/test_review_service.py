@@ -444,6 +444,61 @@ def test_clock_skew_clamps_to_zero(db: Session) -> None:
     assert review.total_ms == 0
 
 
+def test_naive_received_at_is_rejected_before_any_row_exists(db: Session) -> None:
+    """A caller's naive datetime must cost nothing, not strand a review.
+
+    Subtracting a naive ``received_at`` from the aware ``datetime.now`` in the
+    tails raises — and both writes sit after the ``processing`` row is
+    committed and before the tail's own commit. Unguarded, that leaves the
+    review in ``processing`` **forever** and, on the failure path, replaces the
+    original exception with a datetime error: the two things those writes exist
+    to prevent, defeated at once.
+
+    So the check lives at ``run_review``'s entry rather than in
+    ``_wall_clock_ms``. Guarding the helper would only change which exception
+    strands the row; refusing at entry means there is no row yet to strand,
+    which is what the second assertion pins.
+
+    Rejected rather than coerced to UTC: assuming is how a caller's offset
+    becomes a 5.5-hour queue wait that parses and renders perfectly.
+    """
+    with pytest.raises(ValueError, match="timezone-aware"):
+        _run(db, FakeLLM([_payload([])]), received_at=datetime.now())
+
+    db.expire_all()
+    assert db.scalars(select(Review)).all() == []
+
+
+def test_naive_received_at_is_rejected_before_the_pipeline_runs(db: Session) -> None:
+    """Entry validation, not late validation.
+
+    The row assertion above proves nothing was stranded; this proves nothing
+    was *spent* either — a bad argument should not cost two GitHub round trips
+    and an LLM call before anyone notices.
+    """
+
+    class CountingGitHub(FakeGitHub):
+        calls = 0
+
+        def get_pull_request(self, owner, repo, number):
+            type(self).calls += 1
+            return super().get_pull_request(owner, repo, number)
+
+    gh = CountingGitHub(pr_meta=META, pr_diff=DIFF)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        run_review(
+            db, "octo", "demo", 7,
+            gh=gh,
+            chroma_client=shared_chroma_client(),
+            embedder=DeterministicEmbeddings(),
+            llm=FakeLLM([_payload([])]),
+            received_at=datetime.now(),
+        )
+
+    assert CountingGitHub.calls == 0
+
+
 def test_total_ms_matches_the_stored_timestamps(db: Session) -> None:
     """The number is reconstructible from the row it sits on.
 

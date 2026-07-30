@@ -32,6 +32,14 @@ def _parse_received_at(value: str | None) -> datetime | None:
     degrades to ``None`` — ``total_ms`` stays NULL — rather than raising, so a
     bad timestamp costs one row of analytics and not the review itself.
 
+    This is a *broker* boundary, so the value is untrusted in **type** as well
+    as in format. The annotation says ``str | None``, but nothing enforces it
+    across Celery: a caller passing an int, or a replayed message, delivers an
+    int, and ``fromisoformat`` raises ``TypeError`` rather than ``ValueError``
+    for that. Catching only ``ValueError`` would let it escape the task before
+    a review row is ever created — the precise outcome this function exists to
+    prevent, reached through a different exception.
+
     A *naive* string is refused rather than assumed to be UTC. Assuming would
     silently record the API host's timezone offset as latency: on a machine at
     UTC+05:30 that is a 5.5-hour "queue wait", which is much worse than no
@@ -41,7 +49,7 @@ def _parse_received_at(value: str | None) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value)
-    except ValueError:
+    except (ValueError, TypeError):
         return None
     if parsed.tzinfo is None:
         return None

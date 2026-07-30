@@ -41,6 +41,15 @@ def _wall_clock_ms(start: datetime | None, end: datetime) -> int | None:
     a nonsense value that would poison the first average anyone computes; a 0
     reads honestly as "receipt and completion were indistinguishable, or the
     clocks disagree".
+
+    **Precondition: ``start`` is timezone-aware or None.** Subtracting a naive
+    one from an aware ``end`` raises, and both call sites are in ``run_review``
+    tails *after* the ``processing`` row is committed and *before* the tail's
+    own commit — so a raise here strands the review in ``processing`` forever
+    and masks whatever the original failure was. ``run_review`` therefore
+    rejects a naive ``received_at`` at entry, before any row exists; do not
+    weaken that check and rely on a guard here instead, because by the time
+    this runs there is already something to strand.
     """
     if start is None:
         return None
@@ -136,6 +145,24 @@ def run_review(
     llm: ReviewLLM,
     received_at: datetime | None = None,
 ) -> Review:
+    # Validated here, before the clock and before any row is written.
+    #
+    # A naive `received_at` cannot be subtracted from the aware `datetime.now`
+    # in the tails, and that raise would land after the `processing` row is
+    # committed but before the tail commits — stranding the review in
+    # `processing` forever and masking the original exception on the failure
+    # path. Checking at entry means the caller's mistake costs nothing: no
+    # clock, no GitHub calls, no row, nothing to strand.
+    #
+    # Rejected rather than coerced. Assuming UTC is how the caller's offset
+    # becomes a 5.5-hour "queue wait" that parses and renders perfectly, which
+    # is the failure `_parse_received_at` refuses upstream for the same reason.
+    if received_at is not None and received_at.tzinfo is None:
+        raise ValueError(
+            "received_at must be timezone-aware; a naive datetime would record "
+            "the caller's UTC offset as queue wait"
+        )
+
     # Report §8.1's clock. First statement in the function on purpose: the two
     # GitHub calls below are the largest network payload in the pipeline
     # before the LLM, and starting the clock after them makes real latency a

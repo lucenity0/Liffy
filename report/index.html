@@ -305,8 +305,11 @@ code, .mono {
 /* ==================================================================== *
  * Masthead
  * ==================================================================== */
+/* padding-bottom matches .mast-meta's padding-top so the meta row sits
+   optically centred between its own rule and the masthead's, rather than
+   hanging off the top one with a hole underneath. */
 .mast {
-  padding: clamp(3rem, 9vw, 6rem) 0 clamp(2rem, 5vw, 3.5rem);
+  padding: clamp(3rem, 9vw, 6rem) 0 1.1rem;
   border-bottom: 1px solid var(--rule);
 }
 .mast-top {
@@ -315,8 +318,11 @@ code, .mono {
   gap: clamp(1.25rem, 4vw, 2.5rem);
   flex-wrap: wrap;
 }
-.cat { flex: 0 0 auto; }
-.cat svg { display: block; width: clamp(66px, 12vw, 92px); height: auto; }
+/* The front door's cat is 26 cells wide to 16 tall, so it needs
+   noticeably more width than a square sprite to read at the same weight
+   beside the wordmark. */
+.cat { flex: 0 0 auto; padding-top: 0.35rem; }
+.cat svg { display: block; width: clamp(104px, 15vw, 148px); height: auto; }
 .mast-id { flex: 1 1 18rem; min-width: 0; }
 
 .wordmark {
@@ -336,14 +342,26 @@ code, .mono {
   color: var(--ink-dim);
   margin: 0.9rem 0 0;
 }
+/* The one block on the page set to the full column width and justified,
+   so its edges land flush against the rules above and below it. Body copy
+   inside the plates keeps its ~64ch measure — this treatment is for the
+   opening statement only, where the line is a banner rather than
+   something you read paragraph after paragraph. */
 .thesis {
   font-size: clamp(1.05rem, 1.6vw, 1.28rem);
   line-height: 1.62;
-  max-width: 46ch;
+  max-width: none;
   margin: clamp(1.75rem, 4vw, 2.5rem) 0 0;
-  text-wrap: pretty;
+  text-align: justify;
+  hyphens: none;
 }
 .thesis b { font-weight: 600; }
+/* Justified monospace needs enough words per line to absorb the extra
+   space at the breaks. Narrow viewports do not have them, so the gaps
+   turn into rivers — ragged right is the better failure there. */
+@media (max-width: 40rem) {
+  .thesis { text-align: left; text-wrap: pretty; }
+}
 
 .mast-meta {
   display: flex;
@@ -840,19 +858,47 @@ code, .mono {
 /* ==================================================================== *
  * Colophon
  * ==================================================================== */
+/* Three columns so the footer fills the same width as the rule above it:
+   the cat, the note, and the credit block pushed to the right edge. */
 .colo {
   margin-top: clamp(3.5rem, 8vw, 5rem);
   padding-top: 1.5rem;
   border-top: 1px solid var(--rule);
-  display: flex;
-  gap: 1.5rem;
-  align-items: flex-start;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 1.5rem 2.5rem;
+  align-items: start;
 }
-.colo .p { font-size: 0.86rem; line-height: 1.65; color: var(--ink-sub); max-width: 52ch; }
-.colo [data-sprite] { flex: 0 0 auto; opacity: 0.75; }
-.colo svg { width: 34px; height: auto; display: block; }
+.colo .p { font-size: 0.86rem; line-height: 1.65; color: var(--ink-sub); max-width: 60ch; }
+.colo [data-sprite] { opacity: 0.75; }
+.colo svg { width: 56px; height: auto; display: block; }
 .act-rule [data-sprite] { flex: 0 0 auto; display: block; }
+
+.colo-credit {
+  text-align: right;
+  display: grid;
+  gap: 0.3rem;
+  justify-items: end;
+}
+.colo-credit .lbl { color: var(--ink-sub); }
+.colo-credit .colo-credit-v { font-family: var(--f-ui); font-size: 0.78rem; color: var(--ink-dim); }
+
+/* The bottom meta row, mirroring .mast-meta so the page closes the way it
+   opened. Spans all three columns. */
+.colo-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.75rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--rule);
+}
+.colo-foot .lbl span { color: var(--ink-dim); }
+
+@media (max-width: 48rem) {
+  .colo { grid-template-columns: auto minmax(0, 1fr); }
+  .colo-credit { grid-column: 1 / -1; text-align: left; justify-items: start; }
+}
 
 a { color: inherit; text-decoration-color: var(--rule-strong); text-underline-offset: 3px; }
 a:hover { text-decoration-color: var(--ink-dim); }
@@ -1801,14 +1847,23 @@ document.documentElement.classList.add("anim");
   <!-- COLOPHON                                                        -->
   <!-- ============================================================== -->
   <footer class="colo">
-    <span data-sprite="cat" data-cell="4" aria-hidden="true"></span>
-    <div>
-      <p class="p">Set in Monaspace Argon and Neon, the two typefaces Liffy's own interface uses.
-        The palette is lifted directly from the product's stylesheet &mdash; warm paper, soft
-        black, and four muted inks. Colour appears on this page only where Liffy itself would
-        report a state: a severity, a verdict, a status. Everything else is ink on paper.</p>
-      <p class="p" style="margin-top:0.6rem">Liffy &middot; Architecture &amp; Project Report v1.0
-        &middot; Nafees&nbsp;S and Gajalakshmi</p>
+    <span data-sprite="cat" data-cell="3" aria-hidden="true"></span>
+
+    <p class="p">Set in Monaspace Argon and Neon, the two typefaces Liffy's own interface
+      uses. The palette is lifted directly from the product's stylesheet &mdash; warm paper,
+      soft black, and four muted inks. Colour appears on this page only where Liffy itself
+      would report a state: a severity, a verdict, a status. Everything else is ink on paper.</p>
+
+    <div class="colo-credit">
+      <span class="lbl">Architecture &amp; Project Report</span>
+      <span class="colo-credit-v">Version 1.0</span>
+      <span class="colo-credit-v">Nafees&nbsp;S &amp; Gajalakshmi</span>
+    </div>
+
+    <div class="colo-foot">
+      <p class="lbl">Source <span>github.com/lucenity0/Liffy</span></p>
+      <p class="lbl">Read the flow <span>liffy.lucenity.dev/report</span></p>
+      <p class="lbl">Steps live <span>13 of 15</span></p>
     </div>
   </footer>
 
@@ -1823,21 +1878,27 @@ document.documentElement.classList.add("anim");
  * ==================================================================== */
 (function () {
   var MAPS = {
+    /* The sleeping cat from the under-construction page, character for
+       character — same animal on the front door and in here. Face on the
+       right, back sloping down-left, two closed-eye dashes, a paw out at
+       the bottom-left. */
     cat: [
-      "..#.......#..",
-      "..##.....##..",
-      ".###########.",
-      ".###########.",
-      ".#.#######.#.",
-      ".#..#####..#.",
-      ".###########.",
-      ".##.#####.##.",
-      ".###.###.###.",
-      ".###########.",
-      "..#########..",
-      "..#.#...#.#..",
-      "..#.#...#.#.#",
-      "..........###"
+      "..#.......#...............",
+      ".###.....###..............",
+      ".#.##....#.##.............",
+      ".#..##..##..##............",
+      ".#.########..##...........",
+      ".################.........",
+      ".#################........",
+      ".##################.......",
+      ".##################.......",
+      "###################.......",
+      "###################.#####.",
+      "##...####...##############",
+      "##########################",
+      "####################...###",
+      ".################.........",
+      "..#############..........."
     ],
     key: [
       ".###.",

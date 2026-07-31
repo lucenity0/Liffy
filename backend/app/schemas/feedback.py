@@ -34,3 +34,28 @@ class FeedbackOut(BaseModel):
     comment_id: uuid.UUID
     rating: int
     created_at: datetime
+
+
+class EvalScoresOut(BaseModel):
+    """Report §8.1's first two metrics for one review (``GET /reviews/{id}/eval``).
+
+    **Both rates are nullable, and ``null`` is not ``0.0``.** ``null`` means
+    nobody has rated; ``0.0`` means every rating was negative. The stub this
+    replaced returned a hardcoded ``0.0`` for an unrated review, which reads as
+    a measurement and is not one — so ``approval_rate ?? 0`` anywhere
+    downstream puts the bug straight back.
+
+    ``rated_comments`` is the denominator and is in the response on purpose: a
+    bare "83%" over a sample of six invites a conclusion the data cannot
+    support, and n is always small here.
+
+    ``false_positive_rate`` is ``1 - approval_rate`` exactly; see ADR 004.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    review_id: uuid.UUID
+    total_comments: int
+    rated_comments: int
+    approval_rate: float | None
+    false_positive_rate: float | None

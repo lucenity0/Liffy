@@ -32,3 +32,13 @@ class RepoStatusOut(BaseModel):
     status: str  # "indexed" | "not_indexed"
     indexed_at: datetime | None
     chunk_count: int
+    # How the last index run went. Both null on repositories indexed before
+    # these were recorded — which is why they are nullable rather than
+    # defaulting to 0: "never measured" and "measured, nothing failed" are
+    # different, and only the second deserves a clean chip.
+    #
+    # A non-zero failed count means the index is *partial*: those files have no
+    # chunks, so reviews touching them retrieve no context. Without this the
+    # partial case renders identically to a complete one.
+    last_index_failed_files: int | None
+    last_indexed_files_seen: int | None

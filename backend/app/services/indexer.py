@@ -216,6 +216,16 @@ def index_repository(
             db.delete(existing_rows[key])
         result.chunks_deleted = len(stale)
 
+    # Persist how this run went alongside the timestamp that says it happened.
+    # Overwritten rather than accumulated: these describe the *last* run, so a
+    # later clean run clears the caveat instead of carrying an old failure
+    # forward forever.
+    #
+    # Written even when zero — that is what lets the API tell "this run skipped
+    # nothing" apart from "this repository predates the counter", which is what
+    # a NULL means.
+    repo.last_index_failed_files = result.files_failed
+    repo.last_indexed_files_seen = result.files_seen
     repo.indexed_at = datetime.now(timezone.utc)
     db.commit()
     return result

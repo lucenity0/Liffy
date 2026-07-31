@@ -1,4 +1,5 @@
 import { Badge, type BadgeTone, type BadgeVariant } from "./Badge";
+import { CATEGORY_LABELS, humanize } from "@/lib/categories";
 import type {
   Category,
   IndexStatus,
@@ -54,14 +55,19 @@ const SEVERITY = {
  * Severity is what you triage by, so severity is the thing that carries
  * colour. Six more hues for category would be exactly the visual noise this
  * design rules out, and would drown the severity signal sitting next to it.
+ *
+ * Labels come from `lib/categories.ts` so #201's distribution chart can spell
+ * them the same way without a second mapping. Still written out one key at a
+ * time rather than mapped over that table — the `satisfies` below is the
+ * point of this file, and a programmatic build would lose it.
  */
 const CATEGORY = {
-  logic_error: { label: "Logic", tone: "neutral", variant: "outline" },
-  security: { label: "Security", tone: "neutral", variant: "outline" },
-  performance: { label: "Perf", tone: "neutral", variant: "outline" },
-  architecture: { label: "Architecture", tone: "neutral", variant: "outline" },
-  convention: { label: "Convention", tone: "neutral", variant: "outline" },
-  improvement: { label: "Improvement", tone: "neutral", variant: "outline" },
+  logic_error: { label: CATEGORY_LABELS.logic_error, tone: "neutral", variant: "outline" },
+  security: { label: CATEGORY_LABELS.security, tone: "neutral", variant: "outline" },
+  performance: { label: CATEGORY_LABELS.performance, tone: "neutral", variant: "outline" },
+  architecture: { label: CATEGORY_LABELS.architecture, tone: "neutral", variant: "outline" },
+  convention: { label: CATEGORY_LABELS.convention, tone: "neutral", variant: "outline" },
+  improvement: { label: CATEGORY_LABELS.improvement, tone: "neutral", variant: "outline" },
 } satisfies Record<Category, BadgeSpec>;
 
 const INDEX = {
@@ -71,7 +77,7 @@ const INDEX = {
 
 /** Shown when the API hands us a value outside the union. */
 function fallback(value: string): BadgeSpec {
-  return { label: value.replace(/_/g, " "), tone: "neutral" };
+  return { label: humanize(value), tone: "neutral" };
 }
 
 function render(spec: BadgeSpec, size: "sm" | "md") {

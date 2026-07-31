@@ -194,6 +194,53 @@ describe("Analytics — populated", () => {
   });
 });
 
+describe("Analytics — charts", () => {
+  it("renders the shape metrics alongside the tiles", async () => {
+    render();
+
+    expect(await tile("Category distribution")).toBeInTheDocument();
+    expect(await tile("Token efficiency trend")).toBeInTheDocument();
+    expect(await tile("Severity calibration")).toBeInTheDocument();
+    expect(await tile("Flagged reviews")).toBeInTheDocument();
+    // Still there — the charts sit beside the tiles, not instead of them.
+    expect(await tile("Approval rate")).toBeInTheDocument();
+  });
+
+  /**
+   * Half the categories never fired on the first real `claude-opus-5` review.
+   * Against a target of "even spread" that is the finding, and it only exists
+   * on screen if the zero bars render.
+   */
+  it("shows the zero-count categories rather than dropping them", async () => {
+    render();
+
+    const chart = await tile("Category distribution");
+    expect(within(chart).getAllByText("0")).toHaveLength(3);
+    expect(within(chart).getByText("Security")).toBeInTheDocument();
+  });
+
+  /**
+   * Every scale here has a plausible empty domain, and a NaN width renders as
+   * nothing with no error — so the page has to survive the whole response
+   * being zeros, which is what a fresh-but-not-empty account looks like.
+   */
+  it("renders every chart without NaN when the data is empty", async () => {
+    withSummary({
+      ...fixtureAnalyticsEmpty,
+      // Reviews exist, so this is not the whole-page empty state — but
+      // nothing has produced a comment, a token count or a rating yet.
+      reviews_total: 3,
+      reviews_completed: 3,
+    });
+    const { container } = render();
+
+    await tile("Category distribution");
+    expect(container.innerHTML).not.toContain("NaN");
+    expect(screen.getByText(/nothing to plot yet/i)).toBeInTheDocument();
+    expect(screen.getByText("Nothing flagged.")).toBeInTheDocument();
+  });
+});
+
 describe("Analytics — the other three states", () => {
   it("renders an empty state for an account with no reviews", async () => {
     withSummary(fixtureAnalyticsEmpty);

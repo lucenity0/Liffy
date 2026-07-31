@@ -97,6 +97,29 @@ services:
       CHROMA_PORT: "8000"
     command: celery -A app.workers.celery_app worker --loglevel=info
 
+  # The scheduler for the weekly eval_scores job (report §8.2). It only decides
+  # *when* to enqueue; the `worker` above is what actually runs the task.
+  #
+  # ⚠ EXACTLY ONE. Do not scale this service — two schedulers means every
+  # scheduled task fires twice, and for an upsert job that shows up as
+  # duplicated work rather than as an error.
+  #
+  # No Chroma dependency: beat touches neither the vector store nor an LLM. It
+  # needs Redis to enqueue and Postgres only because the app's settings and
+  # models import at startup.
+  beat:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://liffy:liffy@postgres:5432/liffy
+      REDIS_URL: redis://redis:6379/0
+    # `celerybeat-schedule`, the scheduler's state file, is already gitignored.
+    command: celery -A app.workers.celery_app beat --loglevel=info
+
 volumes:
   pgdata:
   chromadata:

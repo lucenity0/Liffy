@@ -711,3 +711,57 @@ def test_an_empty_repository_is_legitimately_indexed(db, repo) -> None:
     assert result.files_seen == 0 and result.files_failed == 0
     db.expire_all()
     assert repo.indexed_at is not None
+
+
+# ── Surfacing partial failures (#210) ─────────────────────────────────────────
+
+
+def test_run_persists_the_failure_counts(db, repo) -> None:
+    """``files_failed`` outlives the task, so the API has something to read.
+
+    Before this it existed only for the lifetime of the run: the Celery result
+    dict goes to a backend nothing reads, and the only other trace was a log
+    line in the worker.
+    """
+    class OneBadFile(FakeGitHub):
+        def get_file_content(self, owner, repo_name, path, ref=None):
+            if path == "app/a.py":
+                raise RuntimeError("500 from GitHub")
+            return super().get_file_content(owner, repo_name, path, ref=ref)
+
+    result, _, _ = _run(db, repo, FILES, gh=OneBadFile(FILES))
+
+    assert result.files_failed == 1
+    assert repo.last_index_failed_files == 1
+    assert repo.last_indexed_files_seen == result.files_seen
+
+
+def test_a_clean_run_persists_zero_not_null(db, repo) -> None:
+    """`0` is a measurement; `None` means the repository predates the counter.
+
+    Only the first earns a clean chip on its own evidence.
+    """
+    _run(db, repo, FILES)
+
+    assert repo.last_index_failed_files == 0
+    assert repo.last_indexed_files_seen == 3
+
+
+def test_skipped_count_survives_a_rerun_by_being_reset(db, repo) -> None:
+    """A later clean run clears the caveat rather than accumulating.
+
+    These describe the *last* run. Accumulating would mean one transient 500
+    marks a repository as partial forever.
+    """
+    class OneBadFile(FakeGitHub):
+        def get_file_content(self, owner, repo_name, path, ref=None):
+            if path == "app/a.py":
+                raise RuntimeError("500 from GitHub")
+            return super().get_file_content(owner, repo_name, path, ref=ref)
+
+    _, client, embedder = _run(db, repo, FILES, gh=OneBadFile(FILES))
+    assert repo.last_index_failed_files == 1
+
+    _run(db, repo, FILES, client=client, embedder=embedder)
+
+    assert repo.last_index_failed_files == 0

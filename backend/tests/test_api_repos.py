@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from conftest import FakeGitHub, auth_headers, seed_user, shared_chroma_client
@@ -173,7 +174,70 @@ def test_list_and_status(session_factory, caller, indexed, fake_github) -> None:
         "status": "not_indexed",
         "indexed_at": None,
         "chunk_count": 0,
+        # Null, not 0: no run has recorded a count yet. The distinction is what
+        # lets the chip tell "nothing failed" apart from "never measured".
+        "last_index_failed_files": None,
+        "last_indexed_files_seen": None,
     }
+
+
+def test_status_reports_skipped_files(session_factory, caller, indexed, fake_github) -> None:
+    """A partial index surfaces its count through the API, not only the log.
+
+    This is the whole point of #210: before it, ``files_failed`` reached the
+    Celery result backend (which nothing reads) and the worker log, and a run
+    that skipped 40 of 200 files rendered identically to a complete one.
+    """
+    created = _connect(caller)
+    with session_factory() as db:
+        repo = db.get(Repository, uuid.UUID(created["id"]))
+        repo.indexed_at = datetime.now(timezone.utc)
+        repo.last_index_failed_files = 40
+        repo.last_indexed_files_seen = 200
+        db.commit()
+
+    status = client.get(f"/repos/{created['id']}/status", headers=caller).json()
+    assert status["last_index_failed_files"] == 40
+    assert status["last_indexed_files_seen"] == 200
+
+
+def test_status_reports_zero_skipped_on_a_clean_run(
+    session_factory, caller, indexed, fake_github
+) -> None:
+    """A healthy run reports ``0``, distinctly from a legacy row's ``null``.
+
+    Both must be renderable without a caveat, but only ``0`` is a measurement.
+    """
+    created = _connect(caller)
+    with session_factory() as db:
+        repo = db.get(Repository, uuid.UUID(created["id"]))
+        repo.indexed_at = datetime.now(timezone.utc)
+        repo.last_index_failed_files = 0
+        repo.last_indexed_files_seen = 120
+        db.commit()
+
+    status = client.get(f"/repos/{created['id']}/status", headers=caller).json()
+    assert status["last_index_failed_files"] == 0
+    assert status["last_indexed_files_seen"] == 120
+
+
+def test_legacy_repository_without_the_counts_serializes(
+    session_factory, caller, indexed, fake_github
+) -> None:
+    """Every row already in the database has no value for these.
+
+    A non-nullable column or a required schema field would 500 the status
+    endpoint for every existing repository.
+    """
+    created = _connect(caller)
+    with session_factory() as db:
+        repo = db.get(Repository, uuid.UUID(created["id"]))
+        repo.indexed_at = datetime.now(timezone.utc)
+        db.commit()
+
+    response = client.get(f"/repos/{created['id']}/status", headers=caller)
+    assert response.status_code == 200
+    assert response.json()["last_index_failed_files"] is None
 
 
 def test_list_repos_excludes_other_users_repos(

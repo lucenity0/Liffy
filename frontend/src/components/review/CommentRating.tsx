@@ -144,8 +144,6 @@ const PRESSED: Record<"sage" | "oxide", string> = {
  * quiet by design; outline-versus-solid survives greyscale.
  */
 function ThumbIcon({ filled, down }: { filled: boolean; down?: boolean }) {
-  const fill = filled ? "currentColor" : "none";
-
   return (
     <svg
       aria-hidden="true"
@@ -155,14 +153,24 @@ function ThumbIcon({ filled, down }: { filled: boolean; down?: boolean }) {
       stroke="currentColor"
       strokeWidth="1.25"
       strokeLinejoin="round"
+      strokeLinecap="round"
     >
-      {/* Cuff and hand stay two shapes so the fold between them is still
-          legible once both are filled. */}
-      <path d="M1.9 7.6h2.9v6.5H1.9z" fill={fill} />
+      {/*
+        One closed silhouette for the whole thumb, cuff included.
+
+        Drawn as two shapes — a cuff rectangle beside a hand — the stroke
+        outlines both and draws a seam down the join, which at 16px reads as a
+        small box floating next to a hand rather than as a thumb. Only visible
+        by eye; every test still passed.
+      */}
       <path
-        d="M4.8 7.7 7.9 2.2a1.9 1.9 0 0 1 2.1 2.4l-.6 2h3.2a1.6 1.6 0 0 1 1.55 2l-1.05 3.9a1.9 1.9 0 0 1-1.85 1.6H4.8z"
-        fill={fill}
+        d="M2 14.1V7.6h2.8L7.9 2.2a1.9 1.9 0 0 1 2.1 2.4l-.6 2h3.2a1.6 1.6 0 0 1 1.55 2l-1.05 3.9a1.9 1.9 0 0 1-1.85 1.6H2Z"
+        fill={filled ? "currentColor" : "none"}
       />
+      {/* The cuff fold. It does the work in the outline state and merges into
+          the fill when pressed, which is what a solid thumb should look like
+          — so it is drawn unconditionally rather than branched on. */}
+      <path d="M4.8 7.6v6.5" />
     </svg>
   );
 }

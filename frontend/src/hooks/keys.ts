@@ -20,5 +20,17 @@ export const keys = {
       [...keys.reviews.all, "list", params] as const,
     detail: (reviewId: string) =>
       [...keys.reviews.all, "detail", reviewId] as const,
+    /**
+     * Nested *under* the detail key, not beside it, and spelled by spreading
+     * `detail(...)` so it cannot drift out from under it.
+     *
+     * That nesting is the whole mechanism: rating a comment invalidates
+     * `detail(reviewId)`, and prefix matching carries the invalidation down to
+     * the score. Neither the rating mutation nor this query has to know the
+     * other exists. Flattened to `[...all, "eval", reviewId]` the number would
+     * sit there stale until a reload.
+     */
+    eval: (reviewId: string) =>
+      [...keys.reviews.detail(reviewId), "eval"] as const,
   },
 } as const;

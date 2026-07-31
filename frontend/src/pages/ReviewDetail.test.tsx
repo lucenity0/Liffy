@@ -5,6 +5,10 @@ import { Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { server } from "@/mocks/server";
 import {
+  fixtureEvalBelowTarget,
+  fixtureEvalNoComments,
+  fixtureEvalRated,
+  fixtureEvalUnrated,
   fixtureReviewApproved,
   fixtureReviewCompleted,
   fixtureReviewFailed,
@@ -12,6 +16,7 @@ import {
   fixtureReviewProcessing,
 } from "@/mocks/fixtures";
 import { renderWithProviders } from "@/test/renderWithProviders";
+import type { EvalScoresOut } from "@/types/api";
 import { ReviewDetail } from "./ReviewDetail";
 
 /** Mounted on the real path, so useParams sees a review id. */
@@ -320,6 +325,177 @@ describe("ReviewDetail — rating comments", () => {
     await waitFor(() => expect(queryClient.isFetching()).toBe(0));
   });
 });
+
+describe("ReviewDetail — approval score", () => {
+  /** Pins one of the eval states, since the default handler derives it. */
+  function withScores(scores: EvalScoresOut) {
+    server.use(
+      http.get("*/reviews/:reviewId/eval", () => HttpResponse.json(scores)),
+    );
+  }
+
+  /**
+   * The Rating block. Awaited, not queried synchronously: ReviewDetail shows
+   * a skeleton first, and the Sheet itself mounts before its query resolves —
+   * so every assertion inside it has to be a `find`, not a `get`.
+   */
+  const rating = () => screen.findByRole("region", { name: "Rating" });
+
+  it("shows the approval rate for a rated review", async () => {
+    withScores(fixtureEvalRated);
+    renderDetail(fixtureReviewCompleted.id);
+
+    // 0.8333… rounded once, at render.
+    expect(await within(await rating()).findByText("83%")).toBeInTheDocument();
+  });
+
+  /**
+   * The headline test. `approval_rate ?? 0` renders "0%" and would pass every
+   * other assertion in this block, so the absence of that string is the thing
+   * being checked — a review nobody has rated has not been rejected.
+   */
+  it("shows an empty state when the rate is null, and never 0%", async () => {
+    withScores(fixtureEvalUnrated);
+    renderDetail(fixtureReviewCompleted.id);
+
+    const region = await rating();
+    expect(await within(region).findByText("No ratings yet.")).toBeInTheDocument();
+    expect(within(region).queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+  });
+
+  /**
+   * `0` is a real value meaning every rating was negative, and it has to
+   * render as a number rather than collapsing into the empty state — the
+   * mirror of the test above, and the reason neither may be a falsy check.
+   */
+  it("renders a genuine 0% as a score, not as 'no ratings'", async () => {
+    withScores({
+      ...fixtureEvalRated,
+      approval_rate: 0,
+      false_positive_rate: 1,
+      rated_comments: 3,
+    });
+    renderDetail(fixtureReviewCompleted.id);
+
+    const region = await rating();
+    expect(await within(region).findByText("0%")).toBeInTheDocument();
+    expect(within(region).queryByText("No ratings yet.")).not.toBeInTheDocument();
+  });
+
+  it("shows the rated-of-total denominator next to the rate", async () => {
+    withScores(fixtureEvalRated);
+    renderDetail(fixtureReviewCompleted.id);
+
+    expect(
+      await within(await rating()).findByText("6 of 8 comments rated"),
+    ).toBeInTheDocument();
+  });
+
+  it("says a review with no comments has nothing to rate", async () => {
+    withScores(fixtureEvalNoComments);
+    renderDetail(fixtureReviewApproved.id);
+
+    const region = await rating();
+    expect(await within(region).findByText("Nothing to rate.")).toBeInTheDocument();
+    // Distinct from unrated, which is an invitation to go and rate something.
+    expect(within(region).queryByText(/no ratings yet/i)).not.toBeInTheDocument();
+  });
+
+  it("marks a rate above §8.1's target as meeting it", async () => {
+    withScores(fixtureEvalRated);
+    renderDetail(fixtureReviewCompleted.id);
+
+    expect(
+      await within(await rating()).findByText("Meets target"),
+    ).toBeInTheDocument();
+  });
+
+  it("marks a rate below §8.1's target as missing it", async () => {
+    withScores(fixtureEvalBelowTarget);
+    renderDetail(fixtureReviewCompleted.id);
+
+    expect(
+      await within(await rating()).findByText("Below target"),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * §8.1 asks for *more than* 70%, so exactly 70% is a miss. Asserted because
+   * `>=` is the easier thing to type and no other fixture here would catch it.
+   */
+  it("treats exactly the target as missing it", async () => {
+    withScores({
+      ...fixtureEvalRated,
+      approval_rate: 0.7,
+      false_positive_rate: 0.3,
+    });
+    renderDetail(fixtureReviewCompleted.id);
+
+    expect(
+      await within(await rating()).findByText("Below target"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not fetch eval scores for a processing review", async () => {
+    let fetched = 0;
+    server.use(
+      http.get("*/reviews/:reviewId/eval", () => {
+        fetched += 1;
+        return HttpResponse.json(fixtureEvalUnrated);
+      }),
+    );
+    renderDetail(fixtureReviewProcessing.id);
+
+    await screen.findByText(/liffy is reading/i);
+    expect(screen.queryByRole("region", { name: "Rating" })).not.toBeInTheDocument();
+    expect(fetched).toBe(0);
+  });
+
+  /**
+   * The invalidation wiring, end to end. The eval key nests under the detail
+   * key, so #198's `onSettled` reaches it by prefix without either side
+   * knowing the other exists — and the mock recomputes the rate from the
+   * ratings it has been sent, so this is a real recomputation rather than two
+   * fixtures agreeing with each other.
+   *
+   * The completed fixture starts at 1 of 2 rated, that one positive: 100%.
+   * Rating the other comment down takes it to 2 of 2, one positive: 50%.
+   */
+  it("updates the approval rate after a comment is rated", async () => {
+    const user = userEvent.setup();
+    renderDetail(fixtureReviewCompleted.id);
+
+    expect(await within(await rating()).findByText("100%")).toBeInTheDocument();
+
+    const comments = screen.getByRole("region", { name: "Comments" });
+    const [unrated] = within(comments).getAllByRole("article");
+    await user.click(within(unrated).getByRole("button", { name: "Not helpful" }));
+
+    const region = await rating();
+    expect(await within(region).findByText("50%")).toBeInTheDocument();
+    expect(within(region).getByText("2 of 2 comments rated")).toBeInTheDocument();
+  });
+
+  /** A score that failed to load must not cost the reader the review. */
+  it("keeps the rest of the page when the eval fetch fails", async () => {
+    server.use(
+      http.get("*/reviews/:reviewId/eval", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    renderDetail(fixtureReviewCompleted.id);
+
+    expect(
+      await within(await rating()).findByText(
+        "Couldn't load the rating for this review.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(fixtureReviewCompleted.summary!)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Comments" })).toBeInTheDocument();
+  });
+});
+
 
 describe("ReviewDetail — missing", () => {
   it("says the review is not there instead of showing a raw 404", async () => {

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "@/mocks/server";
-import { fixtureRepoIndexed, fixtureReviewCompleted } from "@/mocks/fixtures";
+import {
+  fixtureEvalRated,
+  fixtureEvalUnrated,
+  fixtureRepoIndexed,
+  fixtureReviewCompleted,
+} from "@/mocks/fixtures";
+import { getReviewEval } from "./analytics";
 import { connectRepo, disconnectRepo, listRepos } from "./repos";
 import { getReview, listReviews, triggerReview } from "./reviews";
 import { normalizeApiError } from "@/lib/errors";
@@ -88,6 +94,68 @@ describe("reviews", () => {
     expect(receivedBody).toEqual({ owner: "lucenity0", repo: "Liffy", pr_number: 58 });
     // The 202 body deliberately carries no review id.
     expect(result).toEqual({ status: "queued", repo: "lucenity0/Liffy", pr_number: 58 });
+  });
+});
+
+describe("analytics", () => {
+  it("getReviewEval hits /reviews/{id}/eval", async () => {
+    let url = "";
+    server.use(
+      http.get("*/reviews/:reviewId/eval", ({ request, params }) => {
+        url = new URL(request.url).pathname;
+        return HttpResponse.json({
+          review_id: params.reviewId,
+          total_comments: 8,
+          rated_comments: 6,
+          approval_rate: 0.8333333333333334,
+          false_positive_rate: 0.16666666666666663,
+        });
+      }),
+    );
+
+    await getReviewEval(fixtureReviewCompleted.id);
+    expect(url).toBe(`/reviews/${fixtureReviewCompleted.id}/eval`);
+  });
+
+  /**
+   * The one thing this wrapper must not do. `null` means nobody has rated;
+   * `0` means every rating was negative. Anything that coerces on the way in
+   * destroys the distinction before the UI ever gets a chance to branch on it.
+   */
+  it("parses null rates without coercing them to zero", async () => {
+    server.use(
+      http.get("*/reviews/:reviewId/eval", () =>
+        HttpResponse.json(fixtureEvalUnrated),
+      ),
+    );
+
+    const scores = await getReviewEval(fixtureReviewCompleted.id);
+    expect(scores.approval_rate).toBeNull();
+    expect(scores.false_positive_rate).toBeNull();
+    expect(scores.approval_rate).not.toBe(0);
+  });
+
+  it("keeps the rate unrounded, so rounding happens once at render", async () => {
+    server.use(
+      http.get("*/reviews/:reviewId/eval", () =>
+        HttpResponse.json(fixtureEvalRated),
+      ),
+    );
+
+    const scores = await getReviewEval(fixtureReviewCompleted.id);
+    expect(scores.approval_rate).toBe(0.8333333333333334);
+  });
+
+  it("surfaces a 404 as not_found rather than a zero score", async () => {
+    server.use(
+      http.get("*/reviews/:reviewId/eval", () =>
+        HttpResponse.json({ detail: "Review not found" }, { status: 404 }),
+      ),
+    );
+
+    await expect(getReviewEval("00000000-0000-0000-0000-000000000000")).rejects.toSatisfy(
+      (err: unknown) => normalizeApiError(err).kind === "not_found",
+    );
   });
 });
 

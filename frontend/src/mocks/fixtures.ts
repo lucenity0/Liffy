@@ -1,4 +1,5 @@
 import type {
+  EvalScoresOut,
   RepoOut,
   RepoStatusOut,
   ReviewCommentOut,
@@ -249,6 +250,58 @@ export const fixtureUserNoAvatar: UserOut = {
   username: "gajalakshmishashir",
   email: null,
   avatar_url: null,
+};
+
+/**
+ * The three shapes `GET /reviews/{id}/eval` can come back in.
+ *
+ * The default handler *derives* the scores from whatever has been rated, so
+ * a test that wants a particular one of these states pins it with
+ * `server.use` rather than hunting for a review that happens to be in it.
+ * Kept here so the three read side by side — the distinctions between them
+ * are the entire subject of #199.
+ */
+export const fixtureEvalRated: EvalScoresOut = {
+  review_id: fixtureReviewCompleted.id,
+  total_comments: 8,
+  rated_comments: 6,
+  // 5/6. Above §8.1's 70%, and deliberately not a round number: rounding
+  // happens once at render, and "83%" is what should reach the screen.
+  approval_rate: 0.8333333333333334,
+  false_positive_rate: 0.16666666666666663,
+};
+
+/** Below §8.1's target — 2 of 6, so 33%. */
+export const fixtureEvalBelowTarget: EvalScoresOut = {
+  review_id: fixtureReviewCompleted.id,
+  total_comments: 8,
+  rated_comments: 6,
+  approval_rate: 0.3333333333333333,
+  false_positive_rate: 0.6666666666666667,
+};
+
+/**
+ * Nobody has rated. `null`, **not** `0.0` — the distinction #191 returns null
+ * to preserve, and the state most reviews are actually in.
+ */
+export const fixtureEvalUnrated: EvalScoresOut = {
+  review_id: fixtureReviewCompleted.id,
+  total_comments: 8,
+  rated_comments: 0,
+  approval_rate: null,
+  false_positive_rate: null,
+};
+
+/**
+ * An `approve` verdict: nothing was flagged, so there is nothing to rate and
+ * never will be. Distinct from unrated, which is an invitation.
+ */
+export const fixtureEvalNoComments: EvalScoresOut = {
+  review_id: fixtureReviewApproved.id,
+  total_comments: 0,
+  rated_comments: 0,
+  approval_rate: null,
+  false_positive_rate: null,
 };
 
 /**

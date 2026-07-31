@@ -97,6 +97,19 @@ export function formatCount(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/**
+ * `0.8333…` → `"83%"`.
+ *
+ * The API sends rates unrounded on purpose, so rounding happens here, once,
+ * at the last possible moment — a rate rounded on the way in is a rate that
+ * cannot be compared against a target without the comparison inheriting the
+ * rounding. Whole percents because the denominator is routinely single
+ * digits: "83.3%" over six ratings implies a precision that is not there.
+ */
+export function formatPercent(rate: number): string {
+  return `${Math.round(rate * 100)}%`;
+}
+
 /** Elapsed time between two API timestamps, e.g. "42s" or "3m 12s". */
 export function formatDuration(fromIso: string, toIso: string): string {
   const ms = ensureUtc(toIso).getTime() - ensureUtc(fromIso).getTime();

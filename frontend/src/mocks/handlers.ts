@@ -132,6 +132,40 @@ export const handlers = [
     return HttpResponse.json(withRatings(review));
   }),
 
+  /**
+   * Derived from the same ratings the feedback POST records, rather than a
+   * canned payload. That is what makes "rating a comment moves the number" a
+   * real assertion here instead of two fixtures agreeing with each other.
+   *
+   * `my_rating` is the *caller's* rating and `approval_rate` is across all
+   * users, so equating them is a simplification the real backend does not
+   * make — harmless at one mock user, and the alternative is a fixture that
+   * cannot respond to a click.
+   */
+  http.get("*/reviews/:reviewId/eval", ({ params }) => {
+    const review = fixtureReviewDetailById[params.reviewId as string];
+    if (!review) {
+      return HttpResponse.json({ detail: "Review not found" }, { status: 404 });
+    }
+
+    const comments = withRatings(review).comments;
+    const rated = comments.filter((comment) => comment.my_rating !== null);
+    const approval =
+      // null, not 0 — nobody has rated is not everybody disapproved.
+      rated.length === 0
+        ? null
+        : rated.filter((comment) => comment.my_rating === 1).length /
+          rated.length;
+
+    return HttpResponse.json({
+      review_id: review.id,
+      total_comments: comments.length,
+      rated_comments: rated.length,
+      approval_rate: approval,
+      false_positive_rate: approval === null ? null : 1 - approval,
+    });
+  }),
+
   http.get("*/prs/:prId/review", ({ params }) => {
     const review = Object.values(fixtureReviewDetailById).find(
       (r) => r.pr_id === params.prId,

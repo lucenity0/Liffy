@@ -48,6 +48,31 @@ describe("repos", () => {
     });
   });
 
+  it("connectRepo surfaces a 429 as rate_limited, and never says reconnect", async () => {
+    // #209: GitHub answers 403 for a rate limit as well as for an auth
+    // failure. The backend tells them apart; this asserts the distinction
+    // survives to the user-facing message, because "reconnect your account" is
+    // the one instruction with no action behind it when you are merely
+    // throttled.
+    server.use(
+      http.post("*/repos", () =>
+        HttpResponse.json(
+          { detail: "GitHub rate limit reached. Retry after 60s." },
+          { status: 429, headers: { "Retry-After": "60" } },
+        ),
+      ),
+    );
+
+    await expect(connectRepo("octo/demo")).rejects.toSatisfy((err: unknown) => {
+      const normalized = normalizeApiError(err);
+      return (
+        normalized.kind === "rate_limited" &&
+        normalized.status === 429 &&
+        !normalized.message.toLowerCase().includes("reconnect")
+      );
+    });
+  });
+
   it("disconnectRepo does not choke on the 204's empty body", async () => {
     await expect(disconnectRepo(fixtureRepoIndexed.id)).resolves.toBeUndefined();
   });

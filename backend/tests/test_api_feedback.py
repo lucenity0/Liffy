@@ -1,7 +1,10 @@
-"""POST /comments/{comment_id}/feedback (EVAL-1, report §3 step 14).
+"""The two feedback routes (report §6.4) — the write half and the read half.
 
-The table behind this endpoint had never been written to before EVAL-1, so
-these are the first tests that assert a rating survives the request at all.
+- ``POST /comments/{comment_id}/feedback`` (EVAL-1). The table behind it had
+  never been written to, so these are the first tests asserting a rating
+  survives the request at all.
+- ``GET /reviews/{review_id}/eval`` (EVAL-2). It returned hardcoded zeros; the
+  tests at the bottom are mostly about ``null`` not being ``0.0``.
 """
 
 import uuid
@@ -83,6 +86,7 @@ def seeded():
             "review": mine["review"],
             "comments": mine["comments"],
             "comment": mine["comments"][0],
+            "their_review": theirs["review"],
             "their_comment": theirs["comments"][0],
         }
 
@@ -301,3 +305,106 @@ def test_the_database_rejects_a_duplicate_pair(seeded) -> None:
         )
         with pytest.raises(IntegrityError):
             db.commit()
+
+
+# ── GET /reviews/{review_id}/eval (EVAL-2) ────────────────────────────────────
+
+
+def test_eval_endpoint_returns_computed_scores(seeded) -> None:
+    """Real numbers off real rows, not the stub's hardcoded zeros."""
+    for comment_id in seeded["comments"][:2]:
+        client.post(
+            f"/comments/{comment_id}/feedback",
+            json={"rating": 1},
+            headers=seeded["headers"],
+        )
+    client.post(
+        f"/comments/{seeded['comments'][2]}/feedback",
+        json={"rating": -1},
+        headers=seeded["headers"],
+    )
+
+    body = client.get(f"/reviews/{seeded['review']}/eval", headers=seeded["headers"]).json()
+
+    assert body["review_id"] == str(seeded["review"])
+    assert body["total_comments"] == 3
+    assert body["rated_comments"] == 3
+    assert body["approval_rate"] == pytest.approx(2 / 3)
+    assert body["false_positive_rate"] == pytest.approx(1 / 3)
+
+
+def test_eval_endpoint_null_rates_serialize(seeded) -> None:
+    """An unrated review is JSON ``null`` — not ``0.0``, and not a 500.
+
+    The stub returned `{"approval_rate": 0.0}` here, which reads as "this
+    review was rejected" for a review nobody has looked at. Preserving the
+    distinction through Pydantic and into the response body is the whole point
+    of the issue, so it is asserted on the wire rather than on the dataclass.
+    """
+    response = client.get(f"/reviews/{seeded['review']}/eval", headers=seeded["headers"])
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["approval_rate"] is None
+    assert body["false_positive_rate"] is None
+    assert body["total_comments"] == 3
+    assert body["rated_comments"] == 0
+    # Belt and braces: `null` in the raw text, so a serializer that coerced it
+    # to 0 could not pass by round-tripping through Python truthiness.
+    assert '"approval_rate":null' in response.text.replace(" ", "")
+
+
+def test_eval_endpoint_reflects_a_rating_immediately(seeded) -> None:
+    """Live from ``comment_feedback``, not from the weekly ``eval_scores`` snapshot.
+
+    #192's beat job runs on Mondays; this endpoint has to answer for a
+    thumbs-up from ten seconds ago.
+    """
+    before = client.get(f"/reviews/{seeded['review']}/eval", headers=seeded["headers"]).json()
+    assert before["approval_rate"] is None
+
+    client.post(
+        f"/comments/{seeded['comment']}/feedback",
+        json={"rating": 1},
+        headers=seeded["headers"],
+    )
+
+    after = client.get(f"/reviews/{seeded['review']}/eval", headers=seeded["headers"]).json()
+    assert after["approval_rate"] == 1.0
+
+
+def test_eval_endpoint_unauthenticated_401(seeded) -> None:
+    assert client.get(f"/reviews/{seeded['review']}/eval").status_code == 401
+
+
+def test_eval_endpoint_unknown_review_404(seeded) -> None:
+    response = client.get(f"/reviews/{uuid.uuid4()}/eval", headers=seeded["headers"])
+    assert response.status_code == 404
+
+
+def test_eval_endpoint_other_users_review_404(seeded) -> None:
+    """Somebody else's scores are as invisible as their review."""
+    response = client.get(
+        f"/reviews/{seeded['their_review']}/eval", headers=seeded["headers"]
+    )
+    assert response.status_code == 404
+
+
+def test_eval_endpoint_ignores_another_users_ratings(seeded) -> None:
+    """The rate pools every rating on the caller's own review.
+
+    A stranger cannot reach these comments over HTTP, but their rows must not
+    be excluded by an accidental `user_id == caller` filter either — the
+    approval rate is about the review, not about who is looking at it.
+    """
+    with seeded["factory"]() as db:
+        db.add(
+            CommentFeedback(
+                comment_id=seeded["comment"], user_id=seeded["other_user"], rating=-1
+            )
+        )
+        db.commit()
+
+    body = client.get(f"/reviews/{seeded['review']}/eval", headers=seeded["headers"]).json()
+    assert body["rated_comments"] == 1
+    assert body["approval_rate"] == 0.0

@@ -1,0 +1,101 @@
+{
+  "label": "after-zero-comments",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5",
+  "effort": "medium",
+  "max_context_chunks": 10,
+  "runs": [
+    {
+      "pr": 58,
+      "why": "setup shell scripts + requirements split \u2014 the #164 anchor",
+      "verdict": "comment",
+      "summary": "Adds one-command setup scripts for macOS and Windows plus reorganized dependency files. Scripts are reasonable but have a couple of fragile assumptions worth flagging: hardcoded paths and silent failures on password-protected Postgres installs on Windows, and reliance on Homebrew's default Apple Silicon path on macOS.",
+      "tokens_used": 20248,
+      "duration_ms": 29120,
+      "wall_s": 29.9,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 2,
+      "comments": [
+        {
+          "file": "setup-mac.sh",
+          "line_start": 68,
+          "line_end": 68,
+          "category": "logic_error",
+          "severity": "info",
+          "comment": "PATH is hardcoded to /opt/homebrew (Apple Silicon default); on Intel Macs Homebrew installs under /usr/local, so this will silently fail to put pg tools on PATH.",
+          "suggestion": "Use `$(brew --prefix postgresql@15)/bin` instead of hardcoding /opt/homebrew.",
+          "assessment": "correct"
+        },
+        {
+          "file": "setup-windows.bat",
+          "line_start": 123,
+          "line_end": 129,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "psql -U postgres will fail/hang if a password was set during PostgreSQL install (no PGPASSWORD or -w flag), since psql will prompt interactively and the script has no handling for auth failure. This can cause the script to hang waiting for input instead of failing cleanly.",
+          "suggestion": "Set PGPASSWORD or add -w with clear error handling, and detect auth failure explicitly rather than relying on findstr on the CREATE DATABASE output.",
+          "assessment": "correct"
+        }
+      ]
+    },
+    {
+      "pr": 203,
+      "why": "backend Python, a real bug fix (chunker registry KeyError)",
+      "verdict": "approve",
+      "summary": "Clean refactor merging two parallel registries into one, removing a class of KeyError bugs from split maps. Tests added directly cover the invariant. No issues found in the diff.",
+      "tokens_used": 4011,
+      "duration_ms": 4027,
+      "wall_s": 4.2,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 204,
+      "why": "backend Python with real logic + a migration (METRIC-2)",
+      "verdict": "approve",
+      "summary": "Well-scoped, thoroughly documented change threading a webhook-receipt timestamp through Celery into a new `total_ms`/`queued_at` pair on Review, with matching schema, migration, and extensive test coverage for edge cases (naive datetimes, malformed/non-string broker payloads, clock skew, failure paths, backward compatibility). The implementation correctly separates the metric's two failure modes (never fail a review over a bad timestamp; never silently misattribute an offset as latency) and validates aware-vs-naive datetimes at the right boundaries. I don't see any correctness, security, or architectural issues in the diff worth blocking on.",
+      "tokens_used": 20417,
+      "duration_ms": 20840,
+      "wall_s": 21.0,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 185,
+      "why": "frontend TypeScript (protected routes + user menu)",
+      "verdict": "approve",
+      "summary": "Well-structured PR implementing route protection and a user menu, with thorough test coverage. No substantive issues found in the diff; the guard logic, return-to stash/clear semantics, and accessibility choices are well reasoned and consistent.",
+      "tokens_used": 15556,
+      "duration_ms": 6418,
+      "wall_s": 6.6,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 211,
+      "why": "docs only \u2014 should produce approve with zero comments",
+      "verdict": "approve",
+      "summary": "This PR adds a static, self-contained architecture walkthrough page (docs/report.src.html and its generated frontend/public/report.html), plus supporting favicon and gitignore entries. The change is docs-only and low risk. One minor issue worth flagging: a stray <title> tag inside the <body> duplicates the one already set in <head>.",
+      "tokens_used": 75622,
+      "duration_ms": 11389,
+      "wall_s": 11.5,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 1,
+      "comments": [
+        {
+          "file": "frontend/public/report.html",
+          "line_start": 71,
+          "line_end": 71,
+          "category": "convention",
+          "severity": "info",
+          "comment": "A second <title> element appears inside <body> (duplicated from docs/report.src.html), while the real page title is already set correctly in <head> a few lines above. <title> is only valid in <head>; browsers will ignore this one, but it's dead markup that should be removed from the source template to avoid confusion.",
+          "suggestion": "Remove the stray `<title>Liffy \u2014 How It Works</title>` line from docs/report.src.html (and the corresponding generated output).",
+          "assessment": "correct"
+        }
+      ]
+    }
+  ]
+}

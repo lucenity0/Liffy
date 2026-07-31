@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -62,6 +62,26 @@ class Review(Base):
     # duration as an end-to-end one is the exact confusion this column exists
     # to remove.
     total_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # ── Delivery to GitHub (GH-2) ────────────────────────────────────────────
+    #
+    # All four are NULL until a review is posted, which is the default: posting
+    # is opt-in (``post_reviews_to_github``, default False).
+    #
+    # ``github_review_id`` doubles as the idempotency guard. Re-review creates a
+    # *new* Review row and ``synchronize`` webhooks fire on every push, so
+    # without a per-row guard a PR pushed to five times accumulates five
+    # duplicate review threads and becomes unreadable.
+    github_review_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    github_review_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    posted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Why the last attempt failed. A failure that is merely *absent* is
+    # indistinguishable from never having tried, and the whole point of not
+    # failing the review on a posting error is that somebody can still find out
+    # it happened. Truncated before storing — GitHub's validation bodies are
+    # long, and this is a String column.
+    post_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

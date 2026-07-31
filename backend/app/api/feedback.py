@@ -9,15 +9,16 @@ answering nothing because it looks like it worked.
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, owned_comment_or_404
+from app.api.deps import get_current_user, owned_comment_or_404, owned_review_or_404
 from app.database import get_db
 from app.models.comment_feedback import CommentFeedback
 from app.models.user import User
-from app.schemas.feedback import FeedbackIn, FeedbackOut
+from app.schemas.feedback import EvalScoresOut, FeedbackIn, FeedbackOut
+from app.services.eval_service import ReviewScores, compute_review_scores
 
 router = APIRouter()
 
@@ -62,13 +63,28 @@ def submit_feedback(
     return existing
 
 
-@router.get("/reviews/{review_id}/eval")
+@router.get("/reviews/{review_id}/eval", response_model=EvalScoresOut)
 def review_eval(
-    review_id: str,
+    review_id: uuid.UUID,
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> dict[str, str | float]:
-    # Still a stub: hardcoded zeros that a reader would take for measurements.
-    # EVAL-2 (#191) replaces it with real numbers computed off the rows the
-    # route above now writes. Left alone here deliberately — this issue's job
-    # is to give that computation something to read.
-    return {"review_id": review_id, "approval_rate": 0.0, "false_positive_rate": 0.0}
+) -> ReviewScores:
+    """Report §8.1's approval and false-positive rate for one review.
+
+    Computed **live** from ``comment_feedback`` on every request. It
+    deliberately does not read ``eval_scores`` — that table is the weekly
+    snapshot the beat job writes (#192), and this endpoint has to reflect a
+    thumbs-up from ten seconds ago.
+
+    Another user's review is a 404, same as everywhere else.
+    """
+    owned_review_or_404(db, review_id, user)
+
+    scores = compute_review_scores(db, review_id)
+    # Unreachable: the ownership walk above already proved the row exists, and
+    # nothing deletes it in between. Kept because `compute_review_scores` is
+    # typed as returning None and silently ignoring that would mean a 500 with
+    # an AttributeError if the two ever drift apart.
+    if scores is None:
+        raise HTTPException(status_code=404, detail="Review not found")
+    return scores

@@ -128,6 +128,7 @@ function comment(overrides: Partial<ReviewCommentOut> = {}): ReviewCommentOut {
     comment_text: "This is wrong.",
     suggestion: null,
     created_at: "2026-07-26T10:00:00Z",
+    my_rating: null,
     ...overrides,
   };
 }

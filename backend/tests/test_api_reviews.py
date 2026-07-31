@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from conftest import auth_headers, seed_user
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -12,6 +12,7 @@ import app.models  # noqa: F401
 from app.api import reviews as reviews_api
 from app.database import Base, get_db
 from app.main import app
+from app.models.comment_feedback import CommentFeedback
 from app.models.pull_request import PullRequest
 from app.models.repository import Repository
 from app.models.review import Review
@@ -49,11 +50,15 @@ def _seed_reviews(db, user: User, full_name: str, summaries: tuple[str, str]) ->
                  created_at=T0 + timedelta(hours=1), raw_diff=RAW_DIFF)
     db.add_all([old, new])
     db.flush()
-    db.add(ReviewComment(
+    comment = ReviewComment(
         review_id=new.id, file_path="a.py", line_start=1, line_end=2,
         category="logic_error", severity="warning", comment_text="Bug.", suggestion=None,
-    ))
-    return {"repo": repo.id, "pr": pr.id, "old": old.id, "new": new.id}
+    )
+    db.add(comment)
+    db.flush()
+    return {
+        "repo": repo.id, "pr": pr.id, "old": old.id, "new": new.id, "comment": comment.id,
+    }
 
 
 @pytest.fixture()
@@ -81,6 +86,10 @@ def seeded():
         ids["their_repo"] = theirs["repo"]
         ids["their_pr"] = theirs["pr"]
         ids["their_review"] = theirs["new"]
+        ids["user"] = user.id
+        ids["other_user"] = stranger.id
+        ids["engine"] = engine
+        ids["factory"] = factory
 
     def override():
         db = factory()
@@ -190,6 +199,114 @@ def test_review_detail_exposes_queued_at_and_total_ms(seeded) -> None:
     assert body["queued_at"].startswith("2026-07-01T00:59:55")
     # Queue wait is the difference, and it is derivable rather than stored.
     assert body["total_ms"] - body["duration_ms"] == 5000
+
+
+# ── my_rating (EVAL-1) ────────────────────────────────────────────────────────
+
+
+def _rate(seeded, comment_id, rating: int, *, user_id=None) -> None:
+    """Write a rating straight to the table.
+
+    Direct rather than through ``POST /comments/{id}/feedback`` so these tests
+    exercise the *read* path in isolation — a failure here means the detail
+    handler is wrong, not that the write endpoint is.
+    """
+    with seeded["factory"]() as db:
+        db.add(
+            CommentFeedback(
+                comment_id=comment_id,
+                user_id=user_id or seeded["user"],
+                rating=rating,
+            )
+        )
+        db.commit()
+
+
+def test_detail_my_rating_is_null_when_unrated(seeded) -> None:
+    """The common case. `null` means "not rated", and must not read as a 0."""
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    assert body["comments"][0]["my_rating"] is None
+
+
+def test_detail_exposes_my_rating(seeded) -> None:
+    _rate(seeded, seeded["comment"], 1)
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    assert body["comments"][0]["my_rating"] == 1
+
+
+def test_detail_exposes_a_negative_my_rating(seeded) -> None:
+    """-1 has to survive the round trip intact; it is not a falsy "unrated"."""
+    _rate(seeded, seeded["comment"], -1)
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    assert body["comments"][0]["my_rating"] == -1
+
+
+def test_detail_shows_only_my_rating(seeded) -> None:
+    """User B rated -1; user A sees null, not B's rating.
+
+    The field is per-caller. Leaking it would both misreport A's own state and
+    tell A what B privately thought of a comment.
+    """
+    _rate(seeded, seeded["comment"], -1, user_id=seeded["other_user"])
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    assert body["comments"][0]["my_rating"] is None
+
+
+def test_detail_my_rating_does_not_n_plus_one(seeded) -> None:
+    """Ratings cost one statement regardless of comment count.
+
+    Ten comments queried one at a time would be ten extra round trips to render
+    a page that already holds every id it needs. The assertion counts SELECTs
+    against ``comment_feedback`` specifically, so unrelated queries in the
+    handler cannot mask a regression.
+    """
+    with seeded["factory"]() as db:
+        extra = [
+            ReviewComment(
+                review_id=seeded["new"], file_path=f"b{i}.py", line_start=1, line_end=2,
+                category="improvement", severity="info", comment_text=f"Nit {i}.",
+                suggestion=None,
+            )
+            for i in range(9)
+        ]
+        db.add_all(extra)
+        db.commit()
+        for row in extra:
+            db.add(CommentFeedback(comment_id=row.id, user_id=seeded["user"], rating=1))
+        db.commit()
+
+    statements: list[str] = []
+
+    def record(_conn, _cursor, statement, *_args) -> None:
+        if "comment_feedback" in statement.lower():
+            statements.append(statement)
+
+    event.listen(seeded["engine"], "before_cursor_execute", record)
+    try:
+        body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    finally:
+        event.remove(seeded["engine"], "before_cursor_execute", record)
+
+    assert len(body["comments"]) == 10
+    assert len(statements) == 1, statements
+
+
+def test_detail_with_no_comments_issues_no_rating_query(seeded) -> None:
+    """An approving review has nothing to rate; do not spend a query saying so."""
+    statements: list[str] = []
+
+    def record(_conn, _cursor, statement, *_args) -> None:
+        if "comment_feedback" in statement.lower():
+            statements.append(statement)
+
+    event.listen(seeded["engine"], "before_cursor_execute", record)
+    try:
+        body = client.get(f"/reviews/{seeded['old']}", headers=seeded["headers"]).json()
+    finally:
+        event.remove(seeded["engine"], "before_cursor_execute", record)
+
+    assert body["comments"] == []
+    assert statements == []
 
 
 def test_review_list_exposes_tokens_used(seeded) -> None:

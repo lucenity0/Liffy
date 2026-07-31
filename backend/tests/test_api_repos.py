@@ -241,20 +241,26 @@ def test_disconnect_repo(session_factory, caller, indexed, fake_github, monkeypa
 
 
 def test_feedback_routes_require_auth(session_factory, caller) -> None:
-    """Stubs today, but they sit under /reviews and /comments.
+    """They sit under /reviews and /comments, so they follow the same rule.
 
     An open route beside authenticated siblings becomes a leak the moment
-    somebody wires it to the database.
+    somebody wires it to the database — which EVAL-1 (#190) then did.
+
+    The authenticated half asserts "not 401" rather than a specific code: the
+    ids are random, so the POST is now a legitimate 404 (the ownership walk
+    finds no such comment). What this test is about is that the token is
+    *required*, not what a real request returns — ``test_api_feedback.py``
+    covers that.
     """
     review_id, comment_id = uuid.uuid4(), uuid.uuid4()
 
     assert client.get(f"/reviews/{review_id}/eval").status_code == 401
     assert client.post(f"/comments/{comment_id}/feedback", json={"rating": 1}).status_code == 401
 
-    assert client.get(f"/reviews/{review_id}/eval", headers=caller).status_code == 200
+    assert client.get(f"/reviews/{review_id}/eval", headers=caller).status_code != 401
     assert client.post(
         f"/comments/{comment_id}/feedback", json={"rating": 1}, headers=caller
-    ).status_code == 200
+    ).status_code == 404
 
 
 # ── Acting identity (AUTH-5) ──────────────────────────────────────────────────

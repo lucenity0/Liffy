@@ -58,6 +58,9 @@ const fixtureComment: ReviewCommentOut = {
     "Consider quoting $HOME here — unquoted expansion works today but will break the moment this script runs under a path with a space in it.",
   suggestion: 'BREW_PREFIX="$HOME/.brew"',
   created_at: "2026-07-25T14:32:10Z",
+  // Unrated — the state most comments are in, and the one #198's control has
+  // to look right in.
+  my_rating: null,
 };
 
 const fixtureCommentCritical: ReviewCommentOut = {
@@ -71,6 +74,9 @@ const fixtureCommentCritical: ReviewCommentOut = {
     "This assumes every hunk has an explicit line count, but the unified diff format allows omitting it (defaults to 1). As written, a single-line hunk will desync every line number after it.",
   suggestion: "const count = match[2] === undefined ? 1 : Number(match[2]);",
   created_at: "2026-07-25T14:32:11Z",
+  // Already rated, so the pressed state has something to render against
+  // without a test having to POST first.
+  my_rating: 1,
 };
 
 export const fixtureReviewCompleted: ReviewDetailOut = {

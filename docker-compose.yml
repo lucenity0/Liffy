@@ -95,6 +95,17 @@ services:
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
+    # POST_REVIEWS_TO_GITHUB and GITHUB_REVIEW_EVENT_MODE are not restated here
+    # for the same reason as everything else above: both are declared with the
+    # same default in app/config.py (False / "comment_only") and shipped in
+    # .env.example, so env_file carries them. Restating them as
+    # `${POST_REVIEWS_TO_GITHUB:-False}` would put an empty-string override
+    # *above* backend/.env in Compose's precedence and silently pin posting off
+    # for anyone who enabled it — the exact bug #228 fixed.
+    #
+    # Only the worker posts; the `api` service never calls the publisher. That
+    # is a property of the code, not of this block, so `api` also reading these
+    # via its own env_file is harmless.
     command: celery -A app.workers.celery_app worker --loglevel=info
 
   # The scheduler for the weekly eval_scores job (report §8.2). It only decides

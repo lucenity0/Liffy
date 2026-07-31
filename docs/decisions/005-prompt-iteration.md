@@ -172,7 +172,7 @@ either anchors the comment to unrelated code or is rejected outright by
 GitHub's API. #195's `is_line_commentable` guard will catch the second case and
 silently drop the comment; it cannot catch the first.
 
-Filed as a follow-up rather than fixed here — it is a diff-parsing and
+Filed as #227 rather than fixed here — it is a diff-parsing and
 line-attribution question, not prompt iteration, and #202 is the latter.
 
 ## Consequences

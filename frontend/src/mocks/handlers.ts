@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 import {
+  fixtureAnalyticsSummary,
   fixtureRepoIndexed,
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
@@ -204,6 +205,14 @@ export const handlers = [
       { status: 202 },
     );
   }),
+
+  // The populated state by default. The partial and empty states are what
+  // #200's page mostly renders, but a default of "nothing measured" would
+  // make every unrelated test that wanders onto this page assert against
+  // dashes.
+  http.get("*/analytics/summary", () =>
+    HttpResponse.json(fixtureAnalyticsSummary),
+  ),
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   // Happy-path defaults. The interesting auth cases (a refresh that 401s,

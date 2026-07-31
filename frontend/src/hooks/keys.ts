@@ -33,4 +33,13 @@ export const keys = {
     eval: (reviewId: string) =>
       [...keys.reviews.detail(reviewId), "eval"] as const,
   },
+  /**
+   * A new top-level group rather than a branch of `reviews`: this is neither
+   * a repo nor a review, it spans both, and nesting it under either would
+   * make an unrelated invalidation refetch the whole dashboard.
+   */
+  analytics: {
+    all: ["analytics"] as const,
+    summary: () => [...keys.analytics.all, "summary"] as const,
+  },
 } as const;

@@ -1,6 +1,7 @@
 import type { RouteObject } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { RouteError } from "@/components/layout/RouteError";
+import { Analytics } from "@/pages/Analytics";
 import { Dashboard } from "@/pages/Dashboard";
 import { Reviews } from "@/pages/Reviews";
 import { ReviewDetail } from "@/pages/ReviewDetail";
@@ -74,6 +75,11 @@ export const routes: RouteObject[] = [
       shellRoute([
         { path: "/", element: <Dashboard />, handle: { title: "Dashboard" } },
         { path: "/reviews", element: <Reviews />, handle: { title: "Reviews" } },
+        {
+          path: "/analytics",
+          element: <Analytics />,
+          handle: { title: "Analytics" },
+        },
         {
           path: "/reviews/:reviewId",
           element: <ReviewDetail />,

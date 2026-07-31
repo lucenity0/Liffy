@@ -1,14 +1,26 @@
 import { apiClient } from "./client";
-import type { EvalScoresOut } from "@/types/api";
+import type { AnalyticsSummaryOut, EvalScoresOut } from "@/types/api";
 
 /**
  * Reads of computed evaluation scores — report §8.1's numbers, as opposed to
  * the review rows themselves.
  *
  * Separate from `reviews.ts` because these are derived figures rather than
- * resources, and separate from `feedback.ts` because that file writes. #200
- * adds `getAnalyticsSummary` alongside this one.
+ * resources, and separate from `feedback.ts` because that file writes.
  */
+
+/**
+ * Every §8.1 metric in one request, scoped to the caller's repositories.
+ *
+ * A brand-new account is a **200 with zeros and nulls**, not a 404 and not an
+ * error — so the only failures worth handling here are auth and transport.
+ * Not cached server-side: a stale dashboard during a demo is worse than a
+ * slow one.
+ */
+export async function getAnalyticsSummary(): Promise<AnalyticsSummaryOut> {
+  const { data } = await apiClient.get<AnalyticsSummaryOut>("/analytics/summary");
+  return data;
+}
 
 /**
  * Per-review approval scores.

@@ -165,6 +165,124 @@ export interface EvalScoresOut {
   false_positive_rate: number | null;
 }
 
+/**
+ * One report §8.1 metric with everything needed to render it — no arithmetic
+ * at the call site, and no threshold typed into the frontend.
+ *
+ * A flat `approval_rate` + `approval_rate_target` pair would not carry the
+ * third state: `met` is `null` exactly when `value` is, and a `null` rate is
+ * **not** a miss. Anything that renders this has three branches, not two.
+ */
+export interface Metric {
+  value: number | null;
+  target: number;
+  /** Met when `value > target` / `value < target`. Never hardcode either. */
+  comparison: "gt" | "lt";
+  /** `null` exactly when `value` is null. Unknown, not failed. */
+  met: boolean | null;
+  /** What the value was computed over. Show it — n is tiny on this project. */
+  sample_size: number;
+}
+
+/**
+ * `still_open_rate`, not "blocked merge rate". GitHub's REST `state` is
+ * `open` or `closed` and does not distinguish merged from closed-without-
+ * merging, so what this measures is "PRs carrying such a comment that are not
+ * yet resolved". The words "blocked merge" must not reach the screen.
+ */
+export interface SeverityCalibrationRow {
+  severity: string;
+  /** Comments Liffy emitted at this severity. */
+  comments: number;
+  /** PRs carrying at least one such comment — the sample size for the rate. */
+  prs_with_comment: number;
+  prs_still_open: number;
+  /** `null` when `prs_with_comment` is 0. */
+  still_open_rate: number | null;
+}
+
+/**
+ * Read from `eval_scores`, the snapshot #192's weekly job writes — unlike
+ * everything else in the summary, which is computed live. So this list is
+ * empty until that job has run once, and can lag a rating by up to a week.
+ */
+export interface FlaggedReview {
+  review_id: string;
+  pr_number: number;
+  repo_full_name: string;
+  approval_rate: number;
+}
+
+/** Approval rate per 1,000 tokens, for one review. Oldest → newest. */
+export interface TokenEfficiencyPoint {
+  review_id: string;
+  created_at: string;
+  value: number;
+}
+
+/**
+ * `GET /analytics/summary` — every §8.1 metric in one request, scoped to the
+ * caller's repositories.
+ *
+ * Always a 200 for an authenticated caller, including a brand-new account
+ * with no repositories: zeros for the counts, `null` for every rate. There is
+ * no 404 and no empty-account error, so the page's job is per-tile unknown
+ * handling rather than a whole-page empty state.
+ */
+export interface AnalyticsSummaryOut {
+  reviews_total: number;
+  reviews_completed: number;
+  reviews_failed: number;
+
+  approval_rate: Metric;
+  /**
+   * Exactly `1 - approval_rate` — see `EvalScoresOut.false_positive_rate` and
+   * ADR 004. Carries a target and a `met` because the column and the spec
+   * both exist, but it is one number with the other, not a second signal.
+   */
+  false_positive_rate: Metric;
+  /**
+   * Median `reviews.total_ms`: webhook receipt → review complete, which is
+   * report §1's real < 90s figure. Landed with #197 (PR #204).
+   *
+   * `total_ms` is NULL on manual triggers, re-reviews and legacy rows, so
+   * `sample_size` is smaller than `reviews_completed` — often much smaller.
+   * Median rather than mean: one 20-minute retry skews a mean past use.
+   */
+  time_to_review_ms: Metric;
+  /**
+   * Median `reviews.duration_ms` — the `run_review` internals only, with no
+   * queue wait in it. A lower bound on time-to-review, carrying no target,
+   * present so the queue wait can be read as the difference between the two.
+   */
+  pipeline_duration_ms_median: number | null;
+
+  /**
+   * All six `ReviewCategory` keys, zeros included — #193 fills the gaps
+   * against the enum rather than trusting `GROUP BY`, which drops categories
+   * that never fired. A seventh key, `"other"`, appears **only when non-zero**
+   * and buckets any value outside the enum. Iterate the six and append
+   * `other` if present; do not assume exactly six, and do not hide a non-zero
+   * `other`.
+   */
+  category_distribution: Record<string, number>;
+  /** All three severities, critical → warning → info, even at zero. */
+  severity_calibration: SeverityCalibrationRow[];
+
+  /**
+   * Mean approval rate per 1,000 tokens. Reviews with no token count are
+   * excluded from the denominator rather than counted as zero; `null` when no
+   * review has both a token count and any feedback.
+   */
+  token_efficiency: number | null;
+  /** Last 30 qualifying reviews, oldest → newest. Usually far fewer. */
+  token_efficiency_series: TokenEfficiencyPoint[];
+
+  /** Capped at 20. Compare against the total before claiming it is all of them. */
+  flagged_reviews: FlaggedReview[];
+  flagged_reviews_total: number;
+}
+
 export interface ReviewDetailOut extends ReviewOut {
   /**
    * The same join the list does. Without these a review fetched by id cannot

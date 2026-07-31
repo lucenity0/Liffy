@@ -8,12 +8,19 @@ import { UserMenu } from "./UserMenu";
 const TABS: Tab[] = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/reviews", label: "Reviews" },
+  { to: "/analytics", label: "Analytics" },
 ];
 
 /**
  * The whole of Liffy's chrome: a wordmark, a breadcrumb, an actions slot,
- * and the tab strip. No sidebar — the app has two top-level surfaces, which
- * is one fewer than a sidebar can justify.
+ * and the tab strip.
+ *
+ * Still no sidebar. Analytics (#200) made this three top-level surfaces
+ * rather than two, which was the number this comment used to lean on — but
+ * three tabs is not the argument for a sidebar either, and the strip carries
+ * them without changing shape. The rule is the same one, restated: a sidebar
+ * has to earn a permanent column of the viewport, and three destinations do
+ * not.
  */
 export function TopBar({
   crumbs,

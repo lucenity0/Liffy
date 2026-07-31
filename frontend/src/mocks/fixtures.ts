@@ -1,4 +1,5 @@
 import type {
+  AnalyticsSummaryOut,
   EvalScoresOut,
   RepoOut,
   RepoStatusOut,
@@ -302,6 +303,128 @@ export const fixtureEvalNoComments: EvalScoresOut = {
   rated_comments: 0,
   approval_rate: null,
   false_positive_rate: null,
+};
+
+/**
+ * `GET /analytics/summary`, in the three states worth building for.
+ *
+ * Written partial-first on purpose. "Everything populated" is the state this
+ * account will almost never be in — durations arrive the moment a review
+ * finishes, ratings only when somebody clicks — and building it first is how
+ * `0%` ends up on screen for a metric nobody has measured.
+ */
+
+/** Reviews have run and been rated. Every metric has a value. */
+export const fixtureAnalyticsSummary: AnalyticsSummaryOut = {
+  reviews_total: 14,
+  reviews_completed: 12,
+  reviews_failed: 2,
+
+  approval_rate: {
+    value: 0.8333333333333334,
+    target: 0.7,
+    comparison: "gt",
+    met: true,
+    sample_size: 6,
+  },
+  false_positive_rate: {
+    value: 0.16666666666666663,
+    target: 0.2,
+    comparison: "lt",
+    met: true,
+    sample_size: 6,
+  },
+  time_to_review_ms: {
+    value: 72400,
+    target: 90000,
+    comparison: "lt",
+    met: true,
+    // Smaller than reviews_completed: total_ms is NULL on manual triggers,
+    // re-reviews and anything written before METRIC-2.
+    sample_size: 9,
+  },
+  pipeline_duration_ms_median: 41200,
+
+  category_distribution: {
+    logic_error: 5,
+    security: 0,
+    performance: 0,
+    architecture: 0,
+    convention: 1,
+    improvement: 2,
+  },
+  severity_calibration: [
+    { severity: "critical", comments: 1, prs_with_comment: 1, prs_still_open: 1, still_open_rate: 1.0 },
+    { severity: "warning", comments: 5, prs_with_comment: 1, prs_still_open: 1, still_open_rate: 1.0 },
+    { severity: "info", comments: 2, prs_with_comment: 1, prs_still_open: 1, still_open_rate: 1.0 },
+  ],
+
+  token_efficiency: 0.0333,
+  token_efficiency_series: [
+    {
+      review_id: fixtureReviewCompleted.id,
+      created_at: "2026-07-28T09:12:44Z",
+      value: 0.0333,
+    },
+  ],
+
+  flagged_reviews: [],
+  flagged_reviews_total: 0,
+};
+
+/**
+ * **The state this page will spend most of its life in.** Reviews have run,
+ * so durations and the category spread are real; nobody has rated anything,
+ * so every approval-derived figure is `null` — unknown, not zero, and not a
+ * missed target.
+ */
+export const fixtureAnalyticsPartial: AnalyticsSummaryOut = {
+  ...fixtureAnalyticsSummary,
+  approval_rate: {
+    ...fixtureAnalyticsSummary.approval_rate,
+    value: null,
+    met: null,
+    sample_size: 0,
+  },
+  false_positive_rate: {
+    ...fixtureAnalyticsSummary.false_positive_rate,
+    value: null,
+    met: null,
+    sample_size: 0,
+  },
+  token_efficiency: null,
+  token_efficiency_series: [],
+};
+
+/**
+ * A brand-new account. The API answers 200 with zeros and nulls rather than
+ * a 404, so this renders as "nothing yet" and never as an error.
+ */
+export const fixtureAnalyticsEmpty: AnalyticsSummaryOut = {
+  ...fixtureAnalyticsPartial,
+  reviews_total: 0,
+  reviews_completed: 0,
+  reviews_failed: 0,
+  time_to_review_ms: {
+    ...fixtureAnalyticsSummary.time_to_review_ms,
+    value: null,
+    met: null,
+    sample_size: 0,
+  },
+  pipeline_duration_ms_median: null,
+  category_distribution: {
+    logic_error: 0,
+    security: 0,
+    performance: 0,
+    architecture: 0,
+    convention: 0,
+    improvement: 0,
+  },
+  severity_calibration: [
+    { severity: "critical", comments: 0, prs_with_comment: 0, prs_still_open: 0, still_open_rate: null },
+    { severity: "warning", comments: 0, prs_with_comment: 0, prs_still_open: 0, still_open_rate: null },
+    { severity: "info", comments: 0, prs_with_comment: 0, prs_still_open: 0, still_open_rate: null },
+  ],
 };
 
 /**

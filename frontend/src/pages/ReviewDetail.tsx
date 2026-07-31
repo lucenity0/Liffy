@@ -110,6 +110,7 @@ export function ReviewDetail() {
                 <CommentGroup
                   key={group.filePath}
                   group={group}
+                  reviewId={data.id}
                   onReveal={
                     data.raw_diff
                       ? (comment) =>

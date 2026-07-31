@@ -12,9 +12,11 @@ import { ReviewComment } from "./ReviewComment";
  */
 export function CommentGroup({
   group,
+  reviewId,
   onReveal,
 }: {
   group: Group;
+  reviewId: string;
   onReveal?: (comment: ReviewCommentOut) => void;
 }) {
   return (
@@ -47,6 +49,7 @@ export function CommentGroup({
           <ReviewComment
             key={comment.id}
             comment={comment}
+            reviewId={reviewId}
             onReveal={onReveal}
           />
         ))}

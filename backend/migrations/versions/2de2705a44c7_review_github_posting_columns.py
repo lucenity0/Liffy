@@ -1,7 +1,7 @@
 """review github posting columns
 
 Revision ID: 2de2705a44c7
-Revises: e381a8478c7f
+Revises: 341f3ede4c45
 Create Date: 2026-07-31 16:29:59.928034
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '2de2705a44c7'
-down_revision: Union[str, None] = 'e381a8478c7f'
+down_revision: Union[str, None] = '341f3ede4c45'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

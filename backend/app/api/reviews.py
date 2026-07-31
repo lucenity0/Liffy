@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.database import get_db
+from app.models.comment_feedback import CommentFeedback
 from app.models.pull_request import PullRequest
 from app.models.repository import Repository
 from app.models.review import Review
@@ -104,11 +105,31 @@ def _detail(db: Session, review_id: uuid.UUID, user: User) -> ReviewDetailOut:
         raise HTTPException(status_code=404, detail="Review not found")
     review, comments = fetched
 
+    # One statement for every comment's rating, not one per comment: a review
+    # with eight comments would otherwise issue nine queries to render a page
+    # that already knows all eight ids. Filtered to the caller, so a comment
+    # rated -1 by somebody else still reads as unrated here.
+    my_ratings: dict[uuid.UUID, int] = {}
+    if comments:
+        my_ratings = dict(
+            db.execute(
+                select(CommentFeedback.comment_id, CommentFeedback.rating).where(
+                    CommentFeedback.comment_id.in_([c.id for c in comments]),
+                    CommentFeedback.user_id == user.id,
+                )
+            ).all()
+        )
+
     return ReviewDetailOut(
         **ReviewOut.model_validate(review).model_dump(),
         pr_number=identity.github_pr_number,
         repo_full_name=identity.full_name,
-        comments=[ReviewCommentOut.model_validate(c) for c in comments],
+        comments=[
+            ReviewCommentOut.model_validate(c).model_copy(
+                update={"my_rating": my_ratings.get(c.id)}
+            )
+            for c in comments
+        ],
         raw_diff=review.raw_diff,
     )
 

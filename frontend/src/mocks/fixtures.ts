@@ -37,6 +37,9 @@ export const fixtureRepoStatusIndexed: RepoStatusOut = {
   status: "indexed",
   indexed_at: fixtureRepoIndexed.indexed_at,
   chunk_count: 176,
+  // A clean run: measured, nothing failed. The chip carries no caveat.
+  last_index_failed_files: 0,
+  last_indexed_files_seen: 142,
 };
 
 export const fixtureRepoStatusNotIndexed: RepoStatusOut = {
@@ -45,6 +48,23 @@ export const fixtureRepoStatusNotIndexed: RepoStatusOut = {
   status: "not_indexed",
   indexed_at: null,
   chunk_count: 0,
+  last_index_failed_files: null,
+  last_indexed_files_seen: null,
+};
+
+/** A run that succeeded but left holes — #210's whole reason for existing. */
+export const fixtureRepoStatusPartial: RepoStatusOut = {
+  ...fixtureRepoStatusIndexed,
+  chunk_count: 160,
+  last_index_failed_files: 40,
+  last_indexed_files_seen: 200,
+};
+
+/** Indexed before the counters existed: null, not zero. */
+export const fixtureRepoStatusLegacy: RepoStatusOut = {
+  ...fixtureRepoStatusIndexed,
+  last_index_failed_files: null,
+  last_indexed_files_seen: null,
 };
 
 const fixtureComment: ReviewCommentOut = {
@@ -58,6 +78,9 @@ const fixtureComment: ReviewCommentOut = {
     "Consider quoting $HOME here — unquoted expansion works today but will break the moment this script runs under a path with a space in it.",
   suggestion: 'BREW_PREFIX="$HOME/.brew"',
   created_at: "2026-07-25T14:32:10Z",
+  // Unrated — the state most comments are in, and the one #198's control has
+  // to look right in.
+  my_rating: null,
 };
 
 const fixtureCommentCritical: ReviewCommentOut = {
@@ -71,6 +94,9 @@ const fixtureCommentCritical: ReviewCommentOut = {
     "This assumes every hunk has an explicit line count, but the unified diff format allows omitting it (defaults to 1). As written, a single-line hunk will desync every line number after it.",
   suggestion: "const count = match[2] === undefined ? 1 : Number(match[2]);",
   created_at: "2026-07-25T14:32:11Z",
+  // Already rated, so the pressed state has something to render against
+  // without a test having to POST first.
+  my_rating: 1,
 };
 
 export const fixtureReviewCompleted: ReviewDetailOut = {

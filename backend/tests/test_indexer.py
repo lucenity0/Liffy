@@ -13,7 +13,12 @@ from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.models.user import User
 from app.services.chunker import chunk_source
-from app.services.github_service import GitHubAuthError, GitHubError, _is_indexable
+from app.services.github_service import (
+    GitHubAuthError,
+    GitHubError,
+    GitHubRateLimitError,
+    _is_indexable,
+)
 from app.services.indexer import IndexingError, index_repository
 from app.services.rag_service import get_repo_collection
 
@@ -711,3 +716,89 @@ def test_an_empty_repository_is_legitimately_indexed(db, repo) -> None:
     assert result.files_seen == 0 and result.files_failed == 0
     db.expire_all()
     assert repo.indexed_at is not None
+
+
+def test_rate_limit_aborts_the_run_and_does_not_mark_indexed(db, repo) -> None:
+    """Same abort as a dead credential, for a different reason.
+
+    Continuing would spend the remaining quota on requests that cannot
+    succeed, so aborting is right — but the error carries "rate limited, retry
+    after N" rather than "reconnect your account", which is the whole point of
+    #209. The repository must not be marked indexed either way.
+    """
+    gh = _fetch_raises(
+        FILES,
+        "app/b.py",
+        GitHubRateLimitError("GitHub rate limit reached.", retry_after=60),
+    )
+
+    with pytest.raises(GitHubRateLimitError) as caught:
+        _run(db, repo, FILES, gh=gh)
+
+    assert caught.value.retry_after == 60
+    assert "reconnect" not in str(caught.value).lower()
+    assert repo.indexed_at is None
+
+
+def test_rate_limit_is_not_absorbed_as_a_per_file_skip(db, repo) -> None:
+    """It is a `GitHubError` subclass, so the broad `except Exception` below
+    would swallow it into `files_failed` if the specific clause were dropped or
+    reordered."""
+    gh = _fetch_raises(FILES, "app/a.py", GitHubRateLimitError("rate limited"))
+
+    with pytest.raises(GitHubRateLimitError):
+        _run(db, repo, FILES, gh=gh)
+
+
+# ── Surfacing partial failures (#210) ─────────────────────────────────────────
+
+
+def test_run_persists_the_failure_counts(db, repo) -> None:
+    """``files_failed`` outlives the task, so the API has something to read.
+
+    Before this it existed only for the lifetime of the run: the Celery result
+    dict goes to a backend nothing reads, and the only other trace was a log
+    line in the worker.
+    """
+    class OneBadFile(FakeGitHub):
+        def get_file_content(self, owner, repo_name, path, ref=None):
+            if path == "app/a.py":
+                raise RuntimeError("500 from GitHub")
+            return super().get_file_content(owner, repo_name, path, ref=ref)
+
+    result, _, _ = _run(db, repo, FILES, gh=OneBadFile(FILES))
+
+    assert result.files_failed == 1
+    assert repo.last_index_failed_files == 1
+    assert repo.last_indexed_files_seen == result.files_seen
+
+
+def test_a_clean_run_persists_zero_not_null(db, repo) -> None:
+    """`0` is a measurement; `None` means the repository predates the counter.
+
+    Only the first earns a clean chip on its own evidence.
+    """
+    _run(db, repo, FILES)
+
+    assert repo.last_index_failed_files == 0
+    assert repo.last_indexed_files_seen == 3
+
+
+def test_skipped_count_survives_a_rerun_by_being_reset(db, repo) -> None:
+    """A later clean run clears the caveat rather than accumulating.
+
+    These describe the *last* run. Accumulating would mean one transient 500
+    marks a repository as partial forever.
+    """
+    class OneBadFile(FakeGitHub):
+        def get_file_content(self, owner, repo_name, path, ref=None):
+            if path == "app/a.py":
+                raise RuntimeError("500 from GitHub")
+            return super().get_file_content(owner, repo_name, path, ref=ref)
+
+    _, client, embedder = _run(db, repo, FILES, gh=OneBadFile(FILES))
+    assert repo.last_index_failed_files == 1
+
+    _run(db, repo, FILES, client=client, embedder=embedder)
+
+    assert repo.last_index_failed_files == 0

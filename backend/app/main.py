@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, feedback, repos, reviews, webhook
+from app.api import analytics, auth, feedback, repos, reviews, webhook
 from app.config import settings
 
 app = FastAPI(title="Liffy API")
@@ -21,6 +21,7 @@ app.include_router(repos.router, prefix="/repos", tags=["repos"])
 app.include_router(reviews.router, tags=["reviews"])
 app.include_router(webhook.router, prefix="/webhook", tags=["webhook"])
 app.include_router(feedback.router, tags=["feedback"])
+app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 
 
 @app.get("/health")

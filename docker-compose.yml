@@ -98,6 +98,10 @@ services:
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
       LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Only the worker posts reviews — the `api` service never does, so these
+      # are deliberately absent from its env block. Both default off/safe.
+      POST_REVIEWS_TO_GITHUB: ${POST_REVIEWS_TO_GITHUB:-False}
+      GITHUB_REVIEW_EVENT_MODE: ${GITHUB_REVIEW_EVENT_MODE:-comment_only}
     command: celery -A app.workers.celery_app worker --loglevel=info
 
 volumes:

@@ -6,6 +6,7 @@ generate (BASE-7) -> persist review + comments. All I/O dependencies are
 injected, so the pipeline is testable offline.
 """
 
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.llm.chain import ReviewLLM, generate_review
 from app.llm.embeddings import EmbeddingProvider
 from app.models.pull_request import PullRequest
@@ -23,6 +25,14 @@ from app.models.user import User
 from app.services.diff_parser import FileStatus, parse_diff
 from app.services.github_service import GitHubClient, PullRequestMeta
 from app.services.rag_service import RetrievedChunk, retrieve_for_file_diff
+from app.services.review_publisher import (
+    build_review_body,
+    partition_comments,
+    resolve_event,
+    truncate_post_error,
+)
+
+logger = logging.getLogger(__name__)
 
 # Total retrieved-context budget per review, across all changed files.
 MAX_CONTEXT_CHUNKS = 10
@@ -229,7 +239,6 @@ def run_review(
         review.completed_at = completed
         review.total_ms = _wall_clock_ms(received_at, completed)
         db.commit()
-        return review
     except Exception:
         db.rollback()  # discard any partial comment rows
 
@@ -249,6 +258,24 @@ def run_review(
         db.commit()
         raise
 
+    # Posting sits **after** the commit above and **outside** its `try`, both
+    # on purpose.
+    #
+    # After, because the review must be durable in Liffy before Liffy tries to
+    # publish it: a GitHub outage should cost a publish, not a review.
+    #
+    # Outside, because an exception here landing in that `except` branch would
+    # flip a completed review to `failed` — the exact opposite of what §1
+    # wants, and a strictly worse outcome than not posting. `publish_review`
+    # owns its own error handling and never raises.
+    #
+    # `duration_ms` was recorded before this runs and deliberately does not
+    # extend over it: the GitHub round trip is not part of generating a review,
+    # and folding it in would inflate §8.1's number with work the target is not
+    # about.
+    publish_review(db, review, owner, repo_name, meta, file_diffs, gh=gh, actor=owner_user)
+    return review
+
 
 def get_review_with_comments(
     db: Session, review_id: uuid.UUID
@@ -262,3 +289,99 @@ def get_review_with_comments(
         .order_by(ReviewComment.file_path, ReviewComment.line_start)
     ).all()
     return review, list(comments)
+
+
+def _previous_posted_review_url(db: Session, review: Review) -> str | None:
+    """The most recent Liffy review already on this PR, if any.
+
+    Read from Liffy's own rows rather than by listing GitHub's reviews: we know
+    exactly which ones are ours, and listing would need a second API call to
+    rediscover something already recorded.
+    """
+    return db.scalar(
+        select(Review.github_review_url)
+        .where(
+            Review.pr_id == review.pr_id,
+            Review.id != review.id,
+            Review.github_review_id.is_not(None),
+        )
+        .order_by(Review.created_at.desc())
+        .limit(1)
+    )
+
+
+def publish_review(
+    db: Session,
+    review: Review,
+    owner: str,
+    repo_name: str,
+    meta: PullRequestMeta,
+    file_diffs,
+    *,
+    gh: GitHubClient,
+    actor: User,
+) -> None:
+    """Post a completed review to its pull request. Never raises.
+
+    Off by default (``settings.post_reviews_to_github``). **The flag is checked
+    before any payload is built**, so with posting disabled nothing is computed
+    and a caller holding a client that cannot write is never asked to.
+
+    A failure here is recorded on the row and swallowed. The review is already
+    complete — in the database, visible in the UI — and letting a GitHub 500
+    flip it to ``failed`` would be strictly worse than not posting.
+    """
+    if not settings.post_reviews_to_github:
+        return
+    if review.status != "completed":
+        return
+    # Idempotency: never post the same Review row twice. `synchronize` webhooks
+    # fire on every push and a re-review creates a new row, so without this a
+    # PR pushed to five times accumulates five duplicate threads.
+    if review.github_review_id is not None:
+        return
+
+    try:
+        comments = list(
+            db.scalars(
+                select(ReviewComment)
+                .where(ReviewComment.review_id == review.id)
+                .order_by(ReviewComment.file_path, ReviewComment.line_start)
+            )
+        )
+        postable, unanchorable = partition_comments(comments, file_diffs)
+        event = resolve_event(
+            review.verdict,
+            # `User.username` is the GitHub login, and `meta.author` is the PR
+            # author's. Case-insensitive: GitHub logins are.
+            is_own_pr=actor.username.lower() == (meta.author or "").lower(),
+            mode=settings.github_review_event_mode,
+        )
+        body = build_review_body(
+            review.summary,
+            event=event,
+            unanchorable=unanchorable,
+            supersedes_url=_previous_posted_review_url(db, review),
+        )
+
+        posted = gh.create_pull_request_review(
+            owner, repo_name, meta.number, body=body, event=event.event, comments=postable
+        )
+        review.github_review_id = posted.id
+        review.github_review_url = posted.html_url
+        review.posted_at = datetime.now(timezone.utc)
+        review.post_error = None
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 - a publish must never fail a review
+        logger.warning(
+            "posting review %s to %s/%s#%s failed: %s",
+            review.id, owner, repo_name, meta.number, exc,
+        )
+        try:
+            db.rollback()
+            review.post_error = truncate_post_error(str(exc))
+            db.commit()
+        except Exception:
+            # Recording *why* it failed must not itself fail the review either.
+            logger.exception("could not record post_error for review %s", review.id)
+            db.rollback()

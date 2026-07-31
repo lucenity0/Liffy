@@ -39,6 +39,14 @@ from app.schemas.review import ReviewCategory, ReviewSeverity
 # raising: one bad row would otherwise take down the whole metric.
 OTHER_CATEGORY = "other"
 
+# Report §8.2: "reviews with approval rate below 50% are flagged for manual
+# inspection". Strictly below — a review sitting exactly on 0.5 is not flagged.
+#
+# One constant, imported. Scattered across the worker, the analytics endpoint
+# and the frontend it becomes three thresholds that agree until one of them is
+# tuned.
+LOW_APPROVAL_THRESHOLD = 0.5
+
 
 @dataclass(frozen=True)
 class ReviewScores:

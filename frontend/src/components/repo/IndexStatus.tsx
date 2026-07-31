@@ -35,11 +35,37 @@ export function IndexStatus({
   }
 
   if (status.status === "indexed") {
+    // Only a positive count is a caveat. `0` means the run measured and
+    // nothing failed; `null` means the repo predates the counter. Neither
+    // deserves "0 files skipped" cluttering a healthy chip.
+    const skipped = status.last_index_failed_files ?? 0;
+
     return (
       <Row>
         <IndexBadge value="indexed" />
         <Meta>
           <span data-numeric>{formatCount(status.chunk_count)}</span> chunks
+          {skipped > 0 && (
+            <>
+              {" · "}
+              {/* Not colour-only, and not a badge: this is a qualification of
+                  the number beside it, so it reads as one. The `seen` total is
+                  the denominator — "40 skipped" means something different out
+                  of 45 than out of 4,000. */}
+              <span className="text-ochre" title={SKIPPED_TITLE}>
+                <span data-numeric>{formatCount(skipped)}</span>
+                {status.last_indexed_files_seen != null && (
+                  <>
+                    {" of "}
+                    <span data-numeric>
+                      {formatCount(status.last_indexed_files_seen)}
+                    </span>
+                  </>
+                )}
+                {" files skipped"}
+              </span>
+            </>
+          )}
           {status.indexed_at && (
             <>
               {" · "}
@@ -65,6 +91,15 @@ export function IndexStatus({
     </Row>
   );
 }
+
+/**
+ * What a skipped file actually costs, since the count alone does not say.
+ * *Which* files stays in the worker log — the count is the signal, and a repo
+ * card is the wrong place for a list.
+ */
+const SKIPPED_TITLE =
+  "These files could not be fetched or chunked on the last run, so they have " +
+  "no embeddings. Reviews touching them retrieve no context. Re-index to retry.";
 
 function Row({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-wrap items-center gap-2">{children}</div>;

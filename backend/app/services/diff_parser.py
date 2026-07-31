@@ -159,6 +159,11 @@ def chunk_text(file_diff: FileDiff) -> list[str]:
 
     Header carries the file path and new-file line range so retrieval hits
     can be traced back to a location.
+
+    **This is embedding input, not prompt input.** ``rag_service`` embeds the
+    result verbatim as the retrieval query, so the text here is part of what
+    decides which chunks come back. Use ``numbered_chunk_text`` for anything
+    the model reads; changing this function changes retrieval.
     """
     chunks: list[str] = []
     for hunk in file_diff.hunks:
@@ -171,4 +176,52 @@ def chunk_text(file_diff: FileDiff) -> list[str]:
             for dl in hunk.lines
         )
         chunks.append(f"{header}\n{body}")
+    return chunks
+
+
+def numbered_chunk_text(file_diff: FileDiff) -> list[str]:
+    """Render each hunk for the *review prompt*, with the new-file line number
+    stamped in a left gutter on every line.
+
+    Same content as ``chunk_text``; the difference is that the line number the
+    model has to put in ``line_start``/``line_end`` is printed rather than
+    implied. Without the gutter the model is given only the hunk's start line
+    and has to walk the body counting ``+`` and context lines while skipping
+    ``-`` lines — and #227 measured what that costs: on PR #58 every comment
+    was factually correct and every line number was wrong, off by 12 to 27 in
+    both directions.
+
+    That PR is also why this is a rendering fix rather than a prompt-wording
+    one. ``setup-mac.sh`` there is a *new* file — one hunk, all 186 lines
+    added, no removed or context lines at all — so new-file line N sits at
+    body position N with no old/new divergence to get wrong, and the header
+    (``lines 1-186``) was correct. The only remaining step was counting to
+    186, and the model returned 68 for a finding about lines 40-42. #202 had
+    already shown that two different wordings of "use the NEW-file line
+    numbers" moved nothing. Printing the number removes the arithmetic
+    instead of asking for it again.
+
+    Removed lines get a blank gutter: they do not exist in the new file, so
+    there is no number to print and nothing there to comment on.
+
+    Kept separate from ``chunk_text`` deliberately — that one is embedded as
+    the RAG query, and numbering it would change retrieval, which is a second
+    variable in exactly the comparison #227 has to make against the committed
+    ``docs/prompt-eval`` artifacts.
+    """
+    chunks: list[str] = []
+    for hunk in file_diff.hunks:
+        start, end = hunk.new_line_range
+        header = f"# {file_diff.path} lines {start}-{end}"
+        if hunk.section:
+            header += f" ({hunk.section})"
+        # Width from the largest number actually rendered, so the gutter stays
+        # narrow on small hunks and still aligns on a 4-digit file.
+        width = len(str(max(end, start)))
+        body_lines: list[str] = []
+        for dl in hunk.lines:
+            marker = {"added": "+", "removed": "-", "context": " "}[dl.kind.value]
+            gutter = f"{dl.new_lineno:>{width}}" if dl.new_lineno is not None else " " * width
+            body_lines.append(f"{gutter} {marker}{dl.content}")
+        chunks.append("\n".join([header, *body_lines]))
     return chunks

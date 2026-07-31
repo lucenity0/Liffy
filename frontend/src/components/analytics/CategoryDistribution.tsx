@@ -30,9 +30,18 @@ const CATEGORIES: Category[] = [
 
 const ROW = 28; // --rule-step, so the bars sit on the page's ruled pitch.
 const BAR = 16;
-const LABEL_W = 96;
+/**
+ * The label gutter, in viewBox units.
+ *
+ * Sized for the longest label rather than eyeballed: the type is monospace at
+ * 12.5 units, so ~7.5 units a character, and "Architecture" is 12 of them —
+ * 90, plus the 8-unit gap before the bar. At 96 the "A" fell outside the
+ * viewBox and was silently clipped, which no test caught because the text
+ * node was still in the DOM.
+ */
+const LABEL_W = 112;
 const COUNT_W = 28;
-const WIDTH = 320; // viewBox units; the SVG scales to its container.
+const WIDTH = 348; // viewBox units; the SVG scales to its container.
 
 export function CategoryDistribution({
   distribution,

@@ -61,6 +61,18 @@ class ReviewCommentOut(BaseModel):
     comment_text: str
     suggestion: str | None
     created_at: datetime
+    # The *caller's own* rating: 1, -1, or None when they have not rated it.
+    # Scoped to the authenticated user — another user's rating never appears
+    # here, which is what stops a shared review leaking who thought what.
+    #
+    # Without it a rating vanishes on reload: the button reverts to un-clicked
+    # and the user rates the same comment again, quietly double-counting their
+    # own opinion in the approval rate.
+    #
+    # Detail responses only. It defaults to None rather than being required so
+    # that anything constructing a ReviewCommentOut straight from an ORM row —
+    # which carries no notion of a caller — still validates.
+    my_rating: int | None = None
 
 
 class ReviewOut(BaseModel):

@@ -158,13 +158,30 @@ export const handlers = [
 
   http.post("*/auth/logout", () => new HttpResponse(null, { status: 204 })),
 
+  // Mirrors the real contract as of #190: a bad rating is a 422 with FastAPI's
+  // array-shaped `detail`, not a 200 carrying a status field. The old stub
+  // answered 200 either way, so a test written against it would have passed
+  // against a fiction.
   http.post("*/comments/:commentId/feedback", async ({ params, request }) => {
     const body = (await request.json()) as { rating?: number };
-    const valid = body.rating === 1 || body.rating === -1;
+    if (body.rating !== 1 && body.rating !== -1) {
+      return HttpResponse.json(
+        {
+          detail: [
+            {
+              type: "literal_error",
+              loc: ["body", "rating"],
+              msg: "Input should be 1 or -1",
+            },
+          ],
+        },
+        { status: 422 },
+      );
+    }
     return HttpResponse.json({
       comment_id: params.commentId,
-      status: valid ? "saved" : "invalid",
       rating: body.rating,
+      created_at: new Date().toISOString(),
     });
   }),
 ];

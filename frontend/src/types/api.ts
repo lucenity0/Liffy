@@ -96,6 +96,31 @@ export interface ReviewCommentOut {
   comment_text: string;
   suggestion: string | null;
   created_at: string;
+  /**
+   * The *caller's own* rating for this comment — `1`, `-1`, or `null` when
+   * they haven't rated it. Another user's rating never appears here.
+   *
+   * This is what makes a rating survive a page reload; without it the button
+   * reverts to un-clicked and the same comment gets rated twice.
+   *
+   * `number | null` rather than `1 | -1 | null` for the same reason `category`
+   * and `severity` are loose above: the column has no DB check constraint, so
+   * render defensively. Added by #190.
+   *
+   * Detail responses only — `ReviewListItem` carries no comments at all.
+   */
+  my_rating: number | null;
+}
+
+/**
+ * `POST /comments/{comment_id}/feedback`. Re-rating replaces rather than
+ * appending, and `created_at` stays at the row's original creation time —
+ * there is no `updated_at` on `comment_feedback` by design (report §5).
+ */
+export interface FeedbackOut {
+  comment_id: string;
+  rating: number;
+  created_at: string;
 }
 
 export interface ReviewDetailOut extends ReviewOut {

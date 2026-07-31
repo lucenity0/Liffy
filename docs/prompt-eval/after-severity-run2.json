@@ -1,0 +1,111 @@
+{
+  "label": "after-severity-run2",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5",
+  "effort": "medium",
+  "max_context_chunks": 10,
+  "runs": [
+    {
+      "pr": 58,
+      "why": "setup shell scripts + requirements split \u2014 the #164 anchor",
+      "verdict": "comment",
+      "summary": "Adds one-command setup scripts for macOS and Windows plus reorganized backend requirements files. Overall reasonable, but there's a duplicate pytest/httpx entry between requirements.txt and requirements-dev.txt, and a few minor robustness issues in the setup scripts worth flagging.",
+      "tokens_used": 29922,
+      "duration_ms": 29834,
+      "wall_s": 30.7,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 3,
+      "comments": [
+        {
+          "file": "backend/requirements.txt",
+          "line_start": 1,
+          "line_end": 3,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "pytest==8.3.3 and httpx==0.27.2 remain in requirements.txt (production deps) while also being declared in requirements-dev.txt. Test-only packages like pytest should not be in the production requirements.txt; this causes duplication and installs test tooling in production environments.",
+          "suggestion": "Remove pytest (and keep httpx only where actually needed) from requirements.txt; pytest belongs solely in requirements-dev.txt.",
+          "assessment": null
+        },
+        {
+          "file": "setup-mac.sh",
+          "line_start": 117,
+          "line_end": 122,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "The JWT secret is generated with `python3` here, but earlier in the script `$PYTHON` (brew's python3.11) is used consistently. If the system's default `python3` differs from the installed Python 3.11 (e.g., not yet on PATH or a different version), this could fail or produce inconsistent behavior.",
+          "suggestion": "Use \"$PYTHON\" -c \"import secrets; print(secrets.token_hex(32))\" instead of python3 for consistency.",
+          "assessment": null
+        },
+        {
+          "file": "setup-windows.bat",
+          "line_start": 123,
+          "line_end": 126,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "The JWT secret generation replaces 'JWT_SECRET_KEY=' with 'JWT_SECRET_KEY=' + token via a naive string replace. If .env.example contains multiple lines/keys with 'JWT_SECRET_KEY=' as a substring elsewhere (e.g., in a comment), or if the value already has trailing content, this could corrupt the file. Also unlike setup-mac.sh which uses sed to replace the whole line, this only prepends the secret and leaves any existing default value appended.",
+          "suggestion": "Match and replace the full line (e.g. using regex to replace 'JWT_SECRET_KEY=.*' with the new value) similar to the sed approach in setup-mac.sh.",
+          "assessment": null
+        }
+      ]
+    },
+    {
+      "pr": 203,
+      "why": "backend Python, a real bug fix (chunker registry KeyError)",
+      "verdict": "approve",
+      "summary": "Clean refactor consolidating two parallel registries into one, removing a class of drift bugs. Logic is sound and well-tested with dedicated registry-integrity tests.",
+      "tokens_used": 4112,
+      "duration_ms": 3635,
+      "wall_s": 3.9,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 204,
+      "why": "backend Python with real logic + a migration (METRIC-2)",
+      "verdict": "approve",
+      "summary": "Well-scoped feature adding end-to-end (\u00a78.1) timing via queued_at/total_ms, threaded from webhook receipt through Celery to the Review model and API/schema, with extensive test coverage for naive-datetime rejection, clock skew clamping, and backward compatibility. The validation ordering (naive-datetime rejected before any row is written), the JSON-serializable ISO string handoff over Celery, and the queued_at write on the processing row are all correctly reasoned about and match their accompanying tests. No logic errors, security issues, or convention violations found in the diff.",
+      "tokens_used": 22159,
+      "duration_ms": 38146,
+      "wall_s": 38.3,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 185,
+      "why": "frontend TypeScript (protected routes + user menu)",
+      "verdict": "approve",
+      "summary": "Well-structured, thoroughly-tested feature adding route protection and a user menu. The design rationale is documented clearly in comments, and the logout/return-to interaction (a subtle race) is handled correctly with good test coverage. No significant issues found in the diff.",
+      "tokens_used": 15667,
+      "duration_ms": 4403,
+      "wall_s": 4.6,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 211,
+      "why": "docs only \u2014 should produce approve with zero comments",
+      "verdict": "comment",
+      "summary": "Adds a large static architecture/report page (docs/report.src.html source and generated frontend/public/report.html) plus a favicon change and .gitignore additions. The content is documentation/marketing HTML with no application logic, so there is little to review functionally. One minor duplication/maintenance concern is worth flagging.",
+      "tokens_used": 75349,
+      "duration_ms": 7054,
+      "wall_s": 7.2,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 1,
+      "comments": [
+        {
+          "file": "frontend/public/report.html",
+          "line_start": 1,
+          "line_end": 2048,
+          "category": "architecture",
+          "severity": "info",
+          "comment": "This generated file duplicates the entire ~2000-line inline CSS/JS from docs/report.src.html (with font URLs substituted). Since it's marked as a generated file with tooling not checked into the repo, any reviewer or future contributor without access to the external generator script has no way to regenerate it if report.src.html is edited, risking silent drift between the two copies over time.",
+          "suggestion": null,
+          "assessment": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import httpx
 
@@ -93,7 +94,108 @@ class GitHubError(RuntimeError):
 
 
 class GitHubAuthError(GitHubError):
-    """Raised when no GitHub token is available."""
+    """The credential is the problem: absent, revoked, or lacking the scope.
+
+    Actionable — it needs the user to reconnect. Deliberately **not** raised
+    for a rate limit, which is transient and self-healing; see
+    ``GitHubRateLimitError``.
+    """
+
+
+class GitHubRateLimitError(GitHubError):
+    """The credential is fine; there is no quota left right now.
+
+    GitHub returns **403 for rate limiting as well as for authorization
+    failures**, so status code alone cannot tell them apart. Conflating them
+    means the actionable message — "reconnect your GitHub account" — fires for
+    the one case where there is no action to take, about an account that is
+    perfectly healthy.
+
+    ``reset_at`` is when the primary limit lifts (epoch seconds, from
+    ``x-ratelimit-reset``); ``retry_after`` is the secondary-limit hint in
+    seconds. Either may be absent — GitHub does not always send both — so both
+    are optional and the message degrades to naming the limit without a time.
+
+    A subclass of ``GitHubError`` like ``GitHubAuthError``, which means **every
+    ``except`` chain has to catch this one first**. ``indexer.py`` already has
+    that shape from #208.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reset_at: datetime | None = None,
+        retry_after: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reset_at = reset_at
+        self.retry_after = retry_after
+
+
+def _rate_limit_from(response: httpx.Response) -> GitHubRateLimitError | None:
+    """Classify a 403/429 as a rate limit, or ``None`` if it is not one.
+
+    The discriminator is the headers, not the status:
+
+    - ``x-ratelimit-remaining: 0`` — the primary hourly limit is exhausted, and
+      ``x-ratelimit-reset`` carries the epoch second it lifts.
+    - ``retry-after`` — the secondary ("abuse") limit, in seconds.
+    - neither — a genuine authorization failure, which the caller maps to
+      ``GitHubAuthError``.
+
+    A 429 is always a rate limit whatever the headers say; GitHub does not use
+    that status for anything else.
+
+    **Only 403 and 429 are ambiguous.** A 401 means the credential is bad, full
+    stop — GitHub attaches rate-limit headers to most responses, so classifying
+    by headers alone would let a stray ``x-ratelimit-remaining: 0`` turn a dead
+    token into "wait a while", which is the same conflation in the opposite
+    direction.
+    """
+    if response.status_code not in (403, 429):
+        return None
+
+    headers = response.headers
+    remaining = headers.get("x-ratelimit-remaining")
+    retry_after_raw = headers.get("retry-after")
+
+    primary = remaining is not None and remaining.strip() == "0"
+    secondary = retry_after_raw is not None
+    if not (primary or secondary or response.status_code == 429):
+        return None
+
+    # Both values come off the wire, so neither is trusted to parse. A limit we
+    # cannot put a time on is still a limit — losing the classification over an
+    # unparseable header would put us straight back to "reconnect your
+    # account", which is the bug this function exists to remove.
+    reset_at: datetime | None = None
+    reset_raw = headers.get("x-ratelimit-reset")
+    if reset_raw is not None:
+        try:
+            reset_at = datetime.fromtimestamp(int(reset_raw), tz=timezone.utc)
+        except (ValueError, OverflowError, OSError):
+            reset_at = None
+
+    retry_after: int | None = None
+    if retry_after_raw is not None:
+        try:
+            retry_after = int(retry_after_raw)
+        except ValueError:
+            retry_after = None
+
+    if retry_after is not None:
+        when = f" Retry after {retry_after}s."
+    elif reset_at is not None:
+        when = f" The limit resets at {reset_at:%Y-%m-%d %H:%M:%S} UTC."
+    else:
+        when = ""
+    return GitHubRateLimitError(
+        f"GitHub rate limit reached.{when} Your account is fine — this is "
+        "quota, not credentials.",
+        reset_at=reset_at,
+        retry_after=retry_after,
+    )
 
 
 def verify_webhook_signature(secret: str, payload: bytes, signature_header: str | None) -> bool:
@@ -189,11 +291,26 @@ class GitHubClient:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            # Rate limiting first, because GitHub answers 403 for *both* a
+            # rate limit and an authorization failure. Checked before the auth
+            # branch below rather than after, since the auth branch would
+            # otherwise swallow every 403 and tell the user to reconnect a
+            # perfectly healthy account — for a condition that fixes itself.
+            #
+            # At 5000 req/hr this is the likeliest large-repo failure there is:
+            # `index_repository` issues one content request per file.
+            rate_limited = _rate_limit_from(response)
+            if rate_limited is not None:
+                raise rate_limited from exc
+
             # A user can revoke the OAuth app's access from GitHub's settings
             # at any time, so a token that worked yesterday returning 401
             # today is normal operation, not a defect. Translating it into a
             # typed error here is what lets the API answer "reconnect your
             # GitHub account" instead of leaking an httpx exception as a 500.
+            #
+            # A 403 reaches here only with neither rate-limit header present,
+            # which is the genuine permissions case.
             if response.status_code in (401, 403):
                 raise GitHubAuthError(
                     "GitHub rejected the credentials. If you revoked Liffy's "

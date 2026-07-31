@@ -13,7 +13,11 @@ from app.database import Base, get_db
 from app.main import app
 from app.models.repository import Repository
 from app.models.user import User
-from app.services.github_service import GitHubAuthError, RepositoryMeta
+from app.services.github_service import (
+    GitHubAuthError,
+    GitHubRateLimitError,
+    RepositoryMeta,
+)
 
 client = TestClient(app)
 
@@ -310,3 +314,40 @@ def test_revoked_token_returns_503_not_500(
 
     assert response.status_code == 503
     assert "reconnect" in response.json()["detail"].lower()
+
+
+def test_rate_limited_connect_returns_429_not_503(
+    session_factory, caller, indexed, monkeypatch
+) -> None:
+    """A throttled request must not tell the user to reconnect a healthy account.
+
+    The 503 above says "reconnect"; this says "wait". Only one of them is
+    something the user can act on, and before #209 both 403 shapes produced
+    the first.
+    """
+    def factory(token=None):
+        raise GitHubRateLimitError("GitHub rate limit reached. Retry after 60s.", retry_after=60)
+
+    monkeypatch.setattr(repos_api, "GitHubClient", factory)
+    response = client.post("/repos", json={"full_name": "octo/demo"}, headers=caller)
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "60"
+    detail = response.json()["detail"].lower()
+    assert "rate limit" in detail
+    assert "reconnect" not in detail
+
+
+def test_rate_limit_without_retry_after_omits_the_header(
+    session_factory, caller, indexed, monkeypatch
+) -> None:
+    """GitHub does not always send one, and a fabricated Retry-After is worse
+    than none — a client would honour a number nobody measured."""
+    def factory(token=None):
+        raise GitHubRateLimitError("GitHub rate limit reached.")
+
+    monkeypatch.setattr(repos_api, "GitHubClient", factory)
+    response = client.post("/repos", json={"full_name": "octo/demo"}, headers=caller)
+
+    assert response.status_code == 429
+    assert "retry-after" not in response.headers

@@ -13,7 +13,12 @@ from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.models.user import User
 from app.services.chunker import chunk_source
-from app.services.github_service import GitHubAuthError, GitHubError, _is_indexable
+from app.services.github_service import (
+    GitHubAuthError,
+    GitHubError,
+    GitHubRateLimitError,
+    _is_indexable,
+)
 from app.services.indexer import IndexingError, index_repository
 from app.services.rag_service import get_repo_collection
 
@@ -711,3 +716,35 @@ def test_an_empty_repository_is_legitimately_indexed(db, repo) -> None:
     assert result.files_seen == 0 and result.files_failed == 0
     db.expire_all()
     assert repo.indexed_at is not None
+
+
+def test_rate_limit_aborts_the_run_and_does_not_mark_indexed(db, repo) -> None:
+    """Same abort as a dead credential, for a different reason.
+
+    Continuing would spend the remaining quota on requests that cannot
+    succeed, so aborting is right — but the error carries "rate limited, retry
+    after N" rather than "reconnect your account", which is the whole point of
+    #209. The repository must not be marked indexed either way.
+    """
+    gh = _fetch_raises(
+        FILES,
+        "app/b.py",
+        GitHubRateLimitError("GitHub rate limit reached.", retry_after=60),
+    )
+
+    with pytest.raises(GitHubRateLimitError) as caught:
+        _run(db, repo, FILES, gh=gh)
+
+    assert caught.value.retry_after == 60
+    assert "reconnect" not in str(caught.value).lower()
+    assert repo.indexed_at is None
+
+
+def test_rate_limit_is_not_absorbed_as_a_per_file_skip(db, repo) -> None:
+    """It is a `GitHubError` subclass, so the broad `except Exception` below
+    would swallow it into `files_failed` if the specific clause were dropped or
+    reordered."""
+    gh = _fetch_raises(FILES, "app/a.py", GitHubRateLimitError("rate limited"))
+
+    with pytest.raises(GitHubRateLimitError):
+        _run(db, repo, FILES, gh=gh)

@@ -328,6 +328,14 @@ def test_duration_is_measured_not_defaulted(db: Session) -> None:
             time.sleep(0.15)
             return super().complete(system, user)
 
+    # Warm up and discard. The *first* pipeline run in a process pays one-time
+    # costs the second never sees — creating the Chroma collection, building
+    # the embedder. On a loaded CI runner that overhead measured 219ms while
+    # the 150ms-slower run measured 154ms, failing this test on ordering
+    # rather than on anything about the clock. Warming first puts both timed
+    # runs on the same footing, which is the comparison being claimed.
+    _run(db, FakeLLM([_payload([])]))
+
     fast = _run(db, FakeLLM([_payload([])]))
     slow = _run(db, SlowLLM([_payload([])]))
 

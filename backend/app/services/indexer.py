@@ -14,7 +14,7 @@ from app.llm.embeddings import EmbeddingProvider
 from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.services.chunker import CodeChunk, chunk_source
-from app.services.github_service import GitHubAuthError, GitHubClient
+from app.services.github_service import GitHubAuthError, GitHubClient, GitHubRateLimitError
 from app.services.rag_service import get_repo_collection
 
 # Files larger than this are skipped (vendored bundles, fixtures, etc.).
@@ -89,12 +89,20 @@ def index_repository(
         result.files_seen += 1
         try:
             content = gh.get_file_content(owner, name, file_path, ref=ref)
-        except GitHubAuthError:
-            # Scope is the whole run, not this file. The credential will not
-            # start working three files later, so skipping would spend one
-            # doomed request per file in the repository and report "800 files
-            # failed" instead of "the token is dead". Caught before the
-            # broader clause below because it is a `GitHubError` subclass.
+        except (GitHubAuthError, GitHubRateLimitError):
+            # Scope is the whole run, not this file. Neither a dead credential
+            # nor an exhausted quota starts working three files later, so
+            # skipping would spend one doomed request per file in the
+            # repository and report "800 files failed" instead of the actual
+            # reason. Caught before the broader clause below because both are
+            # `GitHubError` subclasses.
+            #
+            # Aborting is right for both; **what they mean is not.** A revoked
+            # token needs the user to reconnect; a rate limit is transient and
+            # self-healing, and telling someone to reconnect a healthy account
+            # is the one message with no action behind it. Re-raised as-is so
+            # the distinction survives to the caller rather than being
+            # flattened here.
             raise
         except Exception:
             # Deliberately wider than `GitHubError`: `_get` only wraps

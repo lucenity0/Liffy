@@ -10,7 +10,12 @@ from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.models.user import User
 from app.schemas.repo import RepoConnectRequest, RepoOut, RepoStatusOut
-from app.services.github_service import GitHubAuthError, GitHubClient, GitHubError
+from app.services.github_service import (
+    GitHubAuthError,
+    GitHubClient,
+    GitHubError,
+    GitHubRateLimitError,
+)
 from app.services.rag_service import collection_name, get_chroma_client
 from app.workers import index_worker
 
@@ -60,6 +65,14 @@ def connect_repo(
         # BASE-3 left open, finally used.
         with GitHubClient(token=user.github_access_token) as gh:
             meta = gh.get_repository(owner, name)
+    # Rate limit before auth: both are `GitHubError` subclasses and
+    # `GitHubRateLimitError` is the more specific one, so an `except` chain in
+    # the other order would never reach it. A 429 with `Retry-After` is the
+    # honest answer — it says "wait", where the 503 below says "reconnect",
+    # and only one of those is something the user can act on here.
+    except GitHubRateLimitError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(status_code=429, detail=str(exc), headers=headers) from exc
     except GitHubAuthError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except GitHubError as exc:

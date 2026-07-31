@@ -204,6 +204,9 @@ def run_review(
         context = _gather_context(chroma_client, repo.id, file_diffs, embedder)
         result = generate_review(llm, meta.title, file_diffs, context)
 
+        # Comments arrive already filtered and clamped to the diff by
+        # `_anchor_comments` in the LLM chain, so no anchor check is repeated
+        # here. That guard cannot catch #227's failure — see its docstring.
         for comment in result.output.comments:
             db.add(
                 ReviewComment(

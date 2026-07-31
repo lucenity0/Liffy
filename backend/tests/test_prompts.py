@@ -193,6 +193,66 @@ def test_context_is_rendered_in_the_order_given() -> None:
     assert prompt.index("near.py") < prompt.index("far.py")
 
 
+# ── #227: the model must not have to count lines ──────────────────────────────
+
+
+def test_diff_lines_carry_their_new_file_line_number() -> None:
+    """The root cause in #227: the prompt gave only the hunk's start line, so
+    naming any other line meant counting `+`/context rows and skipping `-` rows.
+    Every comment on PR #58 was correct and every line number was wrong.
+
+    Asserting the number is *present on the line*, not the wording around it.
+    """
+    # `@@ -10,4 +10,5 @@` — context 10, removed (no number), then 11, 12, 13.
+    prompt = build_review_prompt("Fix the helper", parse_diff(DIFF), [])
+    assert "10  context" in prompt
+    assert "11 +new" in prompt
+    assert "12 +extra" in prompt
+    # The removed line is rendered but has no new-file number to offer.
+    assert "   -old" in prompt
+    assert "11 -old" not in prompt
+
+
+def test_system_prompt_explains_the_gutter() -> None:
+    """Numbering the lines only helps if the model is told what the numbers are.
+
+    Concept, not phrasing: it must convey that the number is to be read off the
+    line rather than derived.
+    """
+    lowered = SYSTEM_PROMPT.lower()
+    assert "gutter" in lowered or "line number" in lowered
+    assert any(
+        phrase in lowered
+        for phrase in ("do not count", "not count", "copy the number", "read it off")
+    ), "the prompt must tell the model to read the number, not compute it"
+
+
+def test_retrieved_context_lines_are_distinguishable_from_diff_lines() -> None:
+    """A comment anchored to a *retrieved* line instead of a *diff* line would
+    look exactly like #227's signature — right file, plausible number, wrong
+    place. Retrieval already excludes the file under review (`exclude_file` in
+    `rag_service`), so this cannot currently happen; this test keeps the two
+    kinds of line visually separable if that ever changes.
+
+    The context chunk here is deliberately shaped like diff content.
+    """
+    sneaky = _chunk("+new\n+extra\n context", path="app/other.py", start=12)
+    prompt = build_review_prompt("Title", parse_diff(DIFF), [sneaky])
+
+    diff_section = prompt.split("## Retrieved codebase context")[0]
+    context_section = prompt.split("## Retrieved codebase context")[1]
+
+    # The two sections are separately headed...
+    assert "## Diff" in diff_section
+    # ...the diff carries per-line numbers...
+    assert "11 +new" in diff_section
+    # ...and the context block carries its range in its header only, so its
+    # body lines offer no number that could be mistaken for a commentable one.
+    assert "app/other.py:12-17" in context_section
+    assert "11 +new" not in context_section
+    assert "+new" in context_section  # the text is there, just unnumbered
+
+
 # ── Determinism ───────────────────────────────────────────────────────────────
 
 

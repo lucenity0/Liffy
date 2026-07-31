@@ -1,0 +1,111 @@
+{
+  "label": "after-severity",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5",
+  "effort": "medium",
+  "max_context_chunks": 10,
+  "runs": [
+    {
+      "pr": 58,
+      "why": "setup shell scripts + requirements split \u2014 the #164 anchor",
+      "verdict": "request_changes",
+      "summary": "Overall the setup scripts are reasonable, but there's a logic bug in the Windows script's Redis detection (checking the wrong service name), and a leftover pytest dependency in the production requirements.txt that duplicates requirements-dev.txt.",
+      "tokens_used": 10141,
+      "duration_ms": 14878,
+      "wall_s": 15.7,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 2,
+      "comments": [
+        {
+          "file": "backend/requirements.txt",
+          "line_start": 1,
+          "line_end": 5,
+          "category": "convention",
+          "severity": "info",
+          "comment": "`pytest==8.3.3` remains in requirements.txt (production dependencies) even though pytest and other test tooling are now properly declared in requirements-dev.txt which extends this file via `-r requirements.txt`. This duplicates the test dependency in the production install and is inconsistent with the new dev/prod split introduced by requirements-dev.txt.",
+          "suggestion": "Remove the leftover `pytest==8.3.3` line from requirements.txt since it's already covered by requirements-dev.txt.",
+          "assessment": null
+        },
+        {
+          "file": "setup-windows.bat",
+          "line_start": 68,
+          "line_end": 77,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "The script checks `sc query Redis` to detect whether Redis is installed, but it installs Memurai (`Memurai.Memurai` via winget) and starts the service `Memurai`, not a service named `Redis`. On every subsequent run, `sc query Redis` will fail, causing the script to attempt to reinstall Memurai and re-run `net start Memurai` unnecessarily.",
+          "suggestion": "Check for the actual Memurai service name, e.g. `sc query Memurai >nul 2>&1`, to match what's being installed/started.",
+          "assessment": null
+        }
+      ]
+    },
+    {
+      "pr": 203,
+      "why": "backend Python, a real bug fix (chunker registry KeyError)",
+      "verdict": "approve",
+      "summary": "Clean consolidation of the two parallel registries into one, removing a real drift hazard. Logic is correct and well-tested with dedicated registry-integrity tests.",
+      "tokens_used": 4110,
+      "duration_ms": 3748,
+      "wall_s": 3.9,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 204,
+      "why": "backend Python with real logic + a migration (METRIC-2)",
+      "verdict": "approve",
+      "summary": "This is a well-scoped, carefully documented change that threads a webhook-receipt timestamp end-to-end (API \u2192 Celery \u2192 worker \u2192 Review model) to compute a \u00a78.1 total_ms metric, with clamping for negative skew, timezone-aware validation, and backward-compatible defaults for old enqueue callers. The comments/docstrings are unusually thorough and the test coverage (webhook, worker, service, API serialization, frontend fixtures/types) is extensive and matches the described edge cases (naive datetimes, non-string received_at, legacy NULL rows, failure path, clock skew). I did not find any logic errors, security issues, or convention violations in the diff.",
+      "tokens_used": 20724,
+      "duration_ms": 22902,
+      "wall_s": 23.0,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 185,
+      "why": "frontend TypeScript (protected routes + user menu)",
+      "verdict": "approve",
+      "summary": "Well-structured feature adding route protection and a user menu, with thorough tests. No significant issues found in the diff; logic for stash/clear ordering, guard branching, and shell composition looks sound.",
+      "tokens_used": 15646,
+      "duration_ms": 3913,
+      "wall_s": 4.1,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 211,
+      "why": "docs only \u2014 should produce approve with zero comments",
+      "verdict": "comment",
+      "summary": "Large generated documentation/report page added (docs/report.src.html and frontend/public/report.html), plus a font/build tooling gitignore update and favicon replacement. The content is static marketing/docs HTML with no application logic risk. Two minor duplication/consistency points worth flagging.",
+      "tokens_used": 151369,
+      "duration_ms": 16787,
+      "wall_s": 16.9,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 2,
+      "comments": [
+        {
+          "file": "docs/report.src.html",
+          "line_start": 1,
+          "line_end": 1913,
+          "category": "improvement",
+          "severity": "info",
+          "comment": "The stats block (655 tests, 130 commits, 37 merged changes) and the PR #58 evidence numbers are hardcoded into the static HTML. Since this is meant to be a living report, these figures will silently go stale unless the build script re-injects them at generation time \u2014 worth confirming the generator handles this rather than requiring manual edits to the source template.",
+          "suggestion": null,
+          "assessment": null
+        },
+        {
+          "file": "frontend/public/report.html",
+          "line_start": 1,
+          "line_end": 2048,
+          "category": "improvement",
+          "severity": "info",
+          "comment": "This generated file duplicates the entire ~2000-line src/style/script content of docs/report.src.html almost verbatim (only font URLs and the added site-chrome differ). Since the comment states this is a generated artifact, consider double-checking the build script keeps these two files in sync automatically rather than relying on manual regeneration, since the tooling that generates it isn't in the repo and can't be reviewed here.",
+          "suggestion": null,
+          "assessment": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,203 @@
+{
+  "label": "before",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5",
+  "effort": "medium",
+  "max_context_chunks": 10,
+  "runs": [
+    {
+      "pr": 58,
+      "why": "setup shell scripts + requirements split \u2014 the #164 anchor",
+      "verdict": "comment",
+      "summary": "Adds one-command setup scripts for macOS and Windows plus reorganized backend requirements files. The scripts are reasonably thorough but contain some duplicated pytest/httpx entries across requirements files, unvalidated remote script execution, and fragile assumptions (e.g., PATH refresh, exact string matching for versions) that could silently fail on some systems.",
+      "tokens_used": 20362,
+      "duration_ms": 31768,
+      "wall_s": 32.6,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 5,
+      "comments": [
+        {
+          "file": "backend/requirements.txt",
+          "line_start": 1,
+          "line_end": 8,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "pytest==8.3.3 and httpx==0.27.2 remain in requirements.txt (production dependencies) while pytest is also declared in requirements-dev.txt. Test-only dependencies like pytest should not be in the base requirements.txt; this causes duplication and installs test tooling in production environments.",
+          "suggestion": "Remove pytest==8.3.3 from requirements.txt since it's already declared in requirements-dev.txt as a dev-only dependency.",
+          "assessment": "correct"
+        },
+        {
+          "file": "setup-mac.sh",
+          "line_start": 26,
+          "line_end": 30,
+          "category": "security",
+          "severity": "warning",
+          "comment": "Piping curl output directly to bash without verifying checksum/signature is a common security anti-pattern for installer scripts, even though it's a widely-used pattern for Homebrew/nvm installers.",
+          "suggestion": "Consider documenting this risk in the script or README, and optionally pin to a specific commit/tag for the install script URL.",
+          "assessment": "false"
+        },
+        {
+          "file": "setup-mac.sh",
+          "line_start": 128,
+          "line_end": 134,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "sed -i '' assumes GNU/BSD sed syntax specific to macOS; if JWT_SECRET_KEY line doesn't exist in .env.example or has different formatting, this silently does nothing and the script proceeds with an unset/placeholder secret without any validation.",
+          "suggestion": "Verify the sed replacement succeeded (e.g., grep for the generated secret afterward) and error out if not.",
+          "assessment": "unverifiable"
+        },
+        {
+          "file": "setup-windows.bat",
+          "line_start": 46,
+          "line_end": 49,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "python --version output goes to stderr on some Python versions, and 'findstr \"3.11\"' would also match versions like 3.110 or paths containing '3.11' elsewhere; the check is fragile. Also PATH refresh via refreshenv depends on Chocolatey being installed, which isn't guaranteed here.",
+          "suggestion": "Use a more robust version check (e.g., parse major.minor explicitly) and don't rely on refreshenv unless Chocolatey is confirmed present.",
+          "assessment": "false"
+        },
+        {
+          "file": "setup-windows.bat",
+          "line_start": 116,
+          "line_end": 121,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "The JWT_SECRET_KEY replacement embeds a Python one-liner with escaped quotes inside a batch file; if backend\\.env doesn't already contain a 'JWT_SECRET_KEY=' line (e.g., .env.example format changes), this silently produces no replacement and no error is raised.",
+          "suggestion": "Add a check after generation to confirm the JWT_SECRET_KEY value was actually replaced, erroring out otherwise.",
+          "assessment": "unverifiable"
+        }
+      ]
+    },
+    {
+      "pr": 203,
+      "why": "backend Python, a real bug fix (chunker registry KeyError)",
+      "verdict": "approve",
+      "summary": "Straightforward, well-justified refactor merging two parallel registries into one keyed by extension, reducing risk of drift between grammar and language-name maps. Added tests directly verify registry integrity. No functional issues found.",
+      "tokens_used": 3892,
+      "duration_ms": 4260,
+      "wall_s": 4.4,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 0,
+      "comments": []
+    },
+    {
+      "pr": 204,
+      "why": "backend Python with real logic + a migration (METRIC-2)",
+      "verdict": "comment",
+      "summary": "Well-tested feature adding end-to-end \u00a78.1 timing metrics (queued_at, total_ms) threaded from webhook receipt through Celery to the Review model. The implementation is careful about timezone-awareness, naive-vs-aware validation, clock skew clamping, and backward compatibility across rolling deploys. A couple of minor robustness/logging concerns remain.",
+      "tokens_used": 41217,
+      "duration_ms": 44133,
+      "wall_s": 44.3,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 2,
+      "comments": [
+        {
+          "file": "backend/app/services/review_service.py",
+          "line_start": 28,
+          "line_end": 61,
+          "category": "improvement",
+          "severity": "info",
+          "comment": "_wall_clock_ms silently clamps negative durations to 0 with no logging/metric emitted for the skew case, making significant clock disagreement between API and worker hosts invisible to operators. Consider at least a debug-level log when the raw delta is negative, since this signals infra drift, not just a display concern.",
+          "suggestion": "if (end - start).total_seconds() < 0: logger.warning(...) before clamping.",
+          "assessment": "correct"
+        },
+        {
+          "file": "backend/app/workers/review_worker.py",
+          "line_start": 25,
+          "line_end": 52,
+          "category": "improvement",
+          "severity": "info",
+          "comment": "_parse_received_at swallows all parse/type errors and returns None silently, matching the 'never fail a review over a metric' intent, but there's no logging to distinguish a malformed timestamp from a legitimate None (e.g. manual trigger). Over time this makes diagnosing systematic clock/serialization issues harder.",
+          "suggestion": "Log at debug/info level when value is non-None but fails to parse, so persistent parsing failures are diagnosable without affecting review success.",
+          "assessment": "correct"
+        }
+      ]
+    },
+    {
+      "pr": 185,
+      "why": "frontend TypeScript (protected routes + user menu)",
+      "verdict": "approve",
+      "summary": "Adds a RequireAuth route guard, a UserMenu disclosure component, return-to stash/clear helpers, and test infrastructure updates. Overall well-reasoned and thoroughly tested. A few minor concerns: potential race/ordering nuance in stashReturnTo being called unconditionally on every anonymous render (including the logout redirect window before clearReturnTo runs), and the styleGuideRoute/shellRoute duplication of errorElement wrapping worth double-checking for dev vs prod route generation. No blocking issues found.",
+      "tokens_used": 16101,
+      "duration_ms": 12704,
+      "wall_s": 12.9,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 2,
+      "comments": [
+        {
+          "file": "frontend/src/components/layout/RequireAuth.tsx",
+          "line_start": 34,
+          "line_end": 41,
+          "category": "logic_error",
+          "severity": "warning",
+          "comment": "stashReturnTo is called as a side effect during render (not in an effect), which happens on every render where status is 'anonymous', including re-renders unrelated to a new navigation attempt (e.g., React strict-mode double-render, or parent re-renders during the loading->anonymous transition). This is called out and handled at the logout call site via clearReturnTo's ordering, but the underlying pattern of performing a side effect (writing to sessionStorage) directly in the render body is fragile and could cause subtle races if RequireAuth re-renders multiple times before Navigate actually takes effect.",
+          "suggestion": "Consider moving the stash into a useEffect keyed on location, or accept the current design but document that render-phase side effects here are intentional and safe because sessionStorage writes are idempotent per identical path.",
+          "assessment": "correct"
+        },
+        {
+          "file": "frontend/src/components/layout/UserMenu.tsx",
+          "line_start": 115,
+          "line_end": 127,
+          "category": "logic_error",
+          "severity": "info",
+          "comment": "onLogout awaits logout() then calls clearReturnTo(), relying on the assumption that RequireAuth's stash-on-anonymous-render happens synchronously during the re-render triggered by the status change from logout(). If React batches/updates the AuthContext consumer asynchronously (e.g. via concurrent rendering or a microtask boundary), clearReturnTo could run before RequireAuth's render, leaving the stash in place. Tests do cover this via StatefulAuth, which is good, but worth flagging as a subtle timing dependency between two separate modules that isn't enforced by any contract.",
+          "suggestion": null,
+          "assessment": "unverifiable"
+        }
+      ]
+    },
+    {
+      "pr": 211,
+      "why": "docs only \u2014 should produce approve with zero comments",
+      "verdict": "comment",
+      "summary": "This PR adds a static, self-contained HTML architecture report page (docs/report.src.html generator source and the built frontend/public/report.html) plus a new favicon and .gitignore entries for local build tooling. The content is documentation/marketing copy with inline CSS/JS; no application logic is touched. Main concerns are around the generated-file duplication workflow, an inline unbounded IntersectionObserver/script pattern, and a factual inconsistency in the copy about metric definitions.",
+      "tokens_used": 75841,
+      "duration_ms": 16631,
+      "wall_s": 16.8,
+      "model_used": "claude-sonnet-5",
+      "comment_count": 4,
+      "comments": [
+        {
+          "file": ".gitignore",
+          "line_start": 39,
+          "line_end": 48,
+          "category": "architecture",
+          "severity": "warning",
+          "comment": "build-report.py and deploy-preview.sh are the only tooling that produces frontend/public/report.html from docs/report.src.html, but they are gitignored and thus not committed anywhere in this repo. Future contributors editing docs/report.src.html have no way to regenerate frontend/public/report.html without reconstructing this tooling from scratch.",
+          "suggestion": null,
+          "assessment": "correct"
+        },
+        {
+          "file": "docs/report.src.html",
+          "line_start": 1868,
+          "line_end": 1913,
+          "category": "logic_error",
+          "severity": "info",
+          "comment": "The note titled 'A contradiction found in our own specification' documents (in the shipped copy) a real inconsistency between the 'approval rate > 70%' and 'false positive rate < 20%' targets, concluding it needs to be 'resolved and documented rather than quietly implemented wrong.' Shipping this acknowledged-but-unresolved contradiction as permanent user-facing documentation is odd \u2014 it reads as an internal note that leaked into the final copy rather than a decision. Consider resolving the metric definitions before publishing, or clearly framing this as a known open issue with a tracking link.",
+          "suggestion": null,
+          "assessment": "false"
+        },
+        {
+          "file": "frontend/public/report.html",
+          "line_start": 1,
+          "line_end": 2048,
+          "category": "architecture",
+          "severity": "warning",
+          "comment": "This ~2000-line file is described in its own header comment as GENERATED FILE \u2014 do not edit, produced by a generator script that is intentionally excluded from the repo (see .gitignore additions for build-report.py, deploy-preview.sh). This means the actual source of truth (the generator) is not reviewable or reproducible by other contributors, and the only way to verify the build output matches docs/report.src.html is manual diffing. Consider committing the generator script (even if simple) so the build is reproducible in CI, or at least documenting the exact transformation steps (e.g. what replaces __NEON_SRC__/__ARGON_SRC__) in the repo.",
+          "suggestion": null,
+          "assessment": "correct"
+        },
+        {
+          "file": "frontend/public/report.html",
+          "line_start": 110,
+          "line_end": 132,
+          "category": "convention",
+          "severity": "info",
+          "comment": "The inline theme-detection script duplicates the pattern used in frontend/index.html (reading `liffy-theme` from localStorage and toggling `.dark`/`.light` classes on `<html>`), but is copy-pasted here rather than shared. Since this is a static, non-bundled page that may be acceptable, but if index.html's key name or class semantics ever change, this copy will silently drift out of sync.",
+          "suggestion": null,
+          "assessment": "correct"
+        }
+      ]
+    }
+  ]
+}

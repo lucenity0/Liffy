@@ -41,6 +41,12 @@ Rules:
   NEW-file line numbers from the hunk headers.
 - Be specific and actionable; reference identifiers from the code, not generalities.
 - Do not invent issues. Fewer, higher-confidence comments beat exhaustive nitpicks.
+- Returning zero comments is a valid and good outcome. If nothing in the diff is
+  worth a reviewer's attention, return an empty comments array with verdict
+  "approve" and say so in the summary. A change that is simply fine deserves an
+  empty review; padding one with observations, restatements of what the diff
+  already says, or preferences phrased as "consider..." makes the review worse,
+  not more thorough.
 - suggestion, when present, is a concrete replacement snippet or fix description.
 - Respond with ONLY a valid JSON object matching this schema — no markdown fences,
   no prose before or after:

@@ -3,6 +3,7 @@ from app.services.diff_parser import (
     LineKind,
     chunk_text,
     map_position_to_file_line,
+    numbered_chunk_text,
     parse_diff,
 )
 
@@ -132,3 +133,92 @@ def test_chunk_text_headers_and_body() -> None:
 def test_empty_and_garbage_input() -> None:
     assert parse_diff("") == []
     assert parse_diff("not a diff at all\njust text\n") == []
+
+
+# --- #227: line attribution ------------------------------------------------
+
+
+def test_numbered_chunk_text_stamps_the_new_file_line_on_every_line() -> None:
+    """The gutter, not the header, is what the model reads a line number off."""
+    fd = parse_diff(SINGLE_FILE_DIFF)[0]
+    header, *body = numbered_chunk_text(fd)[0].splitlines()
+
+    assert header == "# app/util.py lines 10-17 (def helper():)"
+    assert body[0] == "10  context line 10"
+    assert body[1] == "11  context line 11"
+    # The removed line occupies a body row but has no new-file number to print.
+    assert body[2] == "   -old line 12"
+    assert body[3] == "12 +new line 12"
+    assert body[4] == "13 +inserted line 13"
+
+
+def test_numbered_gutter_agrees_with_the_parsed_new_line_numbers() -> None:
+    """The printed number is the same one `map_position_to_file_line` resolves —
+    the gutter is not a second, independently-derived numbering."""
+    fd = parse_diff(SINGLE_FILE_DIFF)[0]
+    body = numbered_chunk_text(fd)[0].splitlines()[1:]
+
+    for row, dline in zip(body, fd.hunks[0].lines, strict=True):
+        gutter = row[: len(row) - len(row.lstrip("0123456789 "))].strip()
+        if dline.new_lineno is None:
+            assert gutter == "", f"removed line should have a blank gutter: {row!r}"
+        else:
+            assert gutter == str(dline.new_lineno), row
+
+
+def test_hunk_header_line_numbers_match_the_original_diff() -> None:
+    """Candidate 1 from #227: the header Liffy emits names the same new-file
+    range the raw `@@` header does. This is the test that would have caught a
+    header bug — it passes, which is why #227 was a rendering fix instead."""
+    for raw in (SINGLE_FILE_DIFF, MULTI_FILE_DIFF):
+        for fd in parse_diff(raw):
+            rendered = numbered_chunk_text(fd)
+            for index, hunk in enumerate(fd.hunks):
+                start, end = hunk.new_line_range
+                assert start == hunk.new_start
+                if hunk.new_count:
+                    assert end == hunk.new_start + hunk.new_count - 1
+                else:
+                    # A deleted file is `@@ -n,m +0,0 @@`. `new_line_range`
+                    # clamps end to start rather than reporting -1; there is no
+                    # new-file range to name because there is no new file.
+                    assert (start, end) == (0, 0)
+                assert f"lines {start}-{end}" in rendered[index].splitlines()[0]
+
+
+def test_new_file_keeps_absolute_line_numbers_across_a_long_hunk() -> None:
+    """The #58 shape that produced every wrong line number in #227: a new file,
+    one hunk, every line added. Line N must be printed as N all the way down —
+    this is precisely the count the model was getting wrong."""
+    body_lines = "\n".join(f"+line {i}" for i in range(1, 187))
+    raw = (
+        "diff --git a/setup-mac.sh b/setup-mac.sh\n"
+        "new file mode 100755\n"
+        "index 000..ddd\n"
+        "--- /dev/null\n"
+        "+++ b/setup-mac.sh\n"
+        f"@@ -0,0 +1,186 @@\n{body_lines}\n"
+    )
+    fd = parse_diff(raw)[0]
+    assert fd.status is FileStatus.added
+
+    header, *body = numbered_chunk_text(fd)[0].splitlines()
+    assert header == "# setup-mac.sh lines 1-186"
+    assert len(body) == 186
+    # Width is taken from the largest number, so every gutter aligns at 3.
+    assert body[0] == "  1 +line 1"
+    assert body[39] == " 40 +line 40"   # the /opt/homebrew line in PR #58
+    assert body[67] == " 68 +line 68"   # what the model reported instead
+    assert body[185] == "186 +line 186"
+
+
+def test_chunk_text_is_unchanged_by_the_numbering_fix() -> None:
+    """`chunk_text` is embedded as the RAG query. It must stay free of gutters,
+    or #227's fix silently changes retrieval as well as rendering."""
+    fd = parse_diff(SINGLE_FILE_DIFF)[0]
+    body = chunk_text(fd)[0].splitlines()[1:]
+
+    assert body[0] == " context line 10"
+    assert body[2] == "-old line 12"
+    assert body[3] == "+new line 12"
+    assert not any(row[:1].isdigit() for row in body)

@@ -175,6 +175,39 @@ silently drop the comment; it cannot catch the first.
 Filed as #227 rather than fixed here — it is a diff-parsing and
 line-attribution question, not prompt iteration, and #202 is the latter.
 
+### Resolution (#227)
+
+**Cause: the model was being asked to count.** Of the three candidates #227
+listed, it was the second — the hunk headers were right and the arithmetic
+inside the hunk was wrong.
+
+`setup-mac.sh` on PR #58 settles it. That file is *new*: one hunk,
+`@@ -0,0 +1,186 @@`, all 186 lines added, no removed or context lines at all.
+So new-file line N sits at body position N with no old/new divergence to get
+wrong, and the header Liffy emitted (`# setup-mac.sh lines 1-186`) was correct.
+The only step left was counting to 186 — and the model returned 68 for a
+finding about lines 40-42.
+
+That also rules the other two candidates out. Candidate 1 (bad headers) cannot
+apply to a header that is correct by construction. Candidate 3 (retrieved
+context mistaken for the diff) cannot apply at all: `retrieve_for_file_diff`
+passes `exclude_file=file_diff.path`, so retrieved context never contains the
+file under review.
+
+**Fix: print the number instead of asking for it.** `numbered_chunk_text`
+stamps the new-file line number in a left gutter on every rendered diff line,
+and the prompt tells the model to copy it rather than derive it. Removed lines
+get a blank gutter — they have no new-file line to comment on. `chunk_text` is
+deliberately left alone: it is embedded as the RAG query, and numbering it
+would change retrieval as well as rendering.
+
+**What this also exposed.** `_anchor_comments` reads like a safety net and is
+not one. It answers "is this line in the diff", which on a new file is true of
+every line — the whole file is one hunk, so the clamp is a no-op and all four
+wrong numbers passed through untouched. There is no downstream check that could
+have caught this, which is why the fix had to be in what the model is shown.
+Pinned in `test_anchoring_cannot_catch_a_wrong_line_inside_a_hunk`.
+
 ## Consequences
 
 - Trivial PRs get `approve` with no comments, which is the correct review.
@@ -182,8 +215,9 @@ line-attribution question, not prompt iteration, and #202 is the latter.
 - Four low-value correct comments were lost with them.
 - Severity remains undefined by effect. The gap is real and recorded; the
   specific fix attempted is rejected on evidence.
-- Line anchoring is unreliable even when the finding is right, and that lands
-  on #196's posting path.
+- Line anchoring was unreliable even when the finding was right, and that
+  landed on #196's posting path. Resolved in #227 by numbering the diff lines
+  in the prompt; see the resolution section above.
 
 ## Caveats that belong on every number above
 

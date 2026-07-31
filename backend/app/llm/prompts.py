@@ -7,7 +7,7 @@ can never drift apart.
 import json
 
 from app.schemas.review import LLMReviewOutput
-from app.services.diff_parser import FileDiff, chunk_text
+from app.services.diff_parser import FileDiff, numbered_chunk_text
 from app.services.rag_service import RetrievedChunk
 
 # Keep retrieved context bounded so total prompt size stays predictable.
@@ -21,7 +21,14 @@ You are a senior software engineer performing a thorough code review of a pull r
 You are given:
 1. The diff of the pull request, split into hunks. Each hunk starts with a header
    line of the form `# <file path> lines <start>-<end>` giving the file path and
-   the line numbers in the NEW version of the file.
+   the line numbers in the NEW version of the file. Every body line below that
+   header is printed as:
+
+       <new-file line number> <+|-|space><content>
+
+   so `  42 +foo = 1` is line 42 of the new file, an added line, with content
+   `foo = 1`. Removed lines have a blank line number because they do not exist
+   in the new file.
 2. Retrieved context: functions and classes from elsewhere in the same codebase
    that are semantically similar to the changed code. Use them to spot duplicated
    logic, violated conventions, and broken assumptions in dependent code.
@@ -37,8 +44,12 @@ Review for:
 Severity: critical = must fix before merge; warning = should fix; info = optional.
 
 Rules:
-- Only comment on lines that appear in the diff. For line_start/line_end, use the
-  NEW-file line numbers from the hunk headers.
+- Only comment on lines that appear in the diff. For line_start/line_end, copy the
+  number printed in the left gutter of the exact line you are commenting on. Read
+  it off that line — do not count lines, and do not derive it from the hunk header.
+  A correct finding on the wrong line is reported to the author as a wrong finding.
+- Never use a line number with a blank gutter (a removed line); it does not exist
+  in the new file.
 - Be specific and actionable; reference identifiers from the code, not generalities.
 - Do not invent issues. Fewer, higher-confidence comments beat exhaustive nitpicks.
 - Returning zero comments is a valid and good outcome. If nothing in the diff is
@@ -73,7 +84,11 @@ def build_review_prompt(
     file_diffs: list[FileDiff],
     context_chunks: list[RetrievedChunk],
 ) -> str:
-    diff_blocks = [block for fd in file_diffs for block in chunk_text(fd)]
+    # `numbered_chunk_text`, not `chunk_text`: the model reads this, so every
+    # line carries its new-file number and nothing has to be counted (#227).
+    # `chunk_text` stays the RAG query text in `rag_service` — same content,
+    # no gutter, so retrieval is unaffected by this change.
+    diff_blocks = [block for fd in file_diffs for block in numbered_chunk_text(fd)]
     diff_section = "\n\n".join(diff_blocks) if diff_blocks else "(empty diff)"
     context_section = _render_context(context_chunks) or "(no similar code found)"
     return f"""\

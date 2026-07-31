@@ -97,6 +97,48 @@ def test_line_range_is_clamped_to_hunk() -> None:
     assert (comment.line_start, comment.line_end) == (10, 14)
 
 
+def test_anchoring_cannot_catch_a_wrong_line_inside_a_hunk() -> None:
+    """The limit #227 turns on, pinned so nobody mistakes `_anchor_comments`
+    for protection against mis-attribution.
+
+    It answers "is this line in the diff", which is not "is this the right
+    line". On a *new* file the distinction collapses entirely: the whole file
+    is one hunk, so every line is in the diff and the clamp is a no-op. That is
+    exactly PR #58, where all four wrong line numbers passed this guard
+    untouched and reached the review.
+
+    The fix therefore had to be upstream — number the lines in the prompt
+    (`numbered_chunk_text`) so the model never has to count — because there is
+    no downstream check that could have caught this.
+    """
+    raw = (
+        "diff --git a/setup.sh b/setup.sh\n"
+        "new file mode 100755\n"
+        "--- /dev/null\n"
+        "+++ b/setup.sh\n"
+        "@@ -0,0 +1,186 @@\n" + "\n".join(f"+line {i}" for i in range(1, 187)) + "\n"
+    )
+    # The finding belongs on line 40; the model said 68. Both are "in the diff".
+    llm = FakeLLM([_payload([_comment("setup.sh", 68, 68)])])
+    result = generate_review(llm, "Add setup", parse_diff(raw), [])
+
+    assert result.dropped_comments == 0
+    comment = result.output.comments[0]
+    assert (comment.line_start, comment.line_end) == (68, 68), (
+        "the clamp cannot move a line that is already inside the hunk"
+    )
+
+
+def test_prompt_numbers_every_diff_line_for_the_model() -> None:
+    """The actual #227 fix, asserted where the model receives it."""
+    llm = FakeLLM([_payload([_comment("app/util.py", 11, 12)])])
+    generate_review(llm, "Fix util", parse_diff(DIFF), CONTEXT)
+
+    _, user = llm.prompts[0]
+    assert "11 +new" in user
+    assert "12 +extra" in user
+
+
 def test_retry_feeds_validation_error_back() -> None:
     llm = FakeLLM(["not json at all", _payload([_comment("app/util.py", 11, 11)])])
     result = generate_review(llm, "Fix util", parse_diff(DIFF), CONTEXT)

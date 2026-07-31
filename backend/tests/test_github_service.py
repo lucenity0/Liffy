@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import httpx
 import pytest
 
@@ -8,6 +10,7 @@ from app.services.github_service import (
     GitHubAuthError,
     GitHubClient,
     GitHubError,
+    GitHubRateLimitError,
     PullRequestMeta,
     RepositoryMeta,
     get_github_token,
@@ -256,3 +259,114 @@ def test_datastores_are_not_indexed(path: str) -> None:
     produced 60 chunks of SQLite page data.
     """
     assert _is_indexable(path) is False
+
+
+# ── Rate limiting is not an auth failure (#209) ───────────────────────────────
+#
+# GitHub answers **403 for rate limiting as well as for authorization
+# failures**, so the status code alone cannot tell them apart. The
+# discriminator is the headers.
+
+
+def _erroring_client(status: int, headers: dict[str, str]) -> GitHubClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, headers=headers, json={"message": "nope"})
+
+    return _client(handler)
+
+
+def test_403_with_exhausted_rate_limit_is_a_rate_limit_error() -> None:
+    """The primary hourly limit, carrying the time it lifts."""
+    reset = 1_785_500_000
+    gh = _erroring_client(
+        403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(reset)}
+    )
+
+    with pytest.raises(GitHubRateLimitError) as caught:
+        gh.get_repository("octo", "demo")
+
+    assert caught.value.reset_at == datetime.fromtimestamp(reset, tz=timezone.utc)
+    # The user-facing half: it must not tell anyone to reconnect.
+    assert "reconnect" not in str(caught.value).lower()
+    assert "rate limit" in str(caught.value).lower()
+
+
+def test_403_with_retry_after_is_a_rate_limit_error() -> None:
+    """The secondary ("abuse") limit shape, which carries no reset header."""
+    gh = _erroring_client(403, {"retry-after": "60"})
+
+    with pytest.raises(GitHubRateLimitError) as caught:
+        gh.get_repository("octo", "demo")
+
+    assert caught.value.retry_after == 60
+    assert "60s" in str(caught.value)
+
+
+def test_429_is_a_rate_limit_error_even_without_headers() -> None:
+    """GitHub does not use 429 for anything else."""
+    gh = _erroring_client(429, {})
+
+    with pytest.raises(GitHubRateLimitError):
+        gh.get_repository("octo", "demo")
+
+
+def test_403_without_rate_limit_headers_is_still_an_auth_error() -> None:
+    """The revoked-token case must not regress — it is the actionable one."""
+    gh = _erroring_client(403, {})
+
+    with pytest.raises(GitHubAuthError) as caught:
+        gh.get_repository("octo", "demo")
+
+    assert not isinstance(caught.value, GitHubRateLimitError)
+    assert "reconnect" in str(caught.value).lower()
+
+
+def test_403_with_remaining_quota_is_an_auth_error() -> None:
+    """`x-ratelimit-remaining` present but non-zero: quota is fine, so this is
+    a permissions problem and the reconnect message is correct."""
+    gh = _erroring_client(403, {"x-ratelimit-remaining": "4999"})
+
+    with pytest.raises(GitHubAuthError) as caught:
+        gh.get_repository("octo", "demo")
+    assert not isinstance(caught.value, GitHubRateLimitError)
+
+
+def test_401_is_still_an_auth_error() -> None:
+    gh = _erroring_client(401, {})
+
+    with pytest.raises(GitHubAuthError):
+        gh.get_repository("octo", "demo")
+
+
+def test_401_with_rate_limit_headers_is_still_an_auth_error() -> None:
+    """A 401 is never a rate limit, whatever headers ride along with it.
+
+    Only 403 and 429 are ambiguous; classifying a 401 by headers would let a
+    stray header turn a dead token into "wait a while".
+    """
+    gh = _erroring_client(401, {"x-ratelimit-remaining": "0"})
+
+    with pytest.raises(GitHubAuthError) as caught:
+        gh.get_repository("octo", "demo")
+    assert not isinstance(caught.value, GitHubRateLimitError)
+
+
+def test_rate_limit_error_survives_an_unparseable_reset_header() -> None:
+    """A limit we cannot put a time on is still a limit.
+
+    Losing the classification over a bad header would land straight back on
+    "reconnect your account", which is the bug this all exists to remove.
+    """
+    gh = _erroring_client(403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "soon"})
+
+    with pytest.raises(GitHubRateLimitError) as caught:
+        gh.get_repository("octo", "demo")
+
+    assert caught.value.reset_at is None
+
+
+def test_rate_limit_error_is_a_github_error() -> None:
+    """Callers with a broad `except GitHubError` still catch it — which is also
+    why every chain has to catch the specific one first."""
+    assert issubclass(GitHubRateLimitError, GitHubError)
+    assert not issubclass(GitHubRateLimitError, GitHubAuthError)

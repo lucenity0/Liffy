@@ -6,7 +6,14 @@ import { isAxiosError } from "axios";
  * `message` is what a page shows.
  */
 export interface ApiError {
-  kind: "validation" | "unavailable" | "upstream" | "not_found" | "network" | "unknown";
+  kind:
+    | "validation"
+    | "unavailable"
+    | "upstream"
+    | "not_found"
+    | "rate_limited"
+    | "network"
+    | "unknown";
   status: number | null;
   message: string;
   /** The raw `{detail: string}` body, when the API sent one. */
@@ -48,6 +55,19 @@ export function normalizeApiError(error: unknown): ApiError {
         kind: "validation",
         status,
         message: detail ?? "That doesn't look like owner/name.",
+        detail,
+      };
+    case 429:
+      // GitHub answers 403 for a rate limit as well as for an auth failure,
+      // and the backend now tells them apart (#209). Distinct from 503 below
+      // on purpose: this one is transient and needs no action, where that one
+      // asks the user to reconnect. Showing "reconnect your account" for a
+      // healthy, merely-throttled account is the bug this case exists to
+      // prevent, so it must not fall through to the generic branch.
+      return {
+        kind: "rate_limited",
+        status,
+        message: detail ?? "GitHub rate limit reached. Try again shortly.",
         detail,
       };
     case 503:

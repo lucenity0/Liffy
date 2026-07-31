@@ -98,7 +98,34 @@ services:
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
       LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Only the worker posts reviews — the `api` service never does, so these
+      # are deliberately absent from its env block. Both default off/safe.
+      POST_REVIEWS_TO_GITHUB: ${POST_REVIEWS_TO_GITHUB:-False}
+      GITHUB_REVIEW_EVENT_MODE: ${GITHUB_REVIEW_EVENT_MODE:-comment_only}
     command: celery -A app.workers.celery_app worker --loglevel=info
+
+  # The scheduler for the weekly eval_scores job (report §8.2). It only decides
+  # *when* to enqueue; the `worker` above is what actually runs the task.
+  #
+  # ⚠ EXACTLY ONE. Do not scale this service — two schedulers means every
+  # scheduled task fires twice, and for an upsert job that shows up as
+  # duplicated work rather than as an error.
+  #
+  # No Chroma dependency: beat touches neither the vector store nor an LLM. It
+  # needs Redis to enqueue and Postgres only because the app's settings and
+  # models import at startup.
+  beat:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://liffy:liffy@postgres:5432/liffy
+      REDIS_URL: redis://redis:6379/0
+    # `celerybeat-schedule`, the scheduler's state file, is already gitignored.
+    command: celery -A app.workers.celery_app beat --loglevel=info
 
 volumes:
   pgdata:

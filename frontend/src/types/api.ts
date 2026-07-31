@@ -35,6 +35,18 @@ export interface RepoStatusOut {
   status: IndexStatus;
   indexed_at: string | null;
   chunk_count: number;
+  /**
+   * Files the **last** index run skipped because fetching or chunking raised.
+   * Non-zero means the index is *partial*: those files have no chunks, so
+   * reviews touching them retrieve no context.
+   *
+   * `null` on repositories indexed before this was recorded — "never
+   * measured", which is not the same as "measured, nothing failed". Only the
+   * latter (`0`) earns a clean chip. Added by #210.
+   */
+  last_index_failed_files: number | null;
+  /** The denominator: "40 skipped" reads differently out of 45 than out of 4,000. */
+  last_indexed_files_seen: number | null;
 }
 
 export interface ReviewOut {
@@ -95,6 +107,31 @@ export interface ReviewCommentOut {
   severity: Severity;
   comment_text: string;
   suggestion: string | null;
+  created_at: string;
+  /**
+   * The *caller's own* rating for this comment — `1`, `-1`, or `null` when
+   * they haven't rated it. Another user's rating never appears here.
+   *
+   * This is what makes a rating survive a page reload; without it the button
+   * reverts to un-clicked and the same comment gets rated twice.
+   *
+   * `number | null` rather than `1 | -1 | null` for the same reason `category`
+   * and `severity` are loose above: the column has no DB check constraint, so
+   * render defensively. Added by #190.
+   *
+   * Detail responses only — `ReviewListItem` carries no comments at all.
+   */
+  my_rating: number | null;
+}
+
+/**
+ * `POST /comments/{comment_id}/feedback`. Re-rating replaces rather than
+ * appending, and `created_at` stays at the row's original creation time —
+ * there is no `updated_at` on `comment_feedback` by design (report §5).
+ */
+export interface FeedbackOut {
+  comment_id: string;
+  rating: number;
   created_at: string;
 }
 

@@ -148,4 +148,6 @@ def repo_status(
         status="indexed" if repo.indexed_at else "not_indexed",
         indexed_at=repo.indexed_at,
         chunk_count=int(chunk_count or 0),
+        last_index_failed_files=repo.last_index_failed_files,
+        last_indexed_files_seen=repo.last_indexed_files_seen,
     )

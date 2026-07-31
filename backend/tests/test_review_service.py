@@ -22,13 +22,28 @@ from app.models.pull_request import PullRequest
 from app.models.repository import Repository
 from app.models.review import Review
 from app.models.user import User
-from app.services.github_service import PullRequestMeta
+from app.config import settings
+from app.models.review_comment import ReviewComment
+from app.services.diff_parser import parse_diff
+from app.services.github_service import (
+    GitHubWriteError,
+    PostedReview,
+    PullRequestMeta,
+)
 from app.services.review_service import (
     RepositoryNotConnected,
     get_review_with_comments,
+    publish_review,
     resolve_repo_owner,
     run_review,
 )
+
+
+
+def review_actor(db: Session):
+    """The connected repository's owner — who `run_review` acts as."""
+    return db.scalars(select(User)).first()
+
 
 DIFF = """\
 diff --git a/app/util.py b/app/util.py
@@ -328,6 +343,14 @@ def test_duration_is_measured_not_defaulted(db: Session) -> None:
             time.sleep(0.15)
             return super().complete(system, user)
 
+    # Warm up and discard. The *first* pipeline run in a process pays one-time
+    # costs the second never sees — creating the Chroma collection, building
+    # the embedder. On a loaded CI runner that overhead measured 219ms while
+    # the 150ms-slower run measured 154ms, failing this test on ordering
+    # rather than on anything about the clock. Warming first puts both timed
+    # runs on the same footing, which is the comparison being claimed.
+    _run(db, FakeLLM([_payload([])]))
+
     fast = _run(db, FakeLLM([_payload([])]))
     slow = _run(db, SlowLLM([_payload([])]))
 
@@ -512,3 +535,241 @@ def test_total_ms_matches_the_stored_timestamps(db: Session) -> None:
     span = review.completed_at - review.queued_at
 
     assert review.total_ms == int(span.total_seconds() * 1000)
+
+
+# ── Posting to GitHub (GH-2) ──────────────────────────────────────────────────
+
+
+class PostingGitHub(FakeGitHub):
+    """FakeGitHub that records review posts instead of making them.
+
+    Every test in this section runs with no network and no token — the
+    property protected through every GitHub issue so far.
+    """
+
+    def __init__(self, *args, raises: Exception | None = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.posted: list[dict] = []
+        self.raises = raises
+
+    def create_pull_request_review(
+        self, owner, repo, number, *, body, event, comments=None
+    ) -> PostedReview:
+        if self.raises is not None:
+            raise self.raises
+        self.posted.append(
+            {"owner": owner, "repo": repo, "number": number,
+             "body": body, "event": event, "comments": comments or []}
+        )
+        return PostedReview(
+            id=900 + len(self.posted),
+            html_url=f"https://github.com/{owner}/{repo}/pull/{number}#r{900 + len(self.posted)}",
+            state="COMMENTED",
+        )
+
+
+def _run_with(db: Session, llm: FakeLLM, gh: PostingGitHub) -> Review:
+    return run_review(
+        db, "octo", "demo", 7,
+        gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=llm,
+    )
+
+
+@pytest.fixture()
+def posting_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "post_reviews_to_github", True)
+    monkeypatch.setattr(settings, "github_review_event_mode", "comment_only")
+
+
+def test_posting_disabled_by_default_makes_no_calls(db: Session) -> None:
+    """The default, and the reason the test suite is never one env var away
+    from writing to a real pull request."""
+    gh = PostingGitHub(pr_meta=META, pr_diff=DIFF)
+    review = _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
+
+    assert gh.posted == []
+    assert review.github_review_id is None
+    assert review.posted_at is None
+    assert review.post_error is None
+
+
+def test_enabled_posts_after_the_review_is_committed(db: Session, posting_enabled) -> None:
+    """The review must be durable in Liffy before Liffy tries to publish it —
+    a GitHub outage should cost a publish, not a review."""
+    committed: list[str] = []
+
+    class ChecksDb(PostingGitHub):
+        def create_pull_request_review(self, *args, **kwargs):
+            # The row is already visible to a *separate* session, which is only
+            # true if the commit happened first.
+            with Session(db.get_bind()) as other:
+                row = other.scalars(select(Review)).one()
+                committed.append(row.status)
+            return super().create_pull_request_review(*args, **kwargs)
+
+    gh = ChecksDb(pr_meta=META, pr_diff=DIFF)
+    review = _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
+
+    assert committed == ["completed"]
+    assert review.github_review_id is not None
+
+
+def test_records_github_review_id_and_url(db: Session, posting_enabled) -> None:
+    gh = PostingGitHub(pr_meta=META, pr_diff=DIFF)
+    review = _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
+
+    assert review.github_review_id == 901
+    assert "pull/7" in review.github_review_url
+    assert review.posted_at is not None
+    assert review.post_error is None
+
+
+def test_posting_failure_does_not_fail_the_review(db: Session, posting_enabled) -> None:
+    """The most important test here.
+
+    The review is complete — in the database, visible in the UI. Letting a
+    GitHub 500 flip it to `failed` would be strictly worse than not posting.
+    """
+    gh = PostingGitHub(
+        pr_meta=META, pr_diff=DIFF,
+        raises=GitHubWriteError("rejected", status_code=422, body="Line could not be resolved"),
+    )
+    review = _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
+
+    assert review.status == "completed"
+    assert review.github_review_id is None
+    assert review.post_error is not None
+    assert "Line could not be resolved" in review.post_error
+    # And the comments survived the rollback in the error path.
+    assert db.scalars(select(ReviewComment)).all()
+
+
+def test_already_posted_review_is_not_posted_again(db: Session, posting_enabled) -> None:
+    """The duplicate-comment guard.
+
+    `synchronize` webhooks fire on every push; without this a PR pushed to five
+    times accumulates five duplicate threads.
+    """
+    gh = PostingGitHub(pr_meta=META, pr_diff=DIFF)
+    review = _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
+    assert len(gh.posted) == 1
+
+    publish_review(db, review, "octo", "demo", META, parse_diff(DIFF), gh=gh, actor=review_actor(db))
+    assert len(gh.posted) == 1
+
+
+def test_a_rereview_posts_a_fresh_review_naming_the_one_it_supersedes(
+    db: Session, posting_enabled
+) -> None:
+    """GitHub has no update-a-review API, and a COMMENTED review cannot be
+    dismissed — so the new review says which one it replaces."""
+    gh = PostingGitHub(pr_meta=META, pr_diff=DIFF)
+    _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
+    _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
+
+    assert len(gh.posted) == 2
+    assert "supersedes" in gh.posted[1]["body"].lower()
+    assert "#r901" in gh.posted[1]["body"]
+
+
+def test_own_pr_verdict_is_downgraded_and_the_body_says_so(
+    db: Session, monkeypatch
+) -> None:
+    """`META.author` is "octocat"; the connected repo's owner is "octo"."""
+    monkeypatch.setattr(settings, "post_reviews_to_github", True)
+    monkeypatch.setattr(settings, "github_review_event_mode", "native")
+
+    own_meta = PullRequestMeta(**{**META.__dict__, "author": "octo"})
+    gh = PostingGitHub(pr_meta=own_meta, pr_diff=DIFF)
+    payload = json.dumps(
+        {"summary": "s", "verdict": "request_changes", "comments": [VALID_COMMENT]}
+    )
+    _run_with(db, FakeLLM([payload]), gh)
+
+    assert gh.posted[0]["event"] == "COMMENT"
+    assert "your own pull request" in gh.posted[0]["body"]
+
+
+def test_native_mode_sends_request_changes_on_someone_elses_pr(
+    db: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "post_reviews_to_github", True)
+    monkeypatch.setattr(settings, "github_review_event_mode", "native")
+
+    gh = PostingGitHub(pr_meta=META, pr_diff=DIFF)  # author "octocat" != owner "octo"
+    payload = json.dumps(
+        {"summary": "s", "verdict": "request_changes", "comments": [VALID_COMMENT]}
+    )
+    _run_with(db, FakeLLM([payload]), gh)
+
+    assert gh.posted[0]["event"] == "REQUEST_CHANGES"
+
+
+DELETION_DIFF = DIFF + """\
+@@ -30,3 +32,0 @@ def gone():
+-a
+-b
+-c
+"""
+
+
+def test_unanchorable_comments_appear_in_the_body(db: Session, posting_enabled) -> None:
+    """The narrow case BASE-7's anchoring cannot catch.
+
+    `_anchor_comments` already drops comments outside every hunk, so most
+    unanchorable comments never reach the database. It tests against
+    `hunk.new_line_range`, which for a **pure-deletion hunk** is
+    `(new_start, new_start)` — a single line that has no actual new-file
+    counterpart. So a comment there survives anchoring and GitHub still cannot
+    place it, because `side: RIGHT` has nothing to point at.
+
+    Verified: for the hunk `@@ -30,3 +32,0 @@`, anchoring accepts line 32 and
+    `is_line_commentable` rejects it.
+
+    Dropping it silently would lose a real finding, so it goes in the body.
+    """
+    orphan = {**VALID_COMMENT, "line_start": 32, "line_end": 32,
+              "comment": "Removed helper is still referenced."}
+    gh = PostingGitHub(pr_meta=META, pr_diff=DELETION_DIFF)
+    _run_with(db, FakeLLM([_payload([orphan])]), gh)
+
+    assert gh.posted[0]["comments"] == []
+    assert "Removed helper is still referenced." in gh.posted[0]["body"]
+    assert "could not be anchored" in gh.posted[0]["body"]
+
+
+def test_no_anchorable_comments_still_posts_the_summary(db: Session, posting_enabled) -> None:
+    gh = PostingGitHub(pr_meta=META, pr_diff=DIFF)
+    _run_with(db, FakeLLM([_payload([])]), gh)
+
+    assert len(gh.posted) == 1
+    assert "One issue found." in gh.posted[0]["body"]
+
+
+def test_failed_review_is_not_posted(db: Session, posting_enabled) -> None:
+    """A review that never completed has nothing to publish."""
+    gh = PostingGitHub(pr_meta=META, pr_diff=DIFF)
+    with pytest.raises(Exception):
+        _run_with(db, FakeLLM(["not json"] * 5), gh)
+
+    assert gh.posted == []
+
+
+def test_posting_does_not_extend_the_duration_clock(db: Session, posting_enabled) -> None:
+    """`duration_ms` measures generating a review, not publishing it.
+
+    Folding the GitHub round trip in would inflate §8.1's number with work the
+    target is not about.
+    """
+    class SlowPost(PostingGitHub):
+        def create_pull_request_review(self, *args, **kwargs):
+            time.sleep(0.15)
+            return super().create_pull_request_review(*args, **kwargs)
+
+    gh = SlowPost(pr_meta=META, pr_diff=DIFF)
+    review = _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
+
+    assert review.duration_ms < 150

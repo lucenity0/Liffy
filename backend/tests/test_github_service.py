@@ -1,9 +1,11 @@
+import json
 from datetime import datetime, timezone
 
 import httpx
 import pytest
 
 from app.config import settings
+from app.services.diff_parser import parse_diff
 from app.services.github_service import (
     GITHUB_API_BASE,
     _is_indexable,
@@ -11,9 +13,12 @@ from app.services.github_service import (
     GitHubClient,
     GitHubError,
     GitHubRateLimitError,
+    GitHubWriteError,
     PullRequestMeta,
     RepositoryMeta,
     get_github_token,
+    is_line_commentable,
+    is_span_commentable,
 )
 
 
@@ -370,3 +375,271 @@ def test_rate_limit_error_is_a_github_error() -> None:
     why every chain has to catch the specific one first."""
     assert issubclass(GitHubRateLimitError, GitHubError)
     assert not issubclass(GitHubRateLimitError, GitHubAuthError)
+
+
+# ── new-file line -> commentable? (GH-1) ──────────────────────────────────────
+#
+# The majority of this issue's value. GitHub 422s the **whole review** if any
+# one comment names a line that is not part of the diff, so being wrong here
+# does not cost one comment — it costs all of them.
+
+TWO_HUNK_DIFF = """\
+diff --git a/app/main.py b/app/main.py
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,4 +1,5 @@
+ import os
++import sys
+ 
+ def one():
+     return 1
+@@ -40,4 +41,4 @@ def two():
+ def two():
+-    return 1
++    return 2
+ 
+"""
+
+DELETED_FILE_DIFF = """\
+diff --git a/gone.py b/gone.py
+deleted file mode 100644
+--- a/gone.py
++++ /dev/null
+@@ -1,3 +0,0 @@
+-a
+-b
+-c
+"""
+
+BINARY_DIFF = """\
+diff --git a/logo.png b/logo.png
+Binary files a/logo.png and b/logo.png differ
+"""
+
+
+def _diffs(raw: str):
+    return parse_diff(raw)
+
+
+def test_line_inside_hunk_is_commentable() -> None:
+    diffs = _diffs(TWO_HUNK_DIFF)
+    # `+import sys` is new-file line 2.
+    assert is_line_commentable(diffs, "app/main.py", 2)
+
+
+def test_line_in_context_but_unchanged_is_commentable() -> None:
+    """GitHub allows comments on context lines within a hunk.
+
+    Excluding them would silently drop valid comments — a review's most useful
+    remark is often on the line *above* the change.
+    """
+    diffs = _diffs(TWO_HUNK_DIFF)
+    # `import os` is unchanged context, new-file line 1.
+    assert is_line_commentable(diffs, "app/main.py", 1)
+
+
+def test_line_outside_every_hunk_is_not_commentable() -> None:
+    diffs = _diffs(TWO_HUNK_DIFF)
+    # Line 25 sits in the gap between the two hunks: real in the file, absent
+    # from the diff, and a 422 if sent.
+    assert not is_line_commentable(diffs, "app/main.py", 25)
+
+
+def test_a_removed_line_contributes_no_commentable_new_file_line() -> None:
+    """A `-` line exists only on the left, so `side: RIGHT` cannot reach it —
+    and crucially it must not shift the new-file numbering.
+
+    The hunk below removes one line from the middle of three. New-file lines
+    are 10 and 11; there is no 12. If removed lines leaked into the mapping
+    the count would be three and every comment after this hunk would anchor
+    one line low — the quiet kind of wrong, since each individual line still
+    looks plausible.
+    """
+    raw = (
+        "diff --git a/x.py b/x.py\n"
+        "--- a/x.py\n"
+        "+++ b/x.py\n"
+        "@@ -10,3 +10,2 @@\n"
+        " keep\n"
+        "-gone\n"
+        " tail\n"
+    )
+    diffs = _diffs(raw)
+
+    assert is_line_commentable(diffs, "x.py", 10)
+    assert is_line_commentable(diffs, "x.py", 11)
+    assert not is_line_commentable(diffs, "x.py", 12)
+
+
+def test_unknown_path_is_not_commentable() -> None:
+    assert not is_line_commentable(_diffs(TWO_HUNK_DIFF), "not/in/diff.py", 1)
+
+
+def test_deleted_file_has_no_commentable_lines() -> None:
+    """Its content exists only on the left; RIGHT has nothing to point at."""
+    diffs = _diffs(DELETED_FILE_DIFF)
+    assert not is_line_commentable(diffs, "gone.py", 1)
+    assert not is_line_commentable(diffs, "gone.py", 2)
+
+
+def test_binary_file_has_no_commentable_lines() -> None:
+    assert not is_line_commentable(_diffs(BINARY_DIFF), "logo.png", 1)
+
+
+def test_empty_diff_has_no_commentable_lines() -> None:
+    assert not is_line_commentable(_diffs(""), "anything.py", 1)
+
+
+def test_multiline_span_within_one_hunk_is_allowed() -> None:
+    diffs = _diffs(TWO_HUNK_DIFF)
+    assert is_span_commentable(diffs, "app/main.py", 1, 3)
+
+
+def test_multiline_span_across_two_hunks_is_rejected() -> None:
+    """The case that produces a 422 in production.
+
+    Both ends are individually valid, so a check written as two
+    `is_line_commentable` calls would pass this and then fail the whole review.
+    """
+    diffs = _diffs(TWO_HUNK_DIFF)
+    assert is_line_commentable(diffs, "app/main.py", 2)
+    assert is_line_commentable(diffs, "app/main.py", 42)
+    assert not is_span_commentable(diffs, "app/main.py", 2, 42)
+
+
+def test_degenerate_span_is_a_single_line_comment() -> None:
+    diffs = _diffs(TWO_HUNK_DIFF)
+    assert is_span_commentable(diffs, "app/main.py", 2, 2)
+
+
+def test_inverted_span_is_rejected() -> None:
+    assert not is_span_commentable(_diffs(TWO_HUNK_DIFF), "app/main.py", 3, 1)
+
+
+# ── The write path (GH-1) ─────────────────────────────────────────────────────
+
+
+def test_create_review_posts_to_the_correct_url_with_event_and_comments() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["method"] = request.method
+        seen["auth"] = request.headers["Authorization"]
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"id": 991, "html_url": "https://github.com/o/r/pull/7#r991",
+                       "state": "COMMENTED"}
+        )
+
+    comments = [{"path": "a.py", "line": 3, "side": "RIGHT", "body": "nit"}]
+    _client(handler).create_pull_request_review(
+        "octo", "demo", 7, body="summary", event="COMMENT", comments=comments
+    )
+
+    assert seen["method"] == "POST"
+    assert seen["url"].endswith("/repos/octo/demo/pulls/7/reviews")
+    # The body, not just the status: the event and the comment payload are the
+    # part GitHub actually acts on.
+    assert seen["body"] == {"body": "summary", "event": "COMMENT", "comments": comments}
+
+
+def test_create_review_returns_id_and_url() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"id": 42, "html_url": "https://example.test/r/42", "state": "COMMENTED"}
+        )
+
+    posted = _client(handler).create_pull_request_review(
+        "octo", "demo", 1, body="s", event="COMMENT"
+    )
+
+    assert posted.id == 42
+    assert posted.html_url == "https://example.test/r/42"
+    assert posted.state == "COMMENTED"
+
+
+def test_create_review_omits_comments_when_there_are_none() -> None:
+    """A summary-only review is legitimate — an empty list is not the same as
+    the key being absent, and #196 posts one when nothing is anchorable."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": 1, "html_url": "u", "state": "COMMENTED"})
+
+    _client(handler).create_pull_request_review("o", "r", 1, body="s", event="COMMENT")
+    assert "comments" not in seen["body"]
+
+
+def test_create_review_422_raises_with_githubs_message() -> None:
+    """The body must survive into the exception.
+
+    A bare "HTTP 422" is unactionable; GitHub's message names the offending
+    field, and that is the only way to find out *which* line was wrong.
+    """
+    detail = '{"message":"Unprocessable Entity","errors":[{"field":"pull_request_review_thread.line"}]}'
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, text=detail)
+
+    with pytest.raises(GitHubWriteError) as caught:
+        _client(handler).create_pull_request_review("o", "r", 1, body="s", event="COMMENT")
+
+    assert caught.value.status_code == 422
+    assert "pull_request_review_thread.line" in caught.value.body
+    assert "pull_request_review_thread.line" in str(caught.value)
+
+
+def test_create_review_401_and_403_stay_auth_errors() -> None:
+    """The write path inherits #209's taxonomy rather than inventing its own."""
+    for status in (401, 403):
+        def handler(_request: httpx.Request, _status=status) -> httpx.Response:
+            return httpx.Response(_status, text="nope")
+
+        with pytest.raises(GitHubAuthError):
+            _client(handler).create_pull_request_review("o", "r", 1, body="s", event="COMMENT")
+
+
+def test_create_review_rate_limit_is_distinguishable_from_permissions() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, headers={"retry-after": "30"}, text="slow down")
+
+    with pytest.raises(GitHubRateLimitError) as caught:
+        _client(handler).create_pull_request_review("o", "r", 1, body="s", event="COMMENT")
+    assert caught.value.retry_after == 30
+
+
+def test_create_issue_comment_posts_the_body_and_returns_the_url() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"html_url": "https://example.test/c/1"})
+
+    url = _client(handler).create_issue_comment("octo", "demo", 7, "hello")
+
+    # PRs are issues for this endpoint.
+    assert seen["url"].endswith("/repos/octo/demo/issues/7/comments")
+    assert seen["body"] == {"body": "hello"}
+    assert url == "https://example.test/c/1"
+
+
+def test_post_uses_the_same_auth_headers_as_get() -> None:
+    """One `_headers()`, not a second call style that could drift."""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.headers))
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": 1, "full_name": "o/r", "default_branch": "main"})
+        return httpx.Response(200, json={"id": 1, "html_url": "u", "state": "COMMENTED"})
+
+    gh = _client(handler)
+    gh.get_repository("o", "r")
+    gh.create_pull_request_review("o", "r", 1, body="s", event="COMMENT")
+
+    get_headers, post_headers = seen
+    for key in ("authorization", "accept", "x-github-api-version"):
+        assert get_headers[key] == post_headers[key]

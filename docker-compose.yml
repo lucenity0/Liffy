@@ -47,27 +47,26 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
+    # The README says `cp .env.example backend/.env`, and this is the line that
+    # makes Compose actually read it — ${VAR} interpolation only ever expands
+    # from the *root* .env, so the documented setup produced a container with
+    # no credentials at all and an OAuth redirect carrying `client_id=`, which
+    # GitHub answers with a 404 on an unknown app.
+    # `required: false` keeps a fresh clone starting before any .env exists.
+    env_file:
+      - path: ./backend/.env
+        required: false
+    # Only what has to differ *because* this is a container. Everything else
+    # this block used to restate — provider, model, token budget, embedding
+    # settings, the empty credential defaults — is already declared with the
+    # same default in app/config.py, and repeating it here did real damage:
+    # `environment:` outranks `env_file:`, so `${GITHUB_CLIENT_ID:-}` resolved
+    # to an empty string that overwrote the value in backend/.env.
     environment:
       DATABASE_URL: postgresql://liffy:liffy@postgres:5432/liffy
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
-      GITHUB_WEBHOOK_SECRET: change-me
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-http://localhost:8000/auth/github/callback}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
-      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-16000}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
-      LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
     ports:
       - "8000:8000"
     # command comes from the backend Dockerfile CMD (uvicorn)
@@ -79,26 +78,58 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Same reason as the backend: without this the worker starts with no
+    # ANTHROPIC_API_KEY and no GITHUB_TOKEN, and every queued review dies on
+    # the first call out.
+    env_file:
+      - path: ./backend/.env
+        required: false
+    # The OAuth vars are no longer *absent* from this process — env_file is
+    # all-or-nothing and Compose has no per-key filter. The property that
+    # mattered still holds, and it was always a property of the code rather
+    # than of this block: the worker runs no handshake and verifies no JWT, so
+    # it never reads them. It reaches GitHub with the PAT, and with per-user
+    # tokens read from the database once AUTH-5 lands.
     environment:
       DATABASE_URL: postgresql://liffy:liffy@postgres:5432/liffy
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
-      # No OAuth vars here: the worker never runs the handshake nor verifies a
-      # JWT. It reaches GitHub with the PAT, and with per-user tokens read from
-      # the database once AUTH-5 lands.
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
-      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-16000}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
-      LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+    # POST_REVIEWS_TO_GITHUB and GITHUB_REVIEW_EVENT_MODE are not restated here
+    # for the same reason as everything else above: both are declared with the
+    # same default in app/config.py (False / "comment_only") and shipped in
+    # .env.example, so env_file carries them. Restating them as
+    # `${POST_REVIEWS_TO_GITHUB:-False}` would put an empty-string override
+    # *above* backend/.env in Compose's precedence and silently pin posting off
+    # for anyone who enabled it — the exact bug #228 fixed.
+    #
+    # Only the worker posts; the `api` service never calls the publisher. That
+    # is a property of the code, not of this block, so `api` also reading these
+    # via its own env_file is harmless.
     command: celery -A app.workers.celery_app worker --loglevel=info
+
+  # The scheduler for the weekly eval_scores job (report §8.2). It only decides
+  # *when* to enqueue; the `worker` above is what actually runs the task.
+  #
+  # ⚠ EXACTLY ONE. Do not scale this service — two schedulers means every
+  # scheduled task fires twice, and for an upsert job that shows up as
+  # duplicated work rather than as an error.
+  #
+  # No Chroma dependency: beat touches neither the vector store nor an LLM. It
+  # needs Redis to enqueue and Postgres only because the app's settings and
+  # models import at startup.
+  beat:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://liffy:liffy@postgres:5432/liffy
+      REDIS_URL: redis://redis:6379/0
+    # `celerybeat-schedule`, the scheduler's state file, is already gitignored.
+    command: celery -A app.workers.celery_app beat --loglevel=info
 
 volumes:
   pgdata:

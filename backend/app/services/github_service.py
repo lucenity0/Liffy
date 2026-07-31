@@ -1,10 +1,12 @@
 import hashlib
 import hmac
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import httpx
 
 from app.config import settings
+from app.services.diff_parser import DiffHunk, FileDiff, FileStatus
 
 GITHUB_API_BASE = "https://api.github.com"
 _DEFAULT_TIMEOUT = 30.0
@@ -93,7 +95,127 @@ class GitHubError(RuntimeError):
 
 
 class GitHubAuthError(GitHubError):
-    """Raised when no GitHub token is available."""
+    """The credential is the problem: absent, revoked, or lacking the scope.
+
+    Actionable — it needs the user to reconnect. Deliberately **not** raised
+    for a rate limit, which is transient and self-healing; see
+    ``GitHubRateLimitError``.
+    """
+
+
+class GitHubWriteError(GitHubError):
+    """A write to GitHub was rejected, carrying GitHub's own explanation.
+
+    The read path can afford ``f"GitHub returned HTTP {status}"`` because a
+    failed read is retried or skipped. A failed *write* is different: the
+    review API is all-or-nothing, so a single bad line 422s the whole review
+    and loses all eight comments — and a bare 422 with no detail is
+    unactionable. GitHub's body names the offending field
+    (``pull_request_review_thread.line``), and it has to reach the logs.
+
+    Truncated at the caller's discretion; ``body`` is the raw text.
+    """
+
+    def __init__(self, message: str, *, status_code: int, body: str = "") -> None:
+        super().__init__(f"{message}: {body}" if body else message)
+        self.status_code = status_code
+        self.body = body
+
+
+class GitHubRateLimitError(GitHubError):
+    """The credential is fine; there is no quota left right now.
+
+    GitHub returns **403 for rate limiting as well as for authorization
+    failures**, so status code alone cannot tell them apart. Conflating them
+    means the actionable message — "reconnect your GitHub account" — fires for
+    the one case where there is no action to take, about an account that is
+    perfectly healthy.
+
+    ``reset_at`` is when the primary limit lifts (epoch seconds, from
+    ``x-ratelimit-reset``); ``retry_after`` is the secondary-limit hint in
+    seconds. Either may be absent — GitHub does not always send both — so both
+    are optional and the message degrades to naming the limit without a time.
+
+    A subclass of ``GitHubError`` like ``GitHubAuthError``, which means **every
+    ``except`` chain has to catch this one first**. ``indexer.py`` already has
+    that shape from #208.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reset_at: datetime | None = None,
+        retry_after: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reset_at = reset_at
+        self.retry_after = retry_after
+
+
+def _rate_limit_from(response: httpx.Response) -> GitHubRateLimitError | None:
+    """Classify a 403/429 as a rate limit, or ``None`` if it is not one.
+
+    The discriminator is the headers, not the status:
+
+    - ``x-ratelimit-remaining: 0`` — the primary hourly limit is exhausted, and
+      ``x-ratelimit-reset`` carries the epoch second it lifts.
+    - ``retry-after`` — the secondary ("abuse") limit, in seconds.
+    - neither — a genuine authorization failure, which the caller maps to
+      ``GitHubAuthError``.
+
+    A 429 is always a rate limit whatever the headers say; GitHub does not use
+    that status for anything else.
+
+    **Only 403 and 429 are ambiguous.** A 401 means the credential is bad, full
+    stop — GitHub attaches rate-limit headers to most responses, so classifying
+    by headers alone would let a stray ``x-ratelimit-remaining: 0`` turn a dead
+    token into "wait a while", which is the same conflation in the opposite
+    direction.
+    """
+    if response.status_code not in (403, 429):
+        return None
+
+    headers = response.headers
+    remaining = headers.get("x-ratelimit-remaining")
+    retry_after_raw = headers.get("retry-after")
+
+    primary = remaining is not None and remaining.strip() == "0"
+    secondary = retry_after_raw is not None
+    if not (primary or secondary or response.status_code == 429):
+        return None
+
+    # Both values come off the wire, so neither is trusted to parse. A limit we
+    # cannot put a time on is still a limit — losing the classification over an
+    # unparseable header would put us straight back to "reconnect your
+    # account", which is the bug this function exists to remove.
+    reset_at: datetime | None = None
+    reset_raw = headers.get("x-ratelimit-reset")
+    if reset_raw is not None:
+        try:
+            reset_at = datetime.fromtimestamp(int(reset_raw), tz=timezone.utc)
+        except (ValueError, OverflowError, OSError):
+            reset_at = None
+
+    retry_after: int | None = None
+    if retry_after_raw is not None:
+        try:
+            retry_after = int(retry_after_raw)
+        except ValueError:
+            retry_after = None
+
+    if retry_after is not None:
+        when = f" Retry after {retry_after}s."
+    elif reset_at is not None:
+        when = f" The limit resets at {reset_at:%Y-%m-%d %H:%M:%S} UTC."
+    else:
+        when = ""
+    return GitHubRateLimitError(
+        f"GitHub rate limit reached.{when} Your account is fine — this is "
+        "quota, not credentials.",
+        reset_at=reset_at,
+        retry_after=retry_after,
+    )
 
 
 def verify_webhook_signature(secret: str, payload: bytes, signature_header: str | None) -> bool:
@@ -132,6 +254,102 @@ class RepositoryMeta:
     id: int
     full_name: str
     default_branch: str
+
+
+@dataclass(frozen=True)
+class PostedReview:
+    """What GitHub hands back after creating a review. #196 persists both."""
+
+    id: int
+    html_url: str
+    state: str
+
+
+# ── new-file line -> "can GitHub anchor a comment here?" ──────────────────────
+#
+# GitHub's create-review API takes inline comments two ways: legacy `position`
+# (a 1-based offset within the diff hunk, counting context and `-` lines) or
+# modern `line` + `side`. Liffy stores `line_start`/`line_end` as **new-file
+# line numbers** — `prompts.py` instructs the model to use "the NEW-file line
+# numbers from the hunk headers" — so `line` + `side: RIGHT` is a direct match.
+# Converting to hunk offsets would throw that information away and then
+# reconstruct it.
+#
+# The catch: **GitHub rejects any comment whose line is not part of the diff**,
+# with a 422 naming `pull_request_review_thread.line`. It is a 422 on the
+# *whole review*, so one bad line loses all eight comments. Hence validating
+# every comment before the call rather than after the failure.
+
+
+def _commentable_file(file_diffs: list[FileDiff], path: str) -> FileDiff | None:
+    """The parsed diff for ``path``, if it can carry a RIGHT-side comment.
+
+    Deleted files cannot: their content exists only on the left, so
+    ``side: "RIGHT"`` has nothing to point at. Binary files have no lines at
+    all. ``run_review`` already skips both for retrieval; they are filtered
+    here too rather than relying on that.
+    """
+    for file_diff in file_diffs:
+        if file_diff.path != path:
+            continue
+        if file_diff.is_binary or file_diff.status == FileStatus.deleted:
+            return None
+        return file_diff
+    return None
+
+
+def _hunk_containing(file_diff: FileDiff, line: int) -> DiffHunk | None:
+    """The hunk in which ``line`` exists in the new file, or ``None``.
+
+    Walks the parsed lines rather than testing ``hunk.new_line_range``, because
+    the range is inclusive of positions a removed line occupies in the old
+    file. A removed line has ``new_lineno is None`` and is correctly excluded.
+
+    **Context lines count.** They have a ``new_lineno`` and GitHub accepts
+    comments on them, so excluding unchanged-but-in-hunk lines would silently
+    drop valid comments — a review's most useful remark is often on the line
+    *above* the change.
+    """
+    for hunk in file_diff.hunks:
+        if any(dline.new_lineno == line for dline in hunk.lines):
+            return hunk
+    return None
+
+
+def is_line_commentable(file_diffs: list[FileDiff], path: str, line: int) -> bool:
+    """Can GitHub anchor a RIGHT-side comment at ``path``:``line``?
+
+    A containment test over data ``diff_parser`` already produced — no new
+    parsing, and no second notion of what a hunk is.
+    """
+    file_diff = _commentable_file(file_diffs, path)
+    if file_diff is None:
+        return False
+    return _hunk_containing(file_diff, line) is not None
+
+
+def is_span_commentable(
+    file_diffs: list[FileDiff], path: str, start_line: int, end_line: int
+) -> bool:
+    """Can a multi-line comment span ``start_line``..``end_line``?
+
+    GitHub takes ``start_line`` + ``line`` for a multi-line comment and
+    requires **both ends in the same hunk**. A span crossing a hunk boundary is
+    the case that 422s in production, because each end looks individually valid
+    — so this is not the conjunction of two ``is_line_commentable`` calls.
+
+    A degenerate span (``start == end``) is just a single-line comment.
+    """
+    if start_line > end_line:
+        return False
+    file_diff = _commentable_file(file_diffs, path)
+    if file_diff is None:
+        return False
+
+    start_hunk = _hunk_containing(file_diff, start_line)
+    if start_hunk is None:
+        return False
+    return start_hunk is _hunk_containing(file_diff, end_line)
 
 
 def _is_indexable(path: str) -> bool:
@@ -178,6 +396,56 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
+    def _raise_for_status(self, response: httpx.Response, *, with_body: bool) -> None:
+        """Translate an HTTP error into this module's typed hierarchy.
+
+        Shared by ``_get`` and ``_post`` so the two cannot classify the same
+        status differently — the auth-versus-rate-limit distinction #209 drew
+        is one that must not exist in two places.
+
+        ``with_body`` is what separates them: the read path can afford
+        "GitHub returned HTTP 422" because a failed read is retried or skipped,
+        while a failed write needs GitHub's own message to be actionable at all.
+        """
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Rate limiting first, because GitHub answers 403 for *both* a
+            # rate limit and an authorization failure. Checked before the auth
+            # branch below rather than after, since the auth branch would
+            # otherwise swallow every 403 and tell the user to reconnect a
+            # perfectly healthy account — for a condition that fixes itself.
+            #
+            # At 5000 req/hr this is the likeliest large-repo failure there is:
+            # `index_repository` issues one content request per file. Write
+            # limits are separate from read limits and per token, but one
+            # review per PR is nowhere near either.
+            rate_limited = _rate_limit_from(response)
+            if rate_limited is not None:
+                raise rate_limited from exc
+
+            # A user can revoke the OAuth app's access from GitHub's settings
+            # at any time, so a token that worked yesterday returning 401
+            # today is normal operation, not a defect. Translating it into a
+            # typed error here is what lets the API answer "reconnect your
+            # GitHub account" instead of leaking an httpx exception as a 500.
+            #
+            # A 403 reaches here only with neither rate-limit header present,
+            # which is the genuine permissions case.
+            if response.status_code in (401, 403):
+                raise GitHubAuthError(
+                    "GitHub rejected the credentials. If you revoked Liffy's "
+                    "access, reconnect your GitHub account."
+                ) from exc
+
+            if with_body:
+                raise GitHubWriteError(
+                    f"GitHub rejected the write with HTTP {response.status_code}",
+                    status_code=response.status_code,
+                    body=response.text,
+                ) from exc
+            raise GitHubError(f"GitHub returned HTTP {response.status_code}") from exc
+
     def _get(
         self,
         path: str,
@@ -186,20 +454,21 @@ class GitHubClient:
         params: dict[str, str] | None = None,
     ) -> httpx.Response:
         response = self._client.get(path, headers=self._headers(accept), params=params)
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            # A user can revoke the OAuth app's access from GitHub's settings
-            # at any time, so a token that worked yesterday returning 401
-            # today is normal operation, not a defect. Translating it into a
-            # typed error here is what lets the API answer "reconnect your
-            # GitHub account" instead of leaking an httpx exception as a 500.
-            if response.status_code in (401, 403):
-                raise GitHubAuthError(
-                    "GitHub rejected the credentials. If you revoked Liffy's "
-                    "access, reconnect your GitHub account."
-                ) from exc
-            raise GitHubError(f"GitHub returned HTTP {response.status_code}") from exc
+        self._raise_for_status(response, with_body=False)
+        return response
+
+    def _post(self, path: str, json: dict) -> httpx.Response:
+        """The write counterpart of ``_get``.
+
+        Same ``_headers()``, same client, same timeout, same error mapping —
+        deliberately not a second httpx call style. The only difference is that
+        failures carry GitHub's response body.
+
+        The standard ``application/vnd.github+json`` accept header is right
+        here; the diff endpoint's special type is the exception, not the rule.
+        """
+        response = self._client.post(path, headers=self._headers(), json=json)
+        self._raise_for_status(response, with_body=True)
         return response
 
     def get_pull_request(self, owner: str, repo: str, number: int) -> PullRequestMeta:
@@ -253,3 +522,65 @@ class GitHubClient:
             params=params,
         )
         return response.text
+
+    # ── Writes (GH-1) ─────────────────────────────────────────────────────────
+    #
+    # `OAUTH_SCOPE = "repo,read:user"` in api/auth.py already grants write
+    # access to pull requests, so nothing here needs a new scope or a
+    # re-consent. Verified against GitHub's scope table rather than assumed.
+    #
+    # These take plain values and return plain values, like everything above.
+    # Keeping database and business logic out of this class is what makes it
+    # testable through `httpx.MockTransport`, and #196 depends on that holding.
+
+    def create_pull_request_review(
+        self,
+        owner: str,
+        repo: str,
+        number: int,
+        *,
+        body: str,
+        event: str,
+        comments: list[dict] | None = None,
+    ) -> PostedReview:
+        """Create a review on a pull request, with optional inline comments.
+
+        ``event`` is ``"COMMENT"`` | ``"REQUEST_CHANGES"`` | ``"APPROVE"``.
+
+        ``comments`` entries are ``{path, line, side, body}``, plus
+        ``start_line`` for a multi-line span. **Validate every one with
+        ``is_line_commentable`` / ``is_span_commentable`` first**: the call is
+        all-or-nothing, so a single line GitHub will not accept 422s the entire
+        review and loses every other comment with it.
+
+        **You cannot approve or request changes on your own pull request** —
+        GitHub answers 422. On this project that is the *normal* case, since
+        Liffy reviews a repository whose PR author and token owner are usually
+        the same person. Detecting that needs the PR author, which is business
+        logic, so it lives in #196; what this method does is surface the
+        failure with GitHub's message intact so #196 can act on it rather than
+        guess.
+        """
+        payload: dict = {"body": body, "event": event}
+        if comments:
+            payload["comments"] = comments
+        data = self._post(f"/repos/{owner}/{repo}/pulls/{number}/reviews", payload).json()
+        return PostedReview(
+            id=int(data["id"]),
+            html_url=data.get("html_url", ""),
+            state=data.get("state", ""),
+        )
+
+    def create_issue_comment(self, owner: str, repo: str, number: int, body: str) -> str:
+        """Post a plain comment on the PR conversation, returning its URL.
+
+        The fallback surface: for findings that cannot be anchored to a diff
+        line, and for the summary when no inline target is valid at all.
+
+        GitHub treats pull requests as issues for this endpoint, which is why
+        the path says ``/issues/`` for a PR number.
+        """
+        data = self._post(
+            f"/repos/{owner}/{repo}/issues/{number}/comments", {"body": body}
+        ).json()
+        return data.get("html_url", "")

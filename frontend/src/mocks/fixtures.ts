@@ -39,6 +39,9 @@ export const fixtureRepoStatusIndexed: RepoStatusOut = {
   status: "indexed",
   indexed_at: fixtureRepoIndexed.indexed_at,
   chunk_count: 176,
+  // A clean run: measured, nothing failed. The chip carries no caveat.
+  last_index_failed_files: 0,
+  last_indexed_files_seen: 142,
 };
 
 export const fixtureRepoStatusNotIndexed: RepoStatusOut = {
@@ -47,6 +50,23 @@ export const fixtureRepoStatusNotIndexed: RepoStatusOut = {
   status: "not_indexed",
   indexed_at: null,
   chunk_count: 0,
+  last_index_failed_files: null,
+  last_indexed_files_seen: null,
+};
+
+/** A run that succeeded but left holes — #210's whole reason for existing. */
+export const fixtureRepoStatusPartial: RepoStatusOut = {
+  ...fixtureRepoStatusIndexed,
+  chunk_count: 160,
+  last_index_failed_files: 40,
+  last_indexed_files_seen: 200,
+};
+
+/** Indexed before the counters existed: null, not zero. */
+export const fixtureRepoStatusLegacy: RepoStatusOut = {
+  ...fixtureRepoStatusIndexed,
+  last_index_failed_files: null,
+  last_indexed_files_seen: null,
 };
 
 const fixtureComment: ReviewCommentOut = {

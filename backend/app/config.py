@@ -101,6 +101,21 @@ class Settings(BaseSettings):
     chroma_port: int = Field(default=8000)
     chroma_persist_dir: str = Field(default="./chroma")
     
+    # ── Posting reviews back to GitHub (GH-2) ────────────────────────────────
+    # **Default off, deliberately.** Writing to somebody's pull request is not
+    # a behaviour a merge should silently switch on, and the test suite must
+    # never be one env var away from posting to a real PR.
+    post_reviews_to_github: bool = Field(default=False)
+    # "native"       — approve/request_changes are sent as GitHub review events
+    # "comment_only" — every review is posted as a COMMENT
+    #
+    # `comment_only` by default: `request_changes` on somebody else's PR
+    # genuinely blocks their merge, and an AI tool that blocks a human's merge
+    # by default is the kind of default people uninstall over. Opting in is the
+    # right shape. (On your *own* PR the choice is moot — GitHub 422s an
+    # APPROVE or REQUEST_CHANGES either way, and `resolve_event` downgrades.)
+    github_review_event_mode: str = Field(default="comment_only")
+
     # App
     debug: bool = Field(default=True)
 

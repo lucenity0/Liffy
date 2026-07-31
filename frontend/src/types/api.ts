@@ -35,6 +35,18 @@ export interface RepoStatusOut {
   status: IndexStatus;
   indexed_at: string | null;
   chunk_count: number;
+  /**
+   * Files the **last** index run skipped because fetching or chunking raised.
+   * Non-zero means the index is *partial*: those files have no chunks, so
+   * reviews touching them retrieve no context.
+   *
+   * `null` on repositories indexed before this was recorded — "never
+   * measured", which is not the same as "measured, nothing failed". Only the
+   * latter (`0`) earns a clean chip. Added by #210.
+   */
+  last_index_failed_files: number | null;
+  /** The denominator: "40 skipped" reads differently out of 45 than out of 4,000. */
+  last_indexed_files_seen: number | null;
 }
 
 export interface ReviewOut {

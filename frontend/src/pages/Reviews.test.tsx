@@ -4,12 +4,17 @@ import { http, HttpResponse } from "msw";
 import { useLocation } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { server } from "@/mocks/server";
-import { fixtureReviewListItems, reviewPage } from "@/mocks/fixtures";
+import {
+  fixtureRepoIndexed,
+  fixtureRepoIndexing,
+  fixtureReviewListItems,
+  reviewPage,
+} from "@/mocks/fixtures";
 import { REVIEWS_PAGE_SIZE } from "@/hooks/useReviews";
 import { formatCount } from "@/lib/utils";
 import type { ReviewListItem } from "@/types/api";
 import { renderWithProviders } from "@/test/renderWithProviders";
-import { parseOffset } from "@/lib/pagination";
+import { parseOffset, parseReviewFilters } from "@/lib/pagination";
 import { Reviews } from "./Reviews";
 
 /**
@@ -64,6 +69,40 @@ function renderPage(route = "/reviews") {
     { route },
   );
 }
+
+describe("URL filter parsing", () => {
+  it.each([
+    ["?pr=abc", "pr"],
+    ["?pr=1e3", "pr"],
+    ["?pr=-4", "pr"],
+    ["?status=banana", "status"],
+    ["?repo=not-a-uuid", "repo"],
+  ])("degrades %s to no filter rather than sending it", (query, param) => {
+    const filters = parseReviewFilters(new URLSearchParams(query));
+    const key = { pr: "prNumber", status: "status", repo: "repoId" }[param]!;
+    expect(filters[key as keyof typeof filters]).toBeUndefined();
+  });
+
+  it("falls back to newest for an unreadable sort, since a list is always ordered", () => {
+    expect(parseReviewFilters(new URLSearchParams("?sort=sideways")).sort).toBe(
+      "newest",
+    );
+  });
+
+  it("reads a well-formed set", () => {
+    const filters = parseReviewFilters(
+      new URLSearchParams(
+        `?repo=${fixtureRepoIndexed.id}&pr=203&status=failed&sort=oldest`,
+      ),
+    );
+    expect(filters).toEqual({
+      repoId: fixtureRepoIndexed.id,
+      prNumber: 203,
+      status: "failed",
+      sort: "oldest",
+    });
+  });
+});
 
 describe("parseOffset", () => {
   it.each([
@@ -268,6 +307,145 @@ describe("Reviews", () => {
     await waitFor(() => expect(searchString()).toBe(""));
     expect(await screen.findByRole("status")).toHaveTextContent(/queued/i);
     expect(screen.getByRole("status")).toHaveTextContent("58");
+  });
+
+  it("puts a chosen repo in the URL and refetches for it", async () => {
+    const user = userEvent.setup();
+    const asked: (string | null)[] = [];
+    server.use(
+      http.get("*/reviews", ({ request }) => {
+        asked.push(new URL(request.url).searchParams.get("repo_id"));
+        return HttpResponse.json(reviewPage(fixtureReviewListItems));
+      }),
+    );
+
+    renderPage();
+    await screen.findByRole("list", { name: "Reviews" });
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /repository/i }),
+      fixtureRepoIndexed.id,
+    );
+
+    await waitFor(() => expect(searchString()).toBe(`?repo=${fixtureRepoIndexed.id}`));
+    await waitFor(() => expect(asked).toContain(fixtureRepoIndexed.id));
+  });
+
+  it("returns to page one when a filter changes", async () => {
+    const user = userEvent.setup();
+    trackPages(fullPage);
+
+    renderPage("/reviews?offset=40");
+    await screen.findByRole("list", { name: "Reviews" });
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /repository/i }),
+      fixtureRepoIndexing.id,
+    );
+
+    // The trap: staying on offset 40 while switching to a repo with three
+    // reviews renders "You have paged past the end", which is reached by an
+    // ordinary click and is indistinguishable from a bug.
+    await waitFor(() =>
+      expect(searchString()).toBe(`?repo=${fixtureRepoIndexing.id}`),
+    );
+  });
+
+  it("keeps the sort in the URL and asks for it", async () => {
+    const user = userEvent.setup();
+    const asked: (string | null)[] = [];
+    server.use(
+      http.get("*/reviews", ({ request }) => {
+        asked.push(new URL(request.url).searchParams.get("sort"));
+        return HttpResponse.json(reviewPage(fixtureReviewListItems));
+      }),
+    );
+
+    renderPage();
+    await screen.findByRole("list", { name: "Reviews" });
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /order/i }),
+      "oldest",
+    );
+
+    await waitFor(() => expect(searchString()).toBe("?sort=oldest"));
+    await waitFor(() => expect(asked).toContain("oldest"));
+  });
+
+  it("renders page one for garbage in the URL rather than erroring", async () => {
+    renderPage("/reviews?pr=abc&status=banana&repo=nonsense");
+
+    // Rendered, not 422'd: every unreadable value degrades to no filter before
+    // it can reach the API.
+    await screen.findByRole("list", { name: "Reviews" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(rows()).toHaveLength(fixtureReviewListItems.length);
+    // And nothing claims to be filtering, so there is no phantom Clear button.
+    expect(screen.queryByRole("button", { name: /clear filters/i })).toBeNull();
+  });
+
+  it("clears every filter and returns to the unfiltered list", async () => {
+    const user = userEvent.setup();
+
+    renderPage(`/reviews?repo=${fixtureRepoIndexed.id}&status=failed&sort=oldest`);
+    await screen.findByRole("list", { name: "Reviews" });
+
+    await user.click(screen.getByRole("button", { name: /clear filters/i }));
+
+    await waitFor(() => expect(searchString()).toBe(""));
+    expect(
+      screen.queryByRole("button", { name: /clear filters/i }),
+    ).toBeNull();
+  });
+
+  it("distinguishes empty-because-filtered from empty-because-nothing", async () => {
+    server.use(http.get("*/reviews", () => HttpResponse.json(reviewPage([]))));
+
+    const { unmount } = renderPage("/reviews?status=failed");
+    // "Nothing reviewed yet." would be both wrong and alarming here — the
+    // reviews exist, they just do not match.
+    expect(
+      await screen.findByText(/no reviews match these filters/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/nothing reviewed yet/i)).toBeNull();
+    unmount();
+
+    renderPage();
+    expect(await screen.findByText(/nothing reviewed yet/i)).toBeInTheDocument();
+  });
+
+  it("debounces the PR number box so a three-digit number is one request", async () => {
+    const user = userEvent.setup();
+    const asked: (string | null)[] = [];
+    server.use(
+      http.get("*/reviews", ({ request }) => {
+        asked.push(new URL(request.url).searchParams.get("pr_number"));
+        return HttpResponse.json(reviewPage(fixtureReviewListItems));
+      }),
+    );
+
+    renderPage();
+    await screen.findByRole("list", { name: "Reviews" });
+
+    await user.type(screen.getByRole("textbox", { name: /pr number/i }), "203");
+
+    await waitFor(() => expect(searchString()).toBe("?pr=203"));
+    // Never asked about PR 2 or PR 20 on the way to 203.
+    expect(asked.filter(Boolean)).toEqual(["203"]);
+  });
+
+  it("does not send a half-typed PR number that is not a number", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByRole("list", { name: "Reviews" });
+
+    await user.type(screen.getByRole("textbox", { name: /pr number/i }), "abc");
+
+    expect(await screen.findByText(/digits only/i)).toBeInTheDocument();
+    // The URL stays clean, so a refresh does not resurrect the bad value.
+    await waitFor(() => expect(searchString()).toBe(""));
   });
 
   it("surfaces a failed page", async () => {

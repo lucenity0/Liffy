@@ -6,16 +6,31 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Sheet } from "@/components/ui/Sheet";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/review/Pagination";
+import { ReviewFilterBar } from "@/components/review/ReviewFilterBar";
 import { ReviewRow } from "@/components/review/ReviewRow";
 import { TriggerReviewForm } from "@/components/review/TriggerReviewForm";
 import { REVIEWS_PAGE_SIZE, useReviews } from "@/hooks/useReviews";
-import { parseOffset } from "@/lib/pagination";
+import {
+  hasActiveFilters,
+  parseOffset,
+  parseReviewFilters,
+  type ReviewFilters,
+} from "@/lib/pagination";
 
 export function Reviews() {
   const [searchParams, setSearchParams] = useSearchParams();
   const offset = parseOffset(searchParams.get("offset"));
+  const filters = parseReviewFilters(searchParams);
+  const filtered = hasActiveFilters(filters);
 
-  const reviews = useReviews({ limit: REVIEWS_PAGE_SIZE, offset });
+  const reviews = useReviews({
+    limit: REVIEWS_PAGE_SIZE,
+    offset,
+    repoId: filters.repoId,
+    prNumber: filters.prNumber,
+    status: filters.status,
+    sort: filters.sort,
+  });
   const rows = reviews.items;
 
   const [triggering, setTriggering] = useState(false);
@@ -24,10 +39,33 @@ export function Reviews() {
     pr_number: number;
   } | null>(null);
 
+  /** The URL, rebuilt from a filter set and an offset. Offset 0 and every
+   *  unset filter drop out entirely rather than being written empty. */
+  function write(next: ReviewFilters, nextOffset: number) {
+    const params: Record<string, string> = {};
+    if (next.repoId) params.repo = next.repoId;
+    if (next.prNumber !== undefined) params.pr = String(next.prNumber);
+    if (next.status) params.status = next.status;
+    if (next.sort !== "newest") params.sort = next.sort;
+    if (nextOffset !== 0) params.offset = String(nextOffset);
+    setSearchParams(params);
+  }
+
   function goTo(next: number) {
     // `replace: false` keeps paging in history, which is the point of putting
     // it in the URL at all. Offset 0 drops the param instead of writing ?offset=0.
-    setSearchParams(next === 0 ? {} : { offset: String(next) });
+    write(filters, next);
+  }
+
+  /**
+   * Any filter change returns to page one.
+   *
+   * Without this, switching to a repo with three reviews while sitting on
+   * `?offset=40` renders "You have paged past the end" — which is
+   * indistinguishable from a bug, and is reached by an ordinary click.
+   */
+  function changeFilters(next: Partial<ReviewFilters>) {
+    write({ ...filters, ...next }, 0);
   }
 
   /**
@@ -36,11 +74,15 @@ export function Reviews() {
    * the newest, and it is not on page three — and say what happened. The
    * mutation already invalidated the list; the row appears once the worker
    * has created it, which is a moment later, not instantly.
+   *
+   * Filters are cleared alongside: a review queued while filtered to "failed"
+   * would otherwise be announced as queued and then not appear, because it is
+   * not failed.
    */
   function onQueued(accepted: { repo: string; pr_number: number }) {
     setTriggering(false);
     setQueued(accepted);
-    goTo(0);
+    setSearchParams({});
   }
 
   return (
@@ -76,9 +118,16 @@ export function Reviews() {
         </p>
       )}
 
+      <ReviewFilterBar
+        filters={filters}
+        onChange={changeFilters}
+        onClear={() => setSearchParams({})}
+      />
+
       <Sheet>
         <Sheet.Header
-          title="All reviews"
+          title={filtered ? "Filtered reviews" : "All reviews"}
+          count={reviews.data ? reviews.total : undefined}
           actions={
             // Paging keeps the previous page on screen (keepPreviousData), so
             // without this the only sign anything is happening is the URL.
@@ -96,18 +145,33 @@ export function Reviews() {
           </Sheet.Body>
         )}
 
+        {/* Three different nothings, which are three different situations:
+            nothing exists yet, nothing matches, or you have walked off the
+            end. "Nothing reviewed yet." in front of a filtered list is both
+            wrong and alarming — the reviews are there, they just do not
+            match. */}
         {reviews.data && rows.length === 0 && (
           <EmptyState
             title={
-              offset === 0 ? "Nothing reviewed yet." : "Nothing on this page."
+              filtered
+                ? "No reviews match these filters."
+                : offset === 0
+                  ? "Nothing reviewed yet."
+                  : "Nothing on this page."
             }
             description={
-              offset === 0
-                ? "Open a pull request on a connected repository, or point Liffy at one yourself."
-                : "You have paged past the end. Go back a page."
+              filtered
+                ? "Nothing has been reviewed that fits. Widen the filters, or clear them to see everything."
+                : offset === 0
+                  ? "Open a pull request on a connected repository, or point Liffy at one yourself."
+                  : "You have paged past the end. Go back a page."
             }
             action={
-              offset === 0 ? (
+              filtered ? (
+                <Button onClick={() => setSearchParams({})}>
+                  Clear filters
+                </Button>
+              ) : offset === 0 ? (
                 <Button variant="primary" onClick={() => setTriggering(true)}>
                   Review a pull request
                 </Button>

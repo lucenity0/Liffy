@@ -26,9 +26,17 @@ export function ReviewInFlight({ review }: { review: ReviewDetailOut }) {
               : "Liffy is reading the diff…"}
           </p>
           <p className="text-sm text-ink-dim">
+            {/* No "under a minute" here any more.
+
+                That number came from the §8.1 target, which is measured on the
+                API providers. `claude_code` and `codex` drive a local CLI: on a
+                real pull request the CLI alone measured 241s, after roughly two
+                minutes of diff fetch and retrieval. Promising a minute turned a
+                perfectly healthy six-minute review into "this is broken", and
+                the person watching it had no way to tell the difference. */}
             {queued
               ? "This page updates itself the moment it starts."
-              : "Retrieving context from the index and writing comments. This usually takes under a minute."}
+              : `Retrieving context from the index and writing comments, started ${formatRelative(review.created_at)}. A large diff takes a few minutes — longer on the subscription providers, which run the model through a local CLI.`}
           </p>
         </div>
       </Sheet.Body>

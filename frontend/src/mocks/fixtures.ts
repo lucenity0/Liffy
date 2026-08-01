@@ -505,6 +505,26 @@ export const fixtureSettings: SettingsOut = {
       confirm_on_enable: false,
     },
     {
+      key: "openai_base_url",
+      group: "review_model",
+      label: "Endpoint",
+      help: "Where the `openai` provider sends the review.",
+      kind: "str",
+      choices: [],
+      suggestions: [
+        "http://localhost:11434/v1",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+      ],
+      applies_to: ["openai"],
+      minimum: null,
+      maximum: null,
+      value: "",
+      default_value: "",
+      source: "default",
+      // Decides who receives the code being reviewed.
+      confirm_on_enable: true,
+    },
+    {
       key: "openai_model",
       group: "review_model",
       label: "Model",
@@ -606,7 +626,36 @@ export const fixtureSettings: SettingsOut = {
     },
   ],
   secrets: [
-    { key: "anthropic_api_key", label: "Anthropic api key", is_set: true },
-    { key: "openai_api_key", label: "Openai api key", is_set: false },
+    {
+      key: "anthropic_api_key",
+      label: "Anthropic API key",
+      requirement: "Required by this provider — reviews fail without it.",
+      applies_to: ["anthropic"],
+      is_set: true,
+    },
+    {
+      key: "openai_api_key",
+      label: "OpenAI API key",
+      requirement: "Required by this provider.",
+      applies_to: ["openai"],
+      is_set: false,
+    },
+    // Unset and belonging to a provider that isn't selected — the case that
+    // used to read as a broken install.
+    {
+      key: "claude_code_oauth_token",
+      label: "Claude Code OAuth token",
+      requirement:
+        "Only needed in Docker. Running on the host, the CLI reads your own login and this stays empty.",
+      applies_to: ["claude_code"],
+      is_set: false,
+    },
+    {
+      key: "github_token",
+      label: "GitHub token",
+      requirement: "Required to read repositories and post reviews.",
+      applies_to: [],
+      is_set: true,
+    },
   ],
 };

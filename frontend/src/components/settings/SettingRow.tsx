@@ -253,21 +253,40 @@ export function ReadOnlySettingRow({ setting }: { setting: ReadOnlySetting }) {
   );
 }
 
-export function SecretSettingRow({ setting }: { setting: SecretSetting }) {
+export function SecretSettingRow({
+  setting,
+  relevant = true,
+}: {
+  setting: SecretSetting;
+  /** False when this credential belongs to a provider that isn't selected. */
+  relevant?: boolean;
+}) {
+  /**
+   * "Not configured" is the right answer twice over — for a key nobody needs
+   * and for the one the review depends on — so it cannot be the whole answer.
+   * The requirement comes from the API and says which of the two this is.
+   */
+  const help = setting.is_set
+    ? "Configured in backend/.env. Its value is never sent to the browser."
+    : `${setting.requirement} Set it in backend/.env — see docs/SETUP.md.`;
+
   return (
     <Shell
       label={setting.label}
-      help={
-        setting.is_set
-          ? "Configured in backend/.env. Its value is never sent to the browser."
-          : "Not configured. Set it in backend/.env — see docs/SETUP.md."
-      }
+      help={relevant ? help : `Not used by the selected provider. ${help}`}
       meta={null}
       control={
         // No input, and no masked value: a mask still discloses the length,
         // and a length is a real hint about a token.
-        <Badge tone={setting.is_set ? "sage" : "neutral"} variant="tint">
-          {setting.is_set ? "Configured" : "Not configured"}
+        <Badge
+          tone={setting.is_set ? "sage" : relevant ? "ochre" : "neutral"}
+          variant="tint"
+        >
+          {setting.is_set
+            ? "Configured"
+            : relevant
+              ? "Needs configuring"
+              : "Not configured"}
         </Badge>
       }
     />

@@ -385,6 +385,10 @@ export interface ReadOnlySetting {
 export interface SecretSetting {
   key: string;
   label: string;
+  /** What an unset value means for this one — needed, or genuinely optional. */
+  requirement: string;
+  /** `llm_provider` values this credential matters for; empty means always. */
+  applies_to: string[];
   is_set: boolean;
 }
 

@@ -65,8 +65,12 @@ describe("Settings", () => {
     renderPage();
     await screen.findByLabelText("Thinking effort");
 
-    expect(screen.getByText("Configured")).toBeInTheDocument();
-    expect(screen.getByText("Not configured")).toBeInTheDocument();
+    expect(screen.getAllByText("Configured").length).toBeGreaterThan(0);
+    // The fixture's selected provider has its key set, so nothing is in the
+    // "needs configuring" state — the unset keys belong to other providers.
+    // That split is asserted on its own further down.
+    expect(screen.getAllByText("Not configured").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Needs configuring")).toBeNull();
 
     // No input for a secret under any label — not even a disabled or masked
     // one. A mask still discloses the length.
@@ -213,6 +217,49 @@ describe("Settings", () => {
     await waitFor(() =>
       expect(sent).toEqual({ anthropic_model: "claude-opus-4-8" }),
     );
+  });
+
+  it("does not dress an irrelevant unset secret as a problem", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByLabelText("Provider");
+
+    // Provider is `anthropic`, so the Claude Code token is genuinely not
+    // needed — and on a host install it is empty for everyone.
+    const token = rowFor("Claude Code OAuth token");
+    expect(within(token).getByText("Not configured")).toBeInTheDocument();
+    expect(token).toHaveTextContent(/not used by the selected provider/i);
+
+    // The one the review actually depends on is called out instead.
+    expect(
+      within(rowFor("OpenAI API key")).getByText("Not configured"),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Provider"), "openai");
+
+    await waitFor(() =>
+      expect(
+        within(rowFor("OpenAI API key")).getByText("Needs configuring"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("confirms before pointing the reviewer at a different endpoint", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.selectOptions(
+      await screen.findByLabelText("Provider"),
+      "openai",
+    );
+    await user.selectOptions(
+      await screen.findByLabelText("Endpoint"),
+      "http://localhost:11434/v1",
+    );
+
+    // Changing where the diff is sent is a decision about who sees the code.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/your code leaves this machine/i);
   });
 
   it("surfaces a validation error on the field, not as a page crash", async () => {

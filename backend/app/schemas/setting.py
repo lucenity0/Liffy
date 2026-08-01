@@ -64,6 +64,11 @@ class SecretSettingOut(BaseModel):
 
     key: str
     label: str
+    # What "not configured" means for this one. Without it the page reports a
+    # key nobody needs and a key the review depends on in identical words.
+    requirement: str
+    # The `llm_provider` values this credential matters for; empty means always.
+    applies_to: list[str]
     is_set: bool
 
 

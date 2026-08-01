@@ -12,6 +12,7 @@ from app.config import (
     settings,
 )
 from app.database import get_db
+from app.llm.codex_models import discover_codex_models
 from app.models.user import User
 from app.schemas.setting import (
     EditableSettingOut,
@@ -28,6 +29,19 @@ from app.services.settings_service import (
 )
 
 router = APIRouter()
+
+
+def _suggestions_for(key: str, spec) -> tuple[str, ...]:
+    """A setting's dropdown options, discovered at runtime where they have to be.
+
+    Only Codex needs this. Its slugs are version- and account-specific, so the
+    only correct list is the one the signed-in account reports — see
+    ``codex_models``. The lookup is cached and cannot raise; an empty result
+    leaves the field as free text, which is what a static spec would have given.
+    """
+    if key != "codex_model":
+        return spec.suggestions
+    return discover_codex_models(settings.codex_home)
 
 
 def _describe(db: Session) -> SettingsOut:
@@ -56,7 +70,7 @@ def _describe(db: Session) -> SettingsOut:
                 help=spec.help,
                 kind=spec.kind,
                 choices=list(spec.choices),
-                suggestions=list(spec.suggestions),
+                suggestions=list(_suggestions_for(key, spec)),
                 applies_to=list(spec.applies_to),
                 minimum=spec.minimum,
                 maximum=spec.maximum,
@@ -89,10 +103,12 @@ def _describe(db: Session) -> SettingsOut:
     secrets = [
         SecretSettingOut(
             key=key,
-            label=key.replace("_", " ").capitalize(),
+            label=spec.label,
+            requirement=spec.requirement,
+            applies_to=list(spec.applies_to),
             is_set=bool(getattr(settings, key)),
         )
-        for key in SECRET_SETTINGS
+        for key, spec in SECRET_SETTINGS.items()
     ]
 
     return SettingsOut(editable=editable, read_only=read_only, secrets=secrets)

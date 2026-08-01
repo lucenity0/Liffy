@@ -460,6 +460,23 @@ def test_claude_code_replaces_rather_than_appends_the_system_prompt(
     assert "USER" in argv
 
 
+def test_claude_code_passes_the_configured_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The settings page offers an effort control; it has to reach this provider.
+
+    The CLI takes the same five levels as the API (`--effort low|medium|high|
+    xhigh|max`). Without this the control rendered, saved, and changed nothing
+    — the worst kind of setting.
+    """
+    monkeypatch.setattr(settings, "anthropic_effort", "xhigh")
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv = calls["argv"]
+    assert argv[argv.index("--effort") + 1] == "xhigh"
+
+
 def test_claude_code_is_error_raises_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.llm.chain import ClaudeCodeError
 

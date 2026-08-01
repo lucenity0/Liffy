@@ -347,16 +347,33 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
         group="review_model",
         label="Model",
         help=(
-            "Leave empty unless you have a reason — empty means whatever "
-            "~/.codex/config.toml already says, which is the choice you "
-            "already made. Codex slugs are specific to the CLI version and the "
-            "account, so an outdated one fails the run outright with 'Model "
-            "metadata not found'. There is no list to offer here for the same "
-            "reason: Liffy cannot know which slugs your account has."
+            "Listed from your signed-in Codex account, because the slugs are "
+            "specific to the CLI version and the plan — an outdated one fails "
+            "the run outright with 'Model metadata not found'. Empty means "
+            "whatever ~/.codex/config.toml already says. If the list is empty, "
+            "the CLI is not signed in where Liffy can see it."
         ),
         kind="str",
         applies_to=("codex",),
         allow_empty=True,
+    ),
+    "openai_base_url": SettingSpec(
+        group="review_model",
+        label="Endpoint",
+        help=(
+            "Where the `openai` provider sends the review. Empty is OpenAI "
+            "itself; a localhost URL is Ollama, which runs the model on your "
+            "own hardware and means your code never leaves the machine. "
+            "Read `// where your code goes` in the README before pointing this "
+            "somewhere new — it decides who sees the code being reviewed."
+        ),
+        kind="str",
+        applies_to=("openai",),
+        allow_empty=True,
+        suggestions=(
+            "http://localhost:11434/v1",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        ),
     ),
     "openai_model": SettingSpec(
         group="review_model",
@@ -379,13 +396,18 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
         help=(
             "The real cost lever on Claude models, where thinking is on by "
             "default and bills as output tokens. `medium` is a deliberate "
-            "choice for review; raise it if reviews start missing things."
+            "choice for review; raise it if reviews start missing things. On "
+            "`claude_code` it spends rate-limit quota rather than money, but "
+            "it is the same lever."
         ),
         kind="choice",
         choices=("low", "medium", "high", "xhigh", "max"),
-        # An Anthropic API request parameter — the CLI providers take their
-        # effort from their own config, and `openai` has no equivalent.
-        applies_to=("anthropic",),
+        # Both Claude transports: the API takes it as a request parameter and
+        # the CLI as `--effort`, with the same five levels. Not `openai`, which
+        # has no equivalent, and not `codex`, which reads its own
+        # `model_reasoning_effort` from ~/.codex/config.toml for the same
+        # reason its model does.
+        applies_to=("anthropic", "claude_code"),
     ),
     "llm_max_tokens": SettingSpec(
         group="review_model",
@@ -433,10 +455,11 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     ),
 }
 
-# Confirmed in the UI before they can be enabled, because both reach outside
-# Liffy: one writes to somebody's pull request, the other can block their merge.
+# Confirmed in the UI before they take a non-default value, because each reaches
+# outside Liffy: one writes to somebody's pull request, one can block their
+# merge, and one decides which company receives the code being reviewed.
 CONFIRM_ON_ENABLE: frozenset[str] = frozenset(
-    {"post_reviews_to_github", "github_review_event_mode"}
+    {"post_reviews_to_github", "github_review_event_mode", "openai_base_url"}
 )
 
 
@@ -517,10 +540,6 @@ READ_ONLY_SETTINGS: dict[str, ReadOnlySetting] = {
         "Controls cookie security and the refusal to sign with the development "
         "JWT secret. Not a runtime toggle.",
     ),
-    "openai_base_url": ReadOnlySetting(
-        "review_model", "OpenAI base URL",
-        "Deployment shape rather than review tuning — set it in backend/.env.",
-    ),
     "claude_code_binary": ReadOnlySetting(
         "review_model", "Claude Code binary", "Path to the CLI on the host.",
     ),
@@ -540,20 +559,65 @@ READ_ONLY_SETTINGS: dict[str, ReadOnlySetting] = {
     ),
 }
 
+@dataclass(frozen=True)
+class SecretSetting:
+    """A credential's *existence*, and what its absence actually means.
+
+    ``requirement`` is the field that stops the page lying. "Not configured" is
+    the correct answer for a key nobody needs, and an alarming one for a key
+    the selected provider depends on — the same two words meaning "fine" and
+    "broken" is not a report, it is a coin flip. Saying which of the two it is
+    costs one string per secret.
+    """
+
+    label: str
+    requirement: str
+    # Which `llm_provider` values this credential is relevant to. Empty means
+    # it is not provider-specific (Liffy's own secrets, GitHub's).
+    applies_to: tuple[str, ...] = ()
+
+
 # Never sent to the frontend — not the value, not a masked value, not a length.
-# The API answers `is_set: true|false` and nothing else.
-SECRET_SETTINGS: tuple[str, ...] = (
-    "jwt_secret_key",
-    "github_client_secret",
-    "github_webhook_secret",
-    "github_token",
-    "anthropic_api_key",
-    "openai_api_key",
+# The API answers `is_set: true|false` and nothing else. A dict rather than a
+# tuple only so each entry can carry its label and requirement; membership and
+# iteration are unchanged.
+SECRET_SETTINGS: dict[str, SecretSetting] = {
+    "jwt_secret_key": SecretSetting(
+        "JWT secret key", "Required. Generated by liffy.sh on first run.",
+    ),
+    "github_client_secret": SecretSetting(
+        "GitHub client secret", "Required to sign in with GitHub.",
+    ),
+    "github_webhook_secret": SecretSetting(
+        "GitHub webhook secret", "Required for automatic reviews on push.",
+    ),
+    "github_token": SecretSetting(
+        "GitHub token", "Required to read repositories and post reviews.",
+    ),
+    "anthropic_api_key": SecretSetting(
+        "Anthropic API key",
+        "Required by this provider — reviews fail without it.",
+        applies_to=("anthropic",),
+    ),
+    "openai_api_key": SecretSetting(
+        "OpenAI API key",
+        "Required by this provider, though a local Ollama accepts any "
+        "non-empty value.",
+        applies_to=("openai",),
+    ),
     # A long-lived credential for a personal subscription — the one thing worse
     # than leaking an API key, since revoking it means re-running the CLI's
     # login on the host.
-    "claude_code_oauth_token",
-)
+    "claude_code_oauth_token": SecretSetting(
+        "Claude Code OAuth token",
+        # The reason this whole field exists: on the host it is genuinely not
+        # needed, and reporting that as a bare "Not configured" sent people
+        # looking for a problem they did not have.
+        "Only needed in Docker. Running on the host, the CLI reads your own "
+        "login and this stays empty.",
+        applies_to=("claude_code",),
+    ),
+}
 
 def redact_url_credentials(value: Any) -> Any:
     """Mask the password in a URL-shaped read-only value.

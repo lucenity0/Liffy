@@ -104,8 +104,35 @@ def test_secrets_are_reported_as_set_or_not(seeded, monkeypatch) -> None:
     assert set(by_key) == set(SECRET_SETTINGS)
     assert by_key["anthropic_api_key"]["is_set"] is True
     assert by_key["openai_api_key"]["is_set"] is False
-    # `is_set` and a label is the entire contract — no value under any name.
-    assert set(by_key["anthropic_api_key"]) == {"key", "label", "is_set"}
+    # `is_set` plus description is the entire contract — no value, under any
+    # name. `requirement` and `applies_to` describe what an unset key *means*;
+    # neither is derived from the secret itself.
+    assert set(by_key["anthropic_api_key"]) == {
+        "key", "label", "requirement", "applies_to", "is_set",
+    }
+
+
+def test_an_unset_secret_says_whether_it_is_actually_needed(seeded) -> None:
+    """"Not configured" is the right answer for a key nobody needs.
+
+    `claude_code_oauth_token` is empty on every host install and that is
+    correct — the CLI reads the user's own login. Reporting it in the same
+    words as a missing Anthropic key sent people hunting a problem they did
+    not have.
+    """
+    body = client.get("/settings", headers=seeded["headers"]).json()
+    by_key = {s["key"]: s for s in body["secrets"]}
+
+    token = by_key["claude_code_oauth_token"]
+    assert token["applies_to"] == ["claude_code"]
+    assert "Only needed in Docker" in token["requirement"]
+
+    # ...where a key the selected provider depends on says so plainly.
+    assert by_key["anthropic_api_key"]["applies_to"] == ["anthropic"]
+    assert "Required" in by_key["anthropic_api_key"]["requirement"]
+
+    # Liffy's own secrets belong to no provider and are always relevant.
+    assert by_key["jwt_secret_key"]["applies_to"] == []
 
 
 # ── Reading ───────────────────────────────────────────────────────────────────
@@ -159,7 +186,15 @@ def test_dangerous_settings_are_flagged_for_confirmation(seeded) -> None:
     body = client.get("/settings", headers=seeded["headers"]).json()
     flagged = {s["key"] for s in body["editable"] if s["confirm_on_enable"]}
 
-    assert flagged == {"post_reviews_to_github", "github_review_event_mode"}
+    # Each of these reaches outside Liffy: two write to somebody's pull
+    # request, and `openai_base_url` decides who receives the code being
+    # reviewed — a control that silently redirected the diff to another
+    # company's endpoint would be the worst thing on this page.
+    assert flagged == {
+        "post_reviews_to_github",
+        "github_review_event_mode",
+        "openai_base_url",
+    }
 
 
 # ── Writing ───────────────────────────────────────────────────────────────────

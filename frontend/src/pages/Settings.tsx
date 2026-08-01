@@ -25,6 +25,28 @@ interface PendingChange {
 }
 
 /**
+ * What each confirmed setting actually does outside Liffy.
+ *
+ * Keyed rather than branched so adding a fourth does not silently inherit the
+ * wrong warning — the dialog is the only thing standing between a dropdown and
+ * an effect somebody else sees.
+ */
+const CONFIRM_COPY: Record<string, { title: string; body: string }> = {
+  post_reviews_to_github: {
+    title: "Post reviews to real pull requests?",
+    body: "Liffy will write comments to real pull requests on GitHub, visible to everyone with access to the repository. It is off by default for exactly this reason.",
+  },
+  github_review_event_mode: {
+    title: "Send reviews as GitHub review events?",
+    body: "Approve and request changes will be sent as real GitHub review events. A request-changes review blocks a human's merge until it is resolved.",
+  },
+  openai_base_url: {
+    title: "Send your code to a different endpoint?",
+    body: "Every review from now on sends the diff and the retrieved context to this address. If it is not a localhost URL, that means your code leaves this machine and reaches whoever operates that endpoint, under their terms.",
+  },
+};
+
+/**
  * Configure Liffy from inside Liffy, rather than by guessing which of ~35
  * keys in a dotfile matters.
  *
@@ -176,7 +198,18 @@ export function Settings() {
           actions={<span className="label text-ink-dim">Never sent to the browser</span>}
         />
         {data.secrets.map((secret) => (
-          <SecretSettingRow key={secret.key} setting={secret} />
+          <SecretSettingRow
+            key={secret.key}
+            setting={secret}
+            // Every secret stays listed — the page's job is answering "where
+            // is this configured?" for everything. But an unset key belonging
+            // to a provider you did not pick is not a problem, and should not
+            // be dressed as one.
+            relevant={
+              secret.applies_to.length === 0 ||
+              secret.applies_to.includes(provider)
+            }
+          />
         ))}
       </Sheet>
 
@@ -194,11 +227,7 @@ export function Settings() {
         <Modal
           open
           onClose={() => setPending(null)}
-          title={
-            pending.setting.key === "post_reviews_to_github"
-              ? "Post reviews to real pull requests?"
-              : "Send reviews as GitHub review events?"
-          }
+          title={CONFIRM_COPY[pending.setting.key]?.title ?? "Are you sure?"}
           footer={
             <>
               <Button onClick={() => setPending(null)}>Cancel</Button>
@@ -212,9 +241,8 @@ export function Settings() {
               is easier to flip than a merge, and the config comment this
               mirrors exists because a merge should not switch it on either. */}
           <p className="text-base text-ink">
-            {pending.setting.key === "post_reviews_to_github"
-              ? "Liffy will write comments to real pull requests on GitHub, visible to everyone with access to the repository. It is off by default for exactly this reason."
-              : "Approve and request changes will be sent as real GitHub review events. A request-changes review blocks a human's merge until it is resolved."}
+            {CONFIRM_COPY[pending.setting.key]?.body ??
+              "This setting reaches outside Liffy."}
           </p>
           <p className="mt-3 text-sm text-ink-dim">
             This takes effect on the next review, including reviews run by the

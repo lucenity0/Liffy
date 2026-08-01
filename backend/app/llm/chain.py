@@ -396,6 +396,12 @@ class ClaudeCodeReviewLLM:
             "--print",
             user,
             "--output-format", "json",
+            # The same five levels the API takes (low|medium|high|xhigh|max),
+            # and the same cost lever: this provider spends rate-limit quota
+            # rather than money, but effort is still what decides how much.
+            # Leaving it unset meant the settings page offered an effort
+            # control that silently did nothing on this provider.
+            "--effort", settings.anthropic_effort,
             # Replaces Claude Code's own system prompt rather than appending to
             # it. Appending would stack Liffy's reviewer persona on top of the
             # coding-agent persona and pay for both.

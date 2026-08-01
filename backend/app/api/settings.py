@@ -113,6 +113,16 @@ def _describe(db: Session) -> SettingsOut:
             connectable=spec.connectable,
             connect_command=spec.connect_command,
             is_set=bool(getattr(settings, key)),
+            # Same three states as the editable settings, and the same rule:
+            # a stored row is "override", anything else that is set came from
+            # the environment. Only "override" is ours to delete.
+            source=(
+                "override"
+                if key in stored
+                else "env"
+                if getattr(settings, key)
+                else "default"
+            ),
         )
         for key, spec in SECRET_SETTINGS.items()
     ]

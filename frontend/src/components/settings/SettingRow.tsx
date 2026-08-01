@@ -273,10 +273,20 @@ export function SecretSettingRow({
    * The requirement comes from the API and says which of the two this is.
    */
   const settable = setting.connectable && (onConnect || onDisconnect);
+  /**
+   * Only a value this page stored can be disconnected. One from `backend/.env`
+   * reads as set too, and offering Disconnect for it deleted a row that was
+   * never there and re-rendered identically — a button that did nothing, twice,
+   * while behaving correctly. It can still be *replaced*, which is what the
+   * dotfile case actually needs.
+   */
+  const ours = setting.source === "override";
   const help = setting.is_set
-    ? settable
-      ? "Connected. Its value is never sent to the browser."
-      : "Configured in backend/.env. Its value is never sent to the browser."
+    ? ours
+      ? "Connected here. Its value is never sent to the browser."
+      : settable
+        ? "Set in backend/.env. Connect here to use a different one instead — the file is left alone."
+        : "Configured in backend/.env. Its value is never sent to the browser."
     : settable
       ? setting.requirement
       : `${setting.requirement} Set it in backend/.env — see docs/SETUP.md.`;
@@ -295,22 +305,26 @@ export function SecretSettingRow({
             variant="tint"
           >
             {setting.is_set
-              ? settable
+              ? ours
                 ? "Connected"
-                : "Configured"
+                : "From .env"
               : relevant
                 ? "Needs configuring"
                 : "Not configured"}
           </Badge>
-          {setting.is_set
+          {ours
             ? onDisconnect && (
                 <Button size="sm" onClick={onDisconnect}>
                   Disconnect
                 </Button>
               )
             : onConnect && (
-                <Button size="sm" variant="primary" onClick={onConnect}>
-                  Connect
+                <Button
+                  size="sm"
+                  variant={setting.is_set ? "ghost" : "primary"}
+                  onClick={onConnect}
+                >
+                  {setting.is_set ? "Replace" : "Connect"}
                 </Button>
               )}
         </div>

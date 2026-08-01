@@ -62,9 +62,25 @@ export function resetFeedback() {
  */
 let settingsState: SettingsOut = structuredClone(fixtureSettings);
 
+/**
+ * Secrets this mock pretends `backend/.env` also sets.
+ *
+ * Disconnect deletes Liffy's stored copy and the dotfile's value takes over —
+ * which is the case the UI got wrong: it read as "still connected", so the
+ * button appeared to do nothing. Modelling the file here is what lets a test
+ * tell the two apart.
+ */
+const dotenvSecrets = new Set<string>();
+
+/** Put a secret in the mock's `.env`. Cleared by `resetSettings`. */
+export function setDotenvSecret(key: string) {
+  dotenvSecrets.add(key);
+}
+
 /** Wired into setupTests' `afterEach`, alongside `resetFeedback`. */
 export function resetSettings() {
   settingsState = structuredClone(fixtureSettings);
+  dotenvSecrets.clear();
 }
 
 /** The detail fixtures are shared module constants: overlay, never mutate. */
@@ -372,6 +388,7 @@ export const handlers = [
     }
 
     target.is_set = true;
+    target.source = "override";
     settingsState = next;
     return HttpResponse.json(settingsState);
   }),
@@ -385,7 +402,12 @@ export const handlers = [
         { status: 422 },
       );
     }
-    target.is_set = false;
+    // Disconnect drops Liffy's copy; whatever `.env` holds takes over again.
+    // `dotenvSecrets` is what the real backend re-reads from settings — here it
+    // stands in for the file, so the fallback is exercised rather than assumed.
+    const fromDotenv = dotenvSecrets.has(String(params.key));
+    target.is_set = fromDotenv;
+    target.source = fromDotenv ? "env" : "default";
     settingsState = next;
     return HttpResponse.json(settingsState);
   }),

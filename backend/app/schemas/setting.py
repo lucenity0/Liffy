@@ -74,6 +74,17 @@ class SecretSettingOut(BaseModel):
     # The command that produces the value, shown in the connect dialog.
     connect_command: str
     is_set: bool
+    # Where the value comes from — the same three states the editable settings
+    # report, and for the same reason.
+    #
+    # `is_set` alone cannot answer "can I disconnect this?". A credential set in
+    # `backend/.env` and one connected from this page both read as set, so the
+    # page offered Disconnect for a `.env` value, the request deleted a row that
+    # was not there, and the badge came back unchanged — a button that looked
+    # broken while doing exactly what it was asked. Worse, a `.env` token could
+    # not be replaced from the page at all, because Connect only appeared when
+    # nothing was set.
+    source: Source
 
 
 class SecretConnect(BaseModel):

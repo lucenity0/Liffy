@@ -4,6 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "@/mocks/server";
 import { fixtureSettings } from "@/mocks/fixtures";
+import { setDotenvSecret } from "@/mocks/handlers";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { Settings } from "./Settings";
 
@@ -65,7 +66,10 @@ describe("Settings", () => {
     renderPage();
     await screen.findByLabelText("Thinking effort");
 
-    expect(screen.getAllByText("Configured").length).toBeGreaterThan(0);
+    // "From .env", not "Configured": the badge names *where* the value lives,
+    // which is the question this page exists to answer — and the one that
+    // decides whether Disconnect can do anything.
+    expect(screen.getAllByText("From .env").length).toBeGreaterThan(0);
     // The fixture's selected provider has its key set, so nothing is in the
     // "needs configuring" state — the unset keys belong to other providers.
     // That split is asserted on its own further down.
@@ -276,6 +280,58 @@ describe("Settings", () => {
     );
     // Never echoed back, in either direction.
     expect(document.body.textContent).not.toContain("sk-ant-oat01");
+  });
+
+  it("offers Replace, not Disconnect, for a token that came from .env", async () => {
+    /**
+     * The bug this pins, hit in a real session.
+     *
+     * Disconnect had already worked — the stored row was gone — but the token
+     * in `backend/.env` took over, so the row still read as set and the page
+     * still showed Disconnect. Pressing it deleted a row that was not there and
+     * re-rendered identically, so the button looked dead. There was also no way
+     * back: Connect only appeared when nothing was set, so a dotfile token
+     * could not be replaced from the page at all.
+     */
+    const user = userEvent.setup();
+    setDotenvSecret("claude_code_oauth_token");
+    renderPage();
+    await screen.findByLabelText("Provider");
+
+    const row = rowFor("Claude Code OAuth token");
+    await user.click(within(row).getByRole("button", { name: "Connect" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(
+      within(dialog).getByLabelText(/value/i),
+      "sk-ant-oat01-aaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Connect" }));
+
+    await waitFor(() =>
+      expect(
+        within(rowFor("Claude Code OAuth token")).getByText("Connected"),
+      ).toBeInTheDocument(),
+    );
+
+    // Disconnect gives the dotfile's value back — still set, but no longer ours.
+    await user.click(
+      within(rowFor("Claude Code OAuth token")).getByRole("button", {
+        name: "Disconnect",
+      }),
+    );
+
+    const after = await waitFor(() => {
+      const r = rowFor("Claude Code OAuth token");
+      expect(within(r).getByText("From .env")).toBeInTheDocument();
+      return r;
+    });
+    // The button that could only ever no-op is gone, and the way back is not.
+    expect(
+      within(after).queryByRole("button", { name: "Disconnect" }),
+    ).toBeNull();
+    expect(
+      within(after).getByRole("button", { name: "Replace" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps a rejected token on the dialog instead of claiming success", async () => {

@@ -123,8 +123,44 @@ def test_secrets_are_reported_as_set_or_not(seeded, monkeypatch) -> None:
     # neither is derived from the secret itself.
     assert set(by_key["anthropic_api_key"]) == {
         "key", "label", "requirement", "applies_to",
-        "connectable", "connect_command", "is_set",
+        "connectable", "connect_command", "is_set", "source",
     }
+
+
+def test_a_secret_says_whether_the_page_or_the_dotfile_set_it(
+    seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`is_set` cannot answer "can I disconnect this?", so it must not be asked.
+
+    A token in `backend/.env` and one connected from the page both read as set.
+    The page showed Disconnect for both, and on a `.env` value the request
+    deleted a row that was not there and returned an identical document — a
+    button that looked broken while doing exactly what it was told. The `.env`
+    token could not be replaced from the page either, because Connect only
+    appeared when nothing was set at all.
+    """
+    key = "claude_code_oauth_token"
+    monkeypatch.setattr(claude_code_auth.httpx, "get", _unreachable)
+
+    monkeypatch.setattr(settings, key, "")
+    by_key = {s["key"]: s for s in client.get("/settings", headers=seeded["headers"]).json()["secrets"]}
+    assert (by_key[key]["is_set"], by_key[key]["source"]) == (False, "default")
+
+    # Set in the environment, not stored here: reportable, not disconnectable.
+    monkeypatch.setattr(settings, key, "sk-ant-oat01-from-dotenv")
+    by_key = {s["key"]: s for s in client.get("/settings", headers=seeded["headers"]).json()["secrets"]}
+    assert (by_key[key]["is_set"], by_key[key]["source"]) == (True, "env")
+
+    # Connected from the page: the one state Disconnect can act on.
+    _connect(seeded, key, "sk-ant-oat01-" + "c" * 40)
+    by_key = {s["key"]: s for s in client.get("/settings", headers=seeded["headers"]).json()["secrets"]}
+    assert (by_key[key]["is_set"], by_key[key]["source"]) == (True, "override")
+
+    client.delete(f"/settings/secrets/{key}", headers=seeded["headers"])
+    by_key = {s["key"]: s for s in client.get("/settings", headers=seeded["headers"]).json()["secrets"]}
+    # Back to the dotfile's, which is what disconnect promises — and the page
+    # must now say so instead of offering to disconnect it again.
+    assert (by_key[key]["is_set"], by_key[key]["source"]) == (True, "env")
 
 
 def test_an_unset_secret_says_whether_it_is_actually_needed(seeded) -> None:

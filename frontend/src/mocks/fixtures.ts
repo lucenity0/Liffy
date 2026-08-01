@@ -634,6 +634,7 @@ export const fixtureSettings: SettingsOut = {
       connectable: false,
       connect_command: "",
       is_set: true,
+      source: "env",
     },
     {
       key: "openai_api_key",
@@ -643,6 +644,7 @@ export const fixtureSettings: SettingsOut = {
       connectable: false,
       connect_command: "",
       is_set: false,
+      source: "default",
     },
     // Unset, belonging to a provider that isn't selected, and the only one the
     // page may set — the two behaviours that used to be wrong, in one row.
@@ -655,6 +657,7 @@ export const fixtureSettings: SettingsOut = {
       connectable: true,
       connect_command: "claude setup-token",
       is_set: false,
+      source: "default",
     },
     {
       key: "github_token",
@@ -664,6 +667,7 @@ export const fixtureSettings: SettingsOut = {
       connectable: false,
       connect_command: "",
       is_set: true,
+      source: "env",
     },
   ],
 };

@@ -394,6 +394,12 @@ export interface SecretSetting {
   /** The command that produces the value, shown in the connect dialog. */
   connect_command: string;
   is_set: boolean;
+  /**
+   * Where the value came from. `is_set` cannot answer "can I disconnect this?"
+   * — a `.env` token and a connected one both read as set — so only `override`
+   * gets a Disconnect button; the rest get Replace.
+   */
+  source: SettingSource;
 }
 
 export interface SettingsOut {

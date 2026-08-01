@@ -330,9 +330,17 @@ a { color: inherit; }
   cursor: pointer;
   text-decoration: none;
   font-weight: inherit;
+  /* The bar is a fixed 3.25rem, so a wrapped link does not make it taller
+     — it stacks two lines inside the same 52px and spills over the rule. */
+  white-space: nowrap;
 }
 .nav-a:hover { color: var(--ink); }
-@media (max-width: 32rem) { .nav-a.opt { display: none; } }
+/* The two optional links go at 40rem, not 32rem. At 32rem all four still
+   nominally fit — 467px of content in 467px of room at a 524px viewport —
+   and "watch it work" and "how it works" wrapped onto a second line inside
+   the fixed-height bar. They are shortcuts to sections the page scrolls
+   past anyway, so dropping them early costs nothing. */
+@media (max-width: 40rem) { .nav-a.opt { display: none; } }
 /* Even with the two optional links dropped, the wordmark plus HOW IT
    WORKS plus GRAPHITE measured 338px of content in a 320px viewport —
    a horizontal scrollbar on the smallest phones still in use. Tracking
@@ -346,7 +354,11 @@ a { color: inherit; }
 /* ==================================================================== *
  * Hero
  * ==================================================================== */
-.hero { padding: clamp(3.5rem, 10vw, 6.5rem) 0 clamp(2rem, 5vw, 3rem); }
+/* padding-block, never the `padding` shorthand: .hero rides on .pg, and a
+   shorthand here resets .pg's horizontal padding to 0, which put the
+   wordmark and the copy hard against the left edge at every width. Same
+   trap in .sec. */
+.hero { padding-block: clamp(3.5rem, 10vw, 6.5rem) clamp(2rem, 5vw, 3rem); }
 
 /* Two columns: the pitch, and a reserved slot for the illustration.
    The slot carries its aspect-ratio whether or not an image is in it
@@ -482,7 +494,7 @@ a { color: inherit; }
  * every section the same kicker/heading/box rhythm and it read as
  * chapters rather than as a product page.
  * ==================================================================== */
-.sec { padding: clamp(3.5rem, 9vw, 6rem) 0; }
+.sec { padding-block: clamp(3.5rem, 9vw, 6rem); }
 .sec.ruled { border-top: 1px solid var(--rule); }
 .sec-hd { margin-bottom: clamp(1.75rem, 4vw, 2.5rem); }
 
@@ -498,27 +510,11 @@ a { color: inherit; }
 .scrolly { position: relative; }
 .scrolly-track { height: 360vh; }
 @media (max-width: 48rem) { .scrolly-track { height: 300vh; } }
-/* A landscape phone leaves roughly 320px of pane once the nav is taken
-   out, which is less than the frame wants. Trim the parts that explain
-   rather than the parts that show: the rail keeps its numbers but drops
-   its words, the chunk-boundary illustration goes, and the track gets
-   shorter so the sequence does not drag on for five screens of a very
-   short viewport. */
-@media (max-height: 34rem) {
-  .scrolly-track { height: 260vh; }
-  .rail-i { font-size: 0.52rem; padding: 0.35rem 0.3rem; }
-  .rail-i .rail-w { display: none; }
-  .ix-open { display: none; }
-  .frame-bar, .stamp { padding-top: 0.35rem; padding-bottom: 0.35rem; }
-  .ix-query { padding: 0.35rem 0.5rem; font-size: 0.78rem; }
-  /* Measured: at 667x375 the review frame wanted ~259px in a 241px slot.
-     Leading and padding give back more than enough without dropping
-     anything the sequence needs. */
-  .diff { line-height: 1.6; padding: 0.4rem 0; }
-  .pin { margin-top: 0.35rem; margin-bottom: 0.35rem; padding: 0.45rem 0.55rem; }
-  .pin-b { font-size: 0.74rem; line-height: 1.45; }
-  .ctx { padding: 0.35rem 0.5rem; }
-}
+/* The narrow and short-viewport overrides for everything below live at the
+   end of this section, after the rules they override. They were written
+   here, up front next to the track, and every declaration in them lost to
+   the base rule further down — same specificity, later wins — so the whole
+   small-screen pass was inert. */
 
 .stick {
   position: sticky;
@@ -585,41 +581,18 @@ a { color: inherit; }
   text-transform: uppercase;
   color: var(--ink-sub);
 }
-.frame-bar .right { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Same wrap as the nav had: the repo name and the status are one line or
+   the bar grows a second one. The status is the part that changes as the
+   sequence runs, so the repo name is the one that gives way. */
+.frame-bar > * { white-space: nowrap; }
+.frame-bar > :first-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.frame-bar .right { margin-left: auto; font-variant-numeric: tabular-nums; flex: none; }
 .frame-in {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
   min-height: 0;
   flex: 1 1 auto;
 }
-/* Narrow: the retrieval panel moves under the diff instead of being
-   dropped. It was `display: none` here, which removed the one thing the
-   sequence exists to show — that Liffy went and fetched other files —
-   and left a phone visitor watching a comment appear for no visible
-   reason.
-
-   As a row it costs about one line of height: the code preview inside
-   each chunk goes, since there is no width for it and the review comment
-   below already quotes what the macOS script does, but the filenames and
-   their similarity scores stay, and so does the one-at-a-time arrival. */
-@media (max-width: 52rem) {
-  .frame-in { grid-template-columns: minmax(0, 1fr); }
-  .ctx {
-    flex: 0 0 auto;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: stretch;
-    gap: 0.35rem;
-    border-left: none;
-    border-top: 1px solid var(--rule);
-    padding: 0.5rem 0.6rem;
-  }
-  .ctx-hd { flex: 1 0 100%; margin-bottom: 0.1rem; }
-  .chunk { flex: 1 1 8rem; min-width: 0; padding: 0.35rem 0.4rem; }
-  .chunk-c { display: none; }
-  .chunk-f { margin-bottom: 0; font-size: 0.6rem; }
-}
-
 /* --- the diff ----------------------------------------------------- */
 .diff {
   font-family: var(--f-ui);
@@ -718,6 +691,48 @@ a { color: inherit; }
 .chunk.key .chunk-c { color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .chunk { transition: none; } }
 
+/* Narrow: the retrieval panel moves under the diff instead of being
+   dropped. It was `display: none` here, which removed the one thing the
+   sequence exists to show — that Liffy went and fetched other files —
+   and left a phone visitor watching a comment appear for no visible
+   reason.
+
+   As a row it costs about one line of height: the code preview inside
+   each chunk goes, since there is no width for it and the review comment
+   below already quotes what the macOS script does, but the filenames and
+   their similarity scores stay, and so does the one-at-a-time arrival. */
+@media (max-width: 52rem) {
+  /* Stacked, the frame needs the height the two columns used to share.
+     34rem was cutting the query panel through the middle of a line while
+     leaving ~300px of the sticky pane empty above the rail — the cap was
+     the thing clipping, not the content. `flex: 1 1 auto` still shrinks
+     the frame to whatever the pane actually has, so this only raises the
+     ceiling; it never forces the frame past the fold.
+
+     `flex: 0 1 auto` with it: stacked, the frame should be as tall as its
+     contents and no taller. Growing into the whole pane just reopened the
+     same gap lower down, as slack inside the file list and the store. */
+  .frame { flex: 0 1 auto; max-height: 42rem; }
+  .frame-in { grid-template-columns: minmax(0, 1fr); }
+  .ctx {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.35rem;
+    border-left: none;
+    border-top: 1px solid var(--rule);
+    padding: 0.5rem 0.6rem;
+  }
+  /* Scoped to .ctx: .ix-store reuses .ctx-hd, and it stays a column here.
+     Unscoped, `flex: 1 0 100%` reads as full *height* in that column and
+     the label grew to fill the store, pushing the cells out of the frame. */
+  .ctx > .ctx-hd { flex: 1 0 100%; margin-bottom: 0.1rem; }
+  .chunk { flex: 1 1 8rem; min-width: 0; padding: 0.35rem 0.4rem; }
+  .chunk-c { display: none; }
+  .chunk-f { margin-bottom: 0; font-size: 0.6rem; }
+}
+
 /* --- verdict stamp ------------------------------------------------- */
 .stamp {
   display: flex;
@@ -746,22 +761,6 @@ a { color: inherit; }
  * at setup-macos.sh?
  * ==================================================================== */
 .ix { grid-template-columns: minmax(0, 1fr) minmax(0, 17rem); }
-/* Same fix, same reason: the store was hidden here, so on a phone the
-   indexing sequence counted files and then nothing visibly happened.
-   Underneath the file list it has the full width, so the 120 cells go
-   from a 12-column block to a 24-column strip about five rows deep. */
-@media (max-width: 52rem) {
-  .ix { grid-template-columns: minmax(0, 1fr); }
-  .ix-store {
-    flex: 0 0 auto;
-    border-left: none;
-    border-top: 1px solid var(--rule);
-    padding: 0.5rem 0.6rem;
-    gap: 0.45rem;
-  }
-  .cells { grid-template-columns: repeat(24, minmax(0, 1fr)); }
-  .ix-hit { margin-top: 0; }
-}
 
 .ix-files { padding: 0.7rem 0; min-width: 0; overflow: hidden; }
 .ixf {
@@ -856,6 +855,67 @@ a { color: inherit; }
 }
 .ix-hit.on { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .ix-hit { transition: none; } }
+
+/* Same fix, same reason: the store was hidden here, so on a phone the
+   indexing sequence counted files and then nothing visibly happened.
+   Underneath the file list it has the full width, so the 120 cells go
+   from a 12-column block to a 24-column strip about five rows deep. */
+@media (max-width: 52rem) {
+  .ix { grid-template-columns: minmax(0, 1fr); }
+  .ix-store {
+    flex: 0 0 auto;
+    border-left: none;
+    border-top: 1px solid var(--rule);
+    padding: 0.5rem 0.6rem;
+    gap: 0.45rem;
+  }
+  .cells { grid-template-columns: repeat(24, minmax(0, 1fr)); }
+  .ix-hit { margin-top: 0; }
+}
+
+/* The smallest phones are the one place the file list still does not fit
+   whole, so the chunk-boundary illustration goes — the same call the
+   short-viewport block makes, for the same reason. The five files, their
+   chunk counts and the query are what stage 02 and stage 04 are about;
+   the illustration is the part that explains rather than shows. */
+@media (max-width: 28rem) {
+  .ix-open { display: none; }
+}
+
+/* A landscape phone leaves roughly 320px of pane once the nav is taken
+   out, which is less than the frame wants. Trim the parts that explain
+   rather than the parts that show: the rail keeps its numbers but drops
+   its words, the chunk-boundary illustration goes, and the track gets
+   shorter so the sequence does not drag on for five screens of a very
+   short viewport.
+
+   Last in the section on purpose: a landscape phone matches this and the
+   52rem blocks above at once, and where they touch the same property
+   (.ctx padding) this one is the one that has to win. */
+@media (max-height: 34rem) {
+  .scrolly-track { height: 260vh; }
+  .rail-i { font-size: 0.52rem; padding: 0.35rem 0.3rem; }
+  .rail-i .rail-w { display: none; }
+  .ix-open { display: none; }
+  .frame-bar, .stamp { padding-top: 0.35rem; padding-bottom: 0.35rem; }
+  .ix-query { padding: 0.35rem 0.5rem; font-size: 0.78rem; }
+  /* Measured: at 667x375 the review frame wanted ~259px in a 241px slot.
+     Leading and padding give back more than enough without dropping
+     anything the sequence needs. */
+  .diff { line-height: 1.6; padding: 0.4rem 0; }
+  .pin { margin-top: 0.35rem; margin-bottom: 0.35rem; padding: 0.45rem 0.55rem; }
+  .pin-b { font-size: 0.74rem; line-height: 1.45; }
+  .ctx { padding: 0.35rem 0.5rem; }
+  /* The indexing frame is the tighter of the two here, because the file
+     list and the store are stacked. Same trade as the diff: leading and
+     padding first, then the store goes from a five-row block to a
+     two-row strip, which still reads as "the store filling up" and buys
+     the file list back the rows it was clipping mid-line. */
+  .ix-files { padding: 0.3rem 0; }
+  .ixf { line-height: 1.45; padding-top: 0.1rem; padding-bottom: 0.1rem; }
+  .ix-store { gap: 0.3rem; }
+  .cells { grid-template-columns: repeat(60, minmax(0, 1fr)); }
+}
 
 .pill {
   font-family: var(--f-ui);

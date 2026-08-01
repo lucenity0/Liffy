@@ -69,7 +69,21 @@ class SecretSettingOut(BaseModel):
     requirement: str
     # The `llm_provider` values this credential matters for; empty means always.
     applies_to: list[str]
+    # True when the page can set this one, rather than only report on it.
+    connectable: bool
+    # The command that produces the value, shown in the connect dialog.
+    connect_command: str
     is_set: bool
+
+
+class SecretConnect(BaseModel):
+    """A credential submitted from the settings page.
+
+    Write-only in both directions: it arrives here and is never echoed back —
+    the settings document reports `is_set` and nothing else, before and after.
+    """
+
+    value: str
 
 
 class SettingsOut(BaseModel):

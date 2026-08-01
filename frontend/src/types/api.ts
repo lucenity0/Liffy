@@ -389,6 +389,10 @@ export interface SecretSetting {
   requirement: string;
   /** `llm_provider` values this credential matters for; empty means always. */
   applies_to: string[];
+  /** True when the page may set this one, rather than only report on it. */
+  connectable: boolean;
+  /** The command that produces the value, shown in the connect dialog. */
+  connect_command: string;
   is_set: boolean;
 }
 

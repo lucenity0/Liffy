@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Field";
 import type {
   EditableSetting,
@@ -256,19 +257,29 @@ export function ReadOnlySettingRow({ setting }: { setting: ReadOnlySetting }) {
 export function SecretSettingRow({
   setting,
   relevant = true,
+  onConnect,
+  onDisconnect,
 }: {
   setting: SecretSetting;
   /** False when this credential belongs to a provider that isn't selected. */
   relevant?: boolean;
+  /** Present only for credentials the page is allowed to set. */
+  onConnect?: () => void;
+  onDisconnect?: () => void;
 }) {
   /**
    * "Not configured" is the right answer twice over — for a key nobody needs
    * and for the one the review depends on — so it cannot be the whole answer.
    * The requirement comes from the API and says which of the two this is.
    */
+  const settable = setting.connectable && (onConnect || onDisconnect);
   const help = setting.is_set
-    ? "Configured in backend/.env. Its value is never sent to the browser."
-    : `${setting.requirement} Set it in backend/.env — see docs/SETUP.md.`;
+    ? settable
+      ? "Connected. Its value is never sent to the browser."
+      : "Configured in backend/.env. Its value is never sent to the browser."
+    : settable
+      ? setting.requirement
+      : `${setting.requirement} Set it in backend/.env — see docs/SETUP.md.`;
 
   return (
     <Shell
@@ -276,18 +287,33 @@ export function SecretSettingRow({
       help={relevant ? help : `Not used by the selected provider. ${help}`}
       meta={null}
       control={
-        // No input, and no masked value: a mask still discloses the length,
-        // and a length is a real hint about a token.
-        <Badge
-          tone={setting.is_set ? "sage" : relevant ? "ochre" : "neutral"}
-          variant="tint"
-        >
+        <div className="flex items-center gap-2">
+          {/* No input, and no masked value: a mask still discloses the length,
+              and a length is a real hint about a token. */}
+          <Badge
+            tone={setting.is_set ? "sage" : relevant ? "ochre" : "neutral"}
+            variant="tint"
+          >
+            {setting.is_set
+              ? settable
+                ? "Connected"
+                : "Configured"
+              : relevant
+                ? "Needs configuring"
+                : "Not configured"}
+          </Badge>
           {setting.is_set
-            ? "Configured"
-            : relevant
-              ? "Needs configuring"
-              : "Not configured"}
-        </Badge>
+            ? onDisconnect && (
+                <Button size="sm" onClick={onDisconnect}>
+                  Disconnect
+                </Button>
+              )
+            : onConnect && (
+                <Button size="sm" variant="primary" onClick={onConnect}>
+                  Connect
+                </Button>
+              )}
+        </div>
       }
     />
   );

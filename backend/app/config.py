@@ -179,7 +179,7 @@ class Settings(BaseSettings):
         """Consult the runtime override store before the field's own value.
 
         This is what makes SETTINGS-1's "change it in the app" real. The store
-        is keyed only by the eight names in ``EDITABLE_SETTINGS``, and the
+        is keyed by ``EDITABLE_SETTINGS`` plus ``CONNECTABLE_SECRETS``, and the
         membership test is against a module-level frozenset rather than
         anything on ``self`` — so this adds one hash lookup per attribute read
         and cannot recurse.
@@ -575,6 +575,19 @@ class SecretSetting:
     # Which `llm_provider` values this credential is relevant to. Empty means
     # it is not provider-specific (Liffy's own secrets, GitHub's).
     applies_to: tuple[str, ...] = ()
+    # Can be connected from the settings page instead of backend/.env.
+    #
+    # Off for everything by default, and it should stay that way for most of
+    # these. A settings page that could write `jwt_secret_key` would be a way
+    # to forge sessions, and `github_token` belongs to an account rather than
+    # to this install. The subscription token is the case that earns it: it is
+    # personal, it is revocable from Anthropic's side, and requiring a dotfile
+    # edit to use the provider the page is offering you makes the page a liar.
+    connectable: bool = False
+    # The command that produces the value, shown in the connect dialog. The
+    # CLI's login is a browser flow with no headless mode, so Liffy cannot run
+    # it for you — it can only stop you having to edit a file afterwards.
+    connect_command: str = ""
 
 
 # Never sent to the frontend — not the value, not a masked value, not a length.
@@ -616,8 +629,17 @@ SECRET_SETTINGS: dict[str, SecretSetting] = {
         "Only needed in Docker. Running on the host, the CLI reads your own "
         "login and this stays empty.",
         applies_to=("claude_code",),
+        connectable=True,
+        connect_command="claude setup-token",
     ),
 }
+
+# The subset the settings page may write. Everything else stays .env-only, and
+# `update_settings` still refuses every secret without exception — connecting
+# goes through its own endpoint rather than widening the general one.
+CONNECTABLE_SECRETS: tuple[str, ...] = tuple(
+    key for key, spec in SECRET_SETTINGS.items() if spec.connectable
+)
 
 def redact_url_credentials(value: Any) -> Any:
     """Mask the password in a URL-shaped read-only value.
@@ -653,7 +675,13 @@ def redact_url_credentials(value: Any) -> Any:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
-_OVERRIDABLE: frozenset[str] = frozenset(EDITABLE_SETTINGS)
+# Editable settings plus the credentials the page can connect. Both are read
+# through the same store, and both have to be in here or the value is written,
+# reported as configured, and never actually read — which is the one outcome
+# worse than not offering the control at all.
+_OVERRIDABLE: frozenset[str] = frozenset(EDITABLE_SETTINGS) | frozenset(
+    CONNECTABLE_SECRETS
+)
 
 # The live override store, read by ``Settings.__getattribute__``.
 #

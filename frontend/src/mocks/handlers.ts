@@ -345,4 +345,48 @@ export const handlers = [
     settingsState = next;
     return HttpResponse.json(settingsState);
   }),
+
+  /**
+   * Connecting a credential from the page.
+   *
+   * Enforces the two rules that matter, so `dev:mock` cannot make a forbidden
+   * write look like it worked: only `connectable` keys are accepted, and the
+   * value is never echoed back into the document.
+   */
+  http.post("*/settings/secrets/:key", async ({ params, request }) => {
+    const { value } = (await request.json()) as { value: string };
+    const next = structuredClone(settingsState);
+    const target = next.secrets.find((entry) => entry.key === params.key);
+
+    if (!target?.connectable) {
+      return HttpResponse.json(
+        { detail: `'${params.key}' cannot be connected from the settings page.` },
+        { status: 422 },
+      );
+    }
+    if (value.trim().length < 20 || /\s/.test(value.trim())) {
+      return HttpResponse.json(
+        { detail: "That does not look like a token." },
+        { status: 422 },
+      );
+    }
+
+    target.is_set = true;
+    settingsState = next;
+    return HttpResponse.json(settingsState);
+  }),
+
+  http.delete("*/settings/secrets/:key", ({ params }) => {
+    const next = structuredClone(settingsState);
+    const target = next.secrets.find((entry) => entry.key === params.key);
+    if (!target?.connectable) {
+      return HttpResponse.json(
+        { detail: `'${params.key}' is not a connected credential.` },
+        { status: 422 },
+      );
+    }
+    target.is_set = false;
+    settingsState = next;
+    return HttpResponse.json(settingsState);
+  }),
 ];

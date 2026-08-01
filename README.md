@@ -124,11 +124,17 @@ CLIs installed on its own; by hand that is
 docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
 ```
 
-For **`claude_code`**, mint a token on the host and put it in `backend/.env`:
+For **`claude_code`**, mint a token on the host:
 
 ```bash
 claude setup-token          # → CLAUDE_CODE_OAUTH_TOKEN=...
 ```
+
+Then either paste it into **Settings → Secrets → Connect**, which stores it in
+Liffy and applies from the next review, or put it in `backend/.env` if you would
+rather keep every credential in one file. The CLI's login is a browser flow with
+no headless mode, so the one command is unavoidable either way — what the page
+saves you is the dotfile edit and the restart.
 
 For **`codex`**, there is no equivalent — and that is worth being clear about
 rather than papering over. The Codex CLI has no auth environment variable, and

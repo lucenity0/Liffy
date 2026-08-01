@@ -244,6 +244,76 @@ describe("Settings", () => {
     );
   });
 
+  // ── Connecting an account from the page ─────────────────────────────────
+  //
+  // The page's whole premise is that nobody should have to find the right line
+  // in a dotfile. Selecting `claude_code` used to break that premise
+  // immediately, by telling you to go and edit one.
+
+  it("connects the subscription token without leaving the page", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByLabelText("Provider");
+
+    const row = rowFor("Claude Code OAuth token");
+    await user.click(within(row).getByRole("button", { name: /connect/i }));
+
+    // The command is shown because Liffy cannot run it — the CLI's login is a
+    // browser flow with no headless mode.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("claude setup-token");
+
+    await user.type(
+      within(dialog).getByLabelText(/value/i),
+      "sk-ant-oat01-aaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Connect" }));
+
+    await waitFor(() =>
+      expect(
+        within(rowFor("Claude Code OAuth token")).getByText("Connected"),
+      ).toBeInTheDocument(),
+    );
+    // Never echoed back, in either direction.
+    expect(document.body.textContent).not.toContain("sk-ant-oat01");
+  });
+
+  it("keeps a rejected token on the dialog instead of claiming success", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByLabelText("Provider");
+
+    await user.click(
+      within(rowFor("Claude Code OAuth token")).getByRole("button", {
+        name: /connect/i,
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/value/i), "too-short");
+    await user.click(within(dialog).getByRole("button", { name: "Connect" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      /does not look like a token/i,
+    );
+    // A green badge for a token that never worked is the failure this replaces.
+    expect(
+      within(rowFor("Claude Code OAuth token")).getByText("Not configured"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers no connect action for credentials the page may not set", async () => {
+    renderPage();
+    await screen.findByLabelText("Provider");
+
+    // `jwt_secret_key` signs sessions and `github_token` belongs to an
+    // account; a settings page able to write either would be a hole.
+    for (const label of ["GitHub token", "Anthropic API key"]) {
+      expect(
+        within(rowFor(label)).queryByRole("button", { name: /connect/i }),
+      ).toBeNull();
+    }
+  });
+
   it("confirms before pointing the reviewer at a different endpoint", async () => {
     const user = userEvent.setup();
     renderPage();

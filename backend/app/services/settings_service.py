@@ -13,6 +13,11 @@ read filters through ``EDITABLE_SETTINGS`` and every value goes through the
 same ``SettingSpec.parse`` a PATCH would use — a row for ``database_url``, or
 an ``anthropic_effort`` of ``"ludicrous"`` hand-inserted with psql, is dropped
 on load rather than applied.
+
+``CONNECTABLE_SECRETS`` is the one addition to that filter, and it does not
+weaken it: those keys are still refused by ``update_settings``, and are only
+written through ``connect_secret`` below. The allowlist grew by one door with
+its own lock; it did not become a corridor.
 """
 
 import uuid
@@ -23,11 +28,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import (
+    CONNECTABLE_SECRETS,
     EDITABLE_SETTINGS,
     SettingError,
     apply_overrides,
     settings,
 )
+from app.llm.claude_code_auth import verify_token
 from app.models.setting import Setting
 
 log = structlog.get_logger(__name__)
@@ -43,6 +50,12 @@ def load_overrides(db: Session) -> dict[str, Any]:
     """
     resolved: dict[str, Any] = {}
     for row in db.scalars(select(Setting)):
+        if row.key in CONNECTABLE_SECRETS:
+            # A connected credential. No spec to parse it with and nothing to
+            # validate here — it was checked against Anthropic when it was
+            # connected, and the stored form is the value itself.
+            resolved[row.key] = row.value
+            continue
         spec = EDITABLE_SETTINGS.get(row.key)
         if spec is None:
             # Not on the allowlist. Being in the database is not a promotion.
@@ -123,4 +136,54 @@ def update_settings(
     # Invalidate immediately rather than on a TTL: "I changed it and nothing
     # happened" for however long the TTL lasts is exactly the confusion this
     # feature exists to remove.
+    return refresh_overrides(db)
+
+
+def connect_secret(
+    db: Session, key: str, value: str, user_id: uuid.UUID | None
+) -> dict[str, Any]:
+    """Store a connectable credential from the UI, verified first.
+
+    Deliberately a separate function from ``update_settings`` rather than a
+    relaxation of it. That one refuses every secret, without exception, and it
+    should keep refusing them — the property worth protecting is that a normal
+    settings write can never touch a credential, not that credentials can never
+    be written at all. This is the narrow, named door.
+
+    The value lands in the settings table, which means it is in Postgres rather
+    than only in ``backend/.env``. That is the actual cost of connecting from
+    the page, and it is the right trade for this one credential: it belongs to
+    one person, it is revocable at Anthropic, and the alternative was telling
+    someone to edit a dotfile and restart to use a provider the page had just
+    offered them.
+    """
+    if key not in CONNECTABLE_SECRETS:
+        raise SettingError(f"{key!r} cannot be connected from the settings page.")
+
+    verify_token(value)
+    cleaned = value.strip()
+
+    row = db.get(Setting, key)
+    if row is None:
+        db.add(Setting(key=key, value=cleaned, updated_by=user_id))
+    else:
+        row.value = cleaned
+        row.updated_by = user_id
+    db.commit()
+    return refresh_overrides(db)
+
+
+def disconnect_secret(db: Session, key: str) -> dict[str, Any]:
+    """Forget a connected credential.
+
+    Deletes the row, so whatever ``backend/.env`` says takes over again — the
+    same "back to the default removes the row" rule the editable settings use.
+    Revoking the token itself is Anthropic's side and not something Liffy can
+    or should do on your behalf.
+    """
+    if key not in CONNECTABLE_SECRETS:
+        raise SettingError(f"{key!r} is not a connected credential.")
+
+    db.execute(delete(Setting).where(Setting.key == key))
+    db.commit()
     return refresh_overrides(db)

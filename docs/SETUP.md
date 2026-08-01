@@ -332,11 +332,18 @@ docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --bui
 
 **2. Credentials the container can reach**, and this differs per provider.
 
-*Claude Code* takes a token. Mint it on the host, put it in `backend/.env`:
+*Claude Code* takes a token. Mint it on the host:
 
 ```bash
 claude setup-token          # → CLAUDE_CODE_OAUTH_TOKEN=...
 ```
+
+Paste it into **Settings → Secrets → Connect** and you are done — it is checked
+with Anthropic, stored in Liffy's database, and picked up by the worker on the
+next review with no restart. Putting it in `backend/.env` as
+`CLAUDE_CODE_OAUTH_TOKEN` still works and takes precedence in the sense that it
+is what a disconnect falls back to; use it if you would rather every credential
+lived in one file.
 
 *Codex* has no token login. Measured against codex-cli 0.146: there is no auth
 environment variable, and `codex login --with-access-token` rejects a ChatGPT

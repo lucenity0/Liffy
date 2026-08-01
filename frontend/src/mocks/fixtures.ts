@@ -631,6 +631,8 @@ export const fixtureSettings: SettingsOut = {
       label: "Anthropic API key",
       requirement: "Required by this provider — reviews fail without it.",
       applies_to: ["anthropic"],
+      connectable: false,
+      connect_command: "",
       is_set: true,
     },
     {
@@ -638,16 +640,20 @@ export const fixtureSettings: SettingsOut = {
       label: "OpenAI API key",
       requirement: "Required by this provider.",
       applies_to: ["openai"],
+      connectable: false,
+      connect_command: "",
       is_set: false,
     },
-    // Unset and belonging to a provider that isn't selected — the case that
-    // used to read as a broken install.
+    // Unset, belonging to a provider that isn't selected, and the only one the
+    // page may set — the two behaviours that used to be wrong, in one row.
     {
       key: "claude_code_oauth_token",
       label: "Claude Code OAuth token",
       requirement:
         "Only needed in Docker. Running on the host, the CLI reads your own login and this stays empty.",
       applies_to: ["claude_code"],
+      connectable: true,
+      connect_command: "claude setup-token",
       is_set: false,
     },
     {
@@ -655,6 +661,8 @@ export const fixtureSettings: SettingsOut = {
       label: "GitHub token",
       requirement: "Required to read repositories and post reviews.",
       applies_to: [],
+      connectable: false,
+      connect_command: "",
       is_set: true,
     },
   ],

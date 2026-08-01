@@ -8,10 +8,24 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401
 from app.config import SECRET_SETTINGS, apply_overrides, settings
 from app.database import Base, get_db
+from app.llm import claude_code_auth
 from app.main import app
 from app.models.setting import Setting
+from app.services.settings_service import refresh_overrides
 
 client = TestClient(app)
+
+
+def _unreachable(*args, **kwargs):
+    """Anthropic not reachable — the verifier's documented accept-anyway path."""
+    raise RuntimeError("no network in tests")
+
+
+class _Rejecting:
+    """Anthropic answering "no". The one outcome that refuses a connect."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
 
 # Distinctive enough that finding one in a response body cannot be a
 # coincidence, and long enough not to appear as a substring by accident.
@@ -108,7 +122,8 @@ def test_secrets_are_reported_as_set_or_not(seeded, monkeypatch) -> None:
     # name. `requirement` and `applies_to` describe what an unset key *means*;
     # neither is derived from the secret itself.
     assert set(by_key["anthropic_api_key"]) == {
-        "key", "label", "requirement", "applies_to", "is_set",
+        "key", "label", "requirement", "applies_to",
+        "connectable", "connect_command", "is_set",
     }
 
 
@@ -332,3 +347,123 @@ def test_credential_free_urls_are_left_alone(seeded, monkeypatch) -> None:
     by_key = {s["key"]: s["value"] for s in body["read_only"]}
 
     assert by_key["database_url"] == "postgresql://localhost/liffy"
+
+
+# ── Connecting a credential from the page ─────────────────────────────────────
+#
+# The settings page exists so nobody has to find the right line in a dotfile.
+# That was false for the one credential the page itself invites you to need:
+# selecting `claude_code` told you to go and edit .env.
+
+def _connect(seeded, key: str, value: str):
+    return client.post(
+        f"/settings/secrets/{key}",
+        json={"value": value},
+        headers=seeded["headers"],
+    )
+
+
+def test_connecting_stores_the_token_and_reports_it_configured(
+    seeded, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+    # Anthropic is not reachable from the test suite; the verifier's documented
+    # behaviour is to accept when it cannot ask.
+    monkeypatch.setattr(claude_code_auth.httpx, "get", _unreachable)
+
+    response = _connect(seeded, "claude_code_oauth_token", "sk-ant-oat01-" + "x" * 40)
+
+    assert response.status_code == 200
+    by_key = {s["key"]: s for s in response.json()["secrets"]}
+    assert by_key["claude_code_oauth_token"]["is_set"] is True
+    # Still never the value — connecting does not turn a secret into a setting.
+    assert "value" not in by_key["claude_code_oauth_token"]
+    assert "sk-ant-oat01" not in response.text
+
+
+def test_a_connected_token_reaches_the_worker(seeded, monkeypatch) -> None:
+    """A row nothing reads is the same as no row.
+
+    `load_overrides` drops keys that are not editable, and secrets are not
+    editable — so without an explicit carve-out the token would store, report
+    "Configured", and never be applied to a review.
+    """
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+    monkeypatch.setattr(claude_code_auth.httpx, "get", _unreachable)
+    token = "sk-ant-oat01-" + "y" * 40
+
+    _connect(seeded, "claude_code_oauth_token", token)
+
+    # What the worker does at the start of every review.
+    with seeded["factory"]() as db:
+        refresh_overrides(db)
+    assert settings.claude_code_oauth_token == token
+
+
+def test_anthropic_rejecting_the_token_is_a_422(seeded, monkeypatch) -> None:
+    """A green badge for a dead token is the failure this check exists to stop."""
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+    monkeypatch.setattr(
+        claude_code_auth.httpx, "get", lambda *a, **k: _Rejecting(401)
+    )
+
+    response = _connect(seeded, "claude_code_oauth_token", "sk-ant-oat01-" + "z" * 40)
+
+    assert response.status_code == 422
+    assert "rejected" in response.json()["detail"].lower()
+
+
+def test_an_unreachable_check_does_not_block_connecting(seeded, monkeypatch) -> None:
+    """Being offline must not stop someone saving their own valid credential."""
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+    monkeypatch.setattr(claude_code_auth.httpx, "get", _unreachable)
+
+    assert _connect(seeded, "claude_code_oauth_token", "sk-ant-oat01-" + "q" * 40).status_code == 200
+
+
+def test_obvious_paste_mistakes_are_caught_without_a_round_trip(
+    seeded, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+
+    for bad in ("", "   ", "short", "has a space in it aaaaaaaaaaaaaaaaaaaaaa"):
+        response = _connect(seeded, "claude_code_oauth_token", bad)
+        assert response.status_code == 422, bad
+
+
+def test_only_connectable_secrets_can_be_written(seeded, monkeypatch) -> None:
+    """The endpoint is a door, not a corridor.
+
+    `PATCH /settings` refuses every secret and keeps refusing them; this route
+    accepts exactly the ones marked connectable. A settings page able to write
+    `jwt_secret_key` would be a way to forge sessions.
+    """
+    monkeypatch.setattr(claude_code_auth.httpx, "get", _unreachable)
+
+    for key in ("jwt_secret_key", "github_token", "anthropic_api_key"):
+        response = _connect(seeded, key, "x" * 50)
+        assert response.status_code == 422, key
+        # Refused, not quietly stored: the canary is still what it was.
+        assert getattr(settings, key) == SECRET_CANARIES[key]
+
+
+def test_disconnecting_falls_back_to_env(seeded, monkeypatch) -> None:
+    monkeypatch.setattr(claude_code_auth.httpx, "get", _unreachable)
+    _connect(seeded, "claude_code_oauth_token", "sk-ant-oat01-" + "w" * 40)
+
+    response = client.delete(
+        "/settings/secrets/claude_code_oauth_token", headers=seeded["headers"]
+    )
+
+    assert response.status_code == 200
+    by_key = {s["key"]: s for s in response.json()["secrets"]}
+    assert by_key["claude_code_oauth_token"]["is_set"] is False
+
+
+def test_connecting_requires_authentication() -> None:
+    assert client.post(
+        "/settings/secrets/claude_code_oauth_token", json={"value": "x" * 50}
+    ).status_code in (401, 403)
+    assert client.delete(
+        "/settings/secrets/claude_code_oauth_token"
+    ).status_code in (401, 403)

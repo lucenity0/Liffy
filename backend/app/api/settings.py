@@ -12,16 +12,20 @@ from app.config import (
     settings,
 )
 from app.database import get_db
+from app.llm.claude_code_auth import TokenRejected
 from app.llm.codex_models import discover_codex_models
 from app.models.user import User
 from app.schemas.setting import (
     EditableSettingOut,
     ReadOnlySettingOut,
+    SecretConnect,
     SecretSettingOut,
     SettingsOut,
     SettingsPatch,
 )
 from app.services.settings_service import (
+    connect_secret,
+    disconnect_secret,
     effective_value,
     env_value,
     load_overrides,
@@ -106,6 +110,8 @@ def _describe(db: Session) -> SettingsOut:
             label=spec.label,
             requirement=spec.requirement,
             applies_to=list(spec.applies_to),
+            connectable=spec.connectable,
+            connect_command=spec.connect_command,
             is_set=bool(getattr(settings, key)),
         )
         for key, spec in SECRET_SETTINGS.items()
@@ -155,5 +161,50 @@ def patch_settings(
     except SettingError as exc:
         # 422 with the offending message, so the frontend can put it on the
         # field instead of raising a page-level error over one bad character.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _describe(db)
+
+
+@router.post("/settings/secrets/{key}", response_model=SettingsOut)
+def connect_secret_endpoint(
+    key: str,
+    payload: SecretConnect,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> SettingsOut:
+    """Connect a credential from the page instead of from `backend/.env`.
+
+    Its own endpoint rather than a widening of `PATCH /settings`, which still
+    refuses every secret. Only keys marked `connectable` are accepted; anything
+    else is 422, including the other secrets in the same list.
+
+    The token is checked against Anthropic before it is stored, so the
+    "Configured" badge means the credential worked rather than that a string
+    was submitted. A check that cannot run does not block the save — see
+    `claude_code_auth`.
+    """
+    try:
+        connect_secret(db, key, payload.value, user.id)
+    except TokenRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SettingError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _describe(db)
+
+
+@router.delete("/settings/secrets/{key}", response_model=SettingsOut)
+def disconnect_secret_endpoint(
+    key: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> SettingsOut:
+    """Forget a connected credential, falling back to whatever `.env` says.
+
+    Does not revoke the token at Anthropic — that is their side, and a button
+    here that implied otherwise would be worse than no button.
+    """
+    try:
+        disconnect_secret(db, key)
+    except SettingError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _describe(db)

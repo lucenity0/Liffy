@@ -9,9 +9,15 @@ import {
   ReadOnlySettingRow,
   SecretSettingRow,
 } from "@/components/settings/SettingRow";
-import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
+import { Input } from "@/components/ui/Field";
+import {
+  useConnectSecret,
+  useDisconnectSecret,
+  useSettings,
+  useUpdateSettings,
+} from "@/hooks/useSettings";
 import { normalizeApiError } from "@/lib/errors";
-import type { EditableSetting } from "@/types/api";
+import type { EditableSetting, SecretSetting } from "@/types/api";
 
 const GROUPS = [
   { id: "review_model", title: "Review model" },
@@ -64,6 +70,24 @@ export function Settings() {
   /** Only keys the user has actually touched, so a save sends nothing else. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<PendingChange | null>(null);
+  /** The credential whose connect dialog is open, if any. */
+  const [connecting, setConnecting] = useState<SecretSetting | null>(null);
+  const [token, setToken] = useState("");
+  const connect = useConnectSecret();
+  const disconnect = useDisconnectSecret();
+
+  function submitToken() {
+    if (!connecting) return;
+    connect.mutate(
+      { key: connecting.key, value: token },
+      {
+        onSuccess: () => {
+          setConnecting(null);
+          setToken("");
+        },
+      },
+    );
+  }
 
   const valueOf = (setting: EditableSetting) =>
     drafts[setting.key] ?? String(setting.value);
@@ -200,6 +224,17 @@ export function Settings() {
         {data.secrets.map((secret) => (
           <SecretSettingRow
             key={secret.key}
+            // Only credentials the backend marks connectable get the action —
+            // the rest stay report-only, which is what keeps `jwt_secret_key`
+            // out of reach of a settings request.
+            onConnect={
+              secret.connectable ? () => setConnecting(secret) : undefined
+            }
+            onDisconnect={
+              secret.connectable
+                ? () => disconnect.mutate(secret.key)
+                : undefined
+            }
             setting={secret}
             // Every secret stays listed — the page's job is answering "where
             // is this configured?" for everything. But an unset key belonging
@@ -247,6 +282,71 @@ export function Settings() {
           <p className="mt-3 text-sm text-ink-dim">
             This takes effect on the next review, including reviews run by the
             worker. You can turn it off again here at any time.
+          </p>
+        </Modal>
+      )}
+
+      {connecting && (
+        <Modal
+          open
+          onClose={() => {
+            setConnecting(null);
+            setToken("");
+          }}
+          title={`Connect ${connecting.label}`}
+          footer={
+            <>
+              <Button
+                onClick={() => {
+                  setConnecting(null);
+                  setToken("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={connect.isPending}
+                disabled={!token.trim()}
+                onClick={submitToken}
+              >
+                Connect
+              </Button>
+            </>
+          }
+        >
+          {/* Liffy cannot run the login for you: the CLI's is a browser flow
+              with no headless mode. What it can do is be the last place the
+              value has to go, instead of sending you to a dotfile. */}
+          <p className="text-base text-ink">
+            Run this on the machine you are signed in on, then paste what it
+            prints:
+          </p>
+          <pre className="mt-2 overflow-x-auto rounded-chip bg-recessed px-3 py-2 font-code text-sm text-ink">
+            {connecting.connect_command}
+          </pre>
+          <Input
+            className="mt-3 w-full"
+            type="password"
+            autoFocus
+            aria-label={`${connecting.label} value`}
+            value={token}
+            placeholder="Paste the token"
+            onChange={(event) => setToken(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && token.trim()) submitToken();
+            }}
+          />
+          {connect.isError && (
+            <p role="alert" className="mt-2 text-sm text-oxide">
+              {normalizeApiError(connect.error).message}
+            </p>
+          )}
+          <p className="mt-3 text-sm text-ink-dim">
+            Checked with Anthropic before it is stored, then kept in Liffy's
+            database — not in backend/.env. It is never sent back to the
+            browser, and Disconnect removes it here without revoking it at
+            Anthropic.
           </p>
         </Modal>
       )}

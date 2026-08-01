@@ -140,22 +140,33 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
           value={data.token_efficiency}
           format={(value) => value.toFixed(3)}
           unknownHint="Needs a review with both a token count and at least one rating."
-          caption="Mean approval rate per 1,000 tokens. Tracked as a trend rather than against a fixed threshold — the shape is below."
+          caption="Mean approval rate per 1,000 tokens. Tracked as a trend rather than against a fixed threshold — the shape is beside it."
         />
-      </div>
 
-      {/*
-        The two §8.1 metrics that are claims about a *shape* rather than a
-        number: "even spread" and "tracked as trend". Neither fits a tile,
-        which is why they are here rather than above.
-      */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <CategoryDistribution distribution={data.category_distribution} />
+        {/*
+          Paired with the figure above it rather than sent down to the chart
+          row, for two reasons.
+
+          The honest one: three tiles in a two-column grid leaves the fourth
+          cell empty, and that hole is as tall as the tile beside it — it
+          reads as a panel that failed to load rather than as whitespace.
+
+          The better one: this and the tile to its left are the *same metric*,
+          the number and its shape. They belong next to each other, and the
+          caption says so.
+        */}
         <TokenEfficiencyTrend
           points={data.token_efficiency_series}
           reviewsCompleted={data.reviews_completed}
         />
       </div>
+
+      {/*
+        Full width now that the trend has moved up. The bars get the whole
+        measure, which is what a category with a three-digit count will need
+        before the count label runs into the edge of the viewBox.
+      */}
+      <CategoryDistribution distribution={data.category_distribution} />
 
       <SeverityCalibration rows={data.severity_calibration} />
 

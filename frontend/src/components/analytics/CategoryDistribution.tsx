@@ -144,7 +144,7 @@ export function CategoryDistribution({
         <p className="text-sm text-ink-dim">
           {total === 0
             ? "No comments yet, so there is no spread to judge."
-            : `§8.1 asks for an even spread. Across ${rows.length} categories and ${total} comment${total === 1 ? "" : "s"}, even would be about ${even.toFixed(1)} each — the dashed line.`}
+            : `The target is an even spread across categories. Across ${rows.length} categories and ${total} comment${total === 1 ? "" : "s"}, even would be about ${even.toFixed(1)} each — the dashed line.`}
         </p>
       </Sheet.Body>
     </Sheet>

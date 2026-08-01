@@ -31,7 +31,7 @@ export function Analytics() {
       <header className="flex flex-col gap-1">
         <h1 className="font-hand text-2xl leading-tight text-ink">Analytics</h1>
         <p className="text-base text-ink-dim">
-          Report §8.1's evaluation metrics, measured against their targets.
+          How Liffy is performing against the quality targets it was built to.
         </p>
       </header>
 
@@ -61,7 +61,7 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
       <Sheet>
         <EmptyState
           title="Nothing to measure yet."
-          description="Connect a repository and let Liffy review a pull request. The §8.1 metrics fill in from there."
+          description="Connect a repository and let Liffy review a pull request. The metrics fill in from there."
           action={<ButtonLink to="/">Connect a repository</ButtonLink>}
         />
       </Sheet>
@@ -140,7 +140,7 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
           value={data.token_efficiency}
           format={(value) => value.toFixed(3)}
           unknownHint="Needs a review with both a token count and at least one rating."
-          caption="Mean approval rate per 1,000 tokens. §8.1 tracks this as a trend rather than against a threshold — the shape is below."
+          caption="Mean approval rate per 1,000 tokens. Tracked as a trend rather than against a fixed threshold — the shape is below."
         />
       </div>
 

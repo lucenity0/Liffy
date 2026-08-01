@@ -162,13 +162,22 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
       </div>
 
       {/*
-        Full width now that the trend has moved up. The bars get the whole
-        measure, which is what a category with a three-digit count will need
-        before the count label runs into the edge of the viewBox.
-      */}
-      <CategoryDistribution distribution={data.category_distribution} />
+        Both of these stay in a half-width column, and the chart is why.
 
-      <SeverityCalibration rows={data.severity_calibration} />
+        `CategoryDistribution` is an SVG with a fixed viewBox scaled by
+        `w-full`, so its height and its type scale with its width — there is
+        no such thing as "wider but the same size". Given the whole measure it
+        renders at roughly 3x, which is a chart you read from across the room.
+        The 348-unit viewBox is drawn for about this column width, which is
+        what the type sizes inside it assume.
+
+        The table keeps its `overflow-x-auto`, which is what handles the
+        narrow end of this column.
+      */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <CategoryDistribution distribution={data.category_distribution} />
+        <SeverityCalibration rows={data.severity_calibration} />
+      </div>
 
       <FlaggedReviews
         reviews={data.flagged_reviews}

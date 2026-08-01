@@ -10,6 +10,7 @@ from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.models.review import Review
 from app.models.review_comment import ReviewComment
+from app.models.setting import Setting
 from app.models.user import User
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "CommentFeedback",
     "RepoEmbedding",
     "EvalScore",
+    "Setting",
 ]

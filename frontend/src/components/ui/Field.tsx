@@ -85,3 +85,33 @@ export function Input({ className, ...rest }: ComponentPropsWithoutRef<"input">)
     />
   );
 }
+
+/**
+ * The matching dropdown. A native `<select>` rather than a listbox built out
+ * of divs: it is keyboard reachable, screen-reader labelled and correct on
+ * touch for free, and nothing here needs an affordance a native control
+ * cannot give.
+ *
+ * `font-sans`, not the `font-code` of Input — these hold prose labels, not
+ * identifiers.
+ */
+export function Select({
+  className,
+  children,
+  ...rest
+}: ComponentPropsWithoutRef<"select">) {
+  return (
+    <select
+      className={cn(
+        "rounded-chip border border-rule bg-paper px-2.5 py-1.5",
+        "text-base text-ink",
+        "hover:border-rule-strong",
+        "disabled:cursor-not-allowed disabled:opacity-60",
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </select>
+  );
+}

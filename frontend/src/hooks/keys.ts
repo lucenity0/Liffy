@@ -42,4 +42,12 @@ export const keys = {
     all: ["analytics"] as const,
     summary: () => [...keys.analytics.all, "summary"] as const,
   },
+  /**
+   * One document, not a list — there is no per-key query, because the page
+   * renders every setting at once and a PATCH can change the provenance of a
+   * key it did not name.
+   */
+  settings: {
+    all: ["settings"] as const,
+  },
 } as const;

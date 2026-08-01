@@ -18,10 +18,12 @@ from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
 from app.api import reviews as reviews_api
+from app.config import apply_overrides, settings
 from app.database import Base, get_db
 from app.main import app
 from app.models.repository import Repository
 from app.models.review import Review
+from app.models.setting import Setting
 from app.models.user import User
 from app.services.github_service import PullRequestMeta
 from app.workers import index_worker, review_worker
@@ -376,3 +378,50 @@ def test_enqueue_passes_a_json_serialisable_received_at(monkeypatch) -> None:
 
     assert len(captured) == 1
     json.dumps(captured[0])  # raises TypeError on a datetime
+
+
+def test_review_task_picks_up_a_settings_override(session_factory, monkeypatch) -> None:
+    """The cross-process claim, tested at the seam where it is made.
+
+    The worker runs in its own process, so invalidating the API's override
+    store on write does nothing for it. This asserts the other half of the
+    answer: the task reloads overrides from the database before doing any
+    work, so a setting changed in the UI applies to the *next* review rather
+    than after a restart.
+
+    `post_reviews_to_github` is the one worth asserting on. It defaults to
+    False, and `run_review` reads it deep inside the pipeline — so if the
+    refresh were missing, or placed after `get_llm()`, this review would
+    silently not post and the failure would look like a GitHub problem.
+    """
+    _connect(session_factory)
+    monkeypatch.setattr(
+        review_worker,
+        "GitHubClient",
+        lambda token=None: FakeGitHub(pr_meta=META, pr_diff=DIFF, token=token),
+    )
+    monkeypatch.setattr(review_worker, "get_chroma_client", shared_chroma_client)
+    monkeypatch.setattr(review_worker, "get_embedding_provider", DeterministicEmbeddings)
+    monkeypatch.setattr(review_worker, "get_llm", lambda: FakeLLM([PAYLOAD]))
+
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        review_worker, "run_review",
+        lambda db, *a, **kw: seen.append(settings.post_reviews_to_github) or Review(
+            id=uuid.uuid4(), pr_id=uuid.uuid4(), status="completed"
+        ),
+    )
+
+    # Written straight to the table, which is what the API process leaves
+    # behind — the worker never sees the PATCH itself.
+    with session_factory() as db:
+        db.add(Setting(key="post_reviews_to_github", value="true"))
+        db.commit()
+
+    try:
+        review_worker.review_pr_task("octo", "demo", 5)
+        assert seen == [True]
+    finally:
+        # Process-global store; leaving it set would turn posting on for every
+        # test that runs after this one.
+        apply_overrides({})

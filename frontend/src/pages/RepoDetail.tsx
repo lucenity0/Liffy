@@ -41,10 +41,9 @@ export function RepoDetail() {
    * not its newest 20 — which is why the footer says so rather than implying
    * a complete list.
    */
-  const repoReviews =
-    repo && reviews.data
-      ? reviews.data.filter((review) => review.repo_full_name === repo.full_name)
-      : [];
+  const repoReviews = repo
+    ? reviews.items.filter((review) => review.repo_full_name === repo.full_name)
+    : [];
 
   if (repos.isPending) return <RepoSkeleton />;
 

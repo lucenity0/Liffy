@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { useLocation } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { server } from "@/mocks/server";
-import { fixtureReviewListItems } from "@/mocks/fixtures";
+import { fixtureReviewListItems, reviewPage } from "@/mocks/fixtures";
 import { REVIEWS_PAGE_SIZE } from "@/hooks/useReviews";
 import { formatCount } from "@/lib/utils";
 import type { ReviewListItem } from "@/types/api";
@@ -12,7 +12,15 @@ import { renderWithProviders } from "@/test/renderWithProviders";
 import { parseOffset } from "@/lib/pagination";
 import { Reviews } from "./Reviews";
 
-/** A full page of distinct rows, so `hasNextPage` reads true. */
+/**
+ * How many rows the tracked stub pretends to hold. Comfortably more than the
+ * two pages any test here walks, so `hasNextPage` stays true throughout —
+ * that used to be implied by returning a full page, and is now stated,
+ * because the hook reads a real total instead of guessing from page length.
+ */
+const TRACKED_TOTAL = 100;
+
+/** A full page of distinct rows. */
 const fullPage = (offset: number): ReviewListItem[] =>
   Array.from({ length: REVIEWS_PAGE_SIZE }, (_, i) => ({
     ...fixtureReviewListItems[0],
@@ -28,7 +36,7 @@ function trackPages(pageFor: (offset: number) => ReviewListItem[]) {
       const url = new URL(request.url);
       const offset = Number(url.searchParams.get("offset") ?? 0);
       asked.push(offset);
-      return HttpResponse.json(pageFor(offset));
+      return HttpResponse.json(reviewPage(pageFor(offset), TRACKED_TOTAL));
     }),
   );
   return asked;
@@ -172,7 +180,7 @@ describe("Reviews", () => {
             release = resolve;
           });
         }
-        return HttpResponse.json(fullPage(offset));
+        return HttpResponse.json(reviewPage(fullPage(offset), TRACKED_TOTAL));
       }),
     );
 
@@ -192,7 +200,7 @@ describe("Reviews", () => {
   });
 
   it("shows the first-run empty state at offset 0", async () => {
-    server.use(http.get("*/reviews", () => HttpResponse.json([])));
+    server.use(http.get("*/reviews", () => HttpResponse.json(reviewPage([]))));
 
     renderPage();
 
@@ -200,7 +208,7 @@ describe("Reviews", () => {
   });
 
   it("shows a different empty state when you page past the end", async () => {
-    server.use(http.get("*/reviews", () => HttpResponse.json([])));
+    server.use(http.get("*/reviews", () => HttpResponse.json(reviewPage([]))));
 
     renderPage("/reviews?offset=40");
 
@@ -211,7 +219,7 @@ describe("Reviews", () => {
 
   it("offers the trigger form from the header and from the empty state", async () => {
     const user = userEvent.setup();
-    server.use(http.get("*/reviews", () => HttpResponse.json([])));
+    server.use(http.get("*/reviews", () => HttpResponse.json(reviewPage([]))));
 
     renderPage();
     await screen.findByText(/nothing reviewed yet/i);

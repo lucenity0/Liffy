@@ -10,7 +10,7 @@ import {
   fixtureTokenPair,
   fixtureUser,
 } from "./fixtures";
-import type { ReviewDetailOut } from "@/types/api";
+import { REVIEW_STATUSES, type ReviewDetailOut } from "@/types/api";
 
 /**
  * Wildcard path matching (a leading "*" instead of a full origin) so the
@@ -113,16 +113,69 @@ export const handlers = [
     return HttpResponse.json(fixtureRepoStatusNotIndexed);
   }),
 
+  /**
+   * Filters and sorts for real rather than echoing the fixture back.
+   *
+   * A handler that accepted the parameters and ignored them would make a
+   * broken filter look like a working one — every test would pass, `dev:mock`
+   * would look right, and the bug would surface only against the real API.
+   * So this mirrors `list_reviews`: narrow, then count, then slice, and 422 on
+   * the same inputs the backend rejects.
+   *
+   * `repo_id` is resolved through `fixtureRepos` because a `ReviewListItem`
+   * carries `repo_full_name`, not the id — the real endpoint has the id in
+   * hand from the join it already performed, and this is the closest a flat
+   * fixture gets to that.
+   */
   http.get("*/reviews", ({ request }) => {
     const url = new URL(request.url);
     const limit = Number(url.searchParams.get("limit") ?? 20);
     const offset = Number(url.searchParams.get("offset") ?? 0);
+    const repoId = url.searchParams.get("repo_id");
+    const prNumber = url.searchParams.get("pr_number");
+    const status = url.searchParams.get("status");
+    const sort = url.searchParams.get("sort") ?? "newest";
 
     if (limit < 1 || limit > 100 || offset < 0) {
       return HttpResponse.json({ detail: "invalid pagination" }, { status: 422 });
     }
+    if (sort !== "newest" && sort !== "oldest") {
+      return HttpResponse.json({ detail: "invalid sort" }, { status: 422 });
+    }
+    if (status !== null && !(REVIEW_STATUSES as readonly string[]).includes(status)) {
+      return HttpResponse.json({ detail: "invalid status" }, { status: 422 });
+    }
 
-    return HttpResponse.json(fixtureReviewListItems.slice(offset, offset + limit));
+    const repoFullName = repoId
+      ? fixtureRepos.find((repo) => repo.id === repoId)?.full_name
+      : undefined;
+
+    let matched = fixtureReviewListItems;
+    if (repoId) {
+      // An unknown repo id matches nothing — which is also what the backend
+      // does for another user's repo, and the two must not look different.
+      matched = matched.filter((r) => r.repo_full_name === repoFullName);
+    }
+    if (prNumber) {
+      matched = matched.filter((r) => r.pr_number === Number(prNumber));
+    }
+    if (status) {
+      matched = matched.filter((r) => r.status === status);
+    }
+
+    // The fixture array is not in date order, so this cannot be a reverse():
+    // the default has to be a real sort or "newest" is a lie the tests believe.
+    const sorted = [...matched].sort((a, b) => {
+      const delta = Date.parse(a.created_at) - Date.parse(b.created_at);
+      return sort === "oldest" ? delta : -delta;
+    });
+
+    // `total` counts the filtered set, before the window — the whole point of
+    // the envelope.
+    return HttpResponse.json({
+      items: sorted.slice(offset, offset + limit),
+      total: sorted.length,
+    });
   }),
 
   http.get("*/reviews/:reviewId", ({ params }) => {

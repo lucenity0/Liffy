@@ -1,17 +1,46 @@
 import { apiClient } from "./client";
-import type { ReviewDetailOut, ReviewListItem, TriggerAccepted } from "@/types/api";
+import type {
+  ReviewDetailOut,
+  ReviewListPage,
+  ReviewStatus,
+  TriggerAccepted,
+} from "@/types/api";
+
+export type ReviewSort = "newest" | "oldest";
 
 export interface ListReviewsParams {
   limit?: number;
   offset?: number;
+  repoId?: string;
+  prNumber?: number;
+  status?: ReviewStatus;
+  sort?: ReviewSort;
 }
 
 export async function listReviews({
   limit = 20,
   offset = 0,
-}: ListReviewsParams = {}): Promise<ReviewListItem[]> {
-  const { data } = await apiClient.get<ReviewListItem[]>("/reviews", {
-    params: { limit, offset },
+  repoId,
+  prNumber,
+  status,
+  sort,
+}: ListReviewsParams = {}): Promise<ReviewListPage> {
+  const { data } = await apiClient.get<ReviewListPage>("/reviews", {
+    // Unset filters are left out of the query string entirely rather than sent
+    // empty. `repo_id=undefined` and `repo_id=null` reach FastAPI as the
+    // literal strings, fail UUID parsing, and answer 422 — which on a list
+    // page is a blank screen, not a field anyone can correct. Axios drops keys
+    // whose value is `undefined`, so this relies on them being absent rather
+    // than falsy: `prNumber: 0` would still be sent, and the backend's `gt=0`
+    // is what rejects it.
+    params: {
+      limit,
+      offset,
+      repo_id: repoId,
+      pr_number: prNumber,
+      status,
+      sort,
+    },
   });
   return data;
 }

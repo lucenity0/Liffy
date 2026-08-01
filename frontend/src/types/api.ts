@@ -9,7 +9,23 @@
  * than assume exhaustiveness at runtime.
  */
 
-export type ReviewStatus = "pending" | "processing" | "completed" | "failed";
+/**
+ * A runtime value, not just a type: the status filter has to validate a string
+ * off the URL and populate a dropdown, and neither can be done with a type
+ * that erases at compile time. `ReviewStatus` is derived from it so the list
+ * and the union cannot drift.
+ *
+ * Mirrors `ReviewStatus` in `backend/app/schemas/review.py`, which is closed
+ * over the four strings `review_service` actually writes.
+ */
+export const REVIEW_STATUSES = [
+  "pending",
+  "processing",
+  "completed",
+  "failed",
+] as const;
+
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 export type Verdict = "approve" | "request_changes" | "comment";
 export type Category =
   | "logic_error"
@@ -96,6 +112,17 @@ export interface ReviewOut {
 export interface ReviewListItem extends ReviewOut {
   pr_number: number;
   repo_full_name: string;
+}
+
+/**
+ * One page of reviews, plus the size of the set it was cut from.
+ *
+ * `total` counts the *filtered* set, ignoring limit and offset — it is what
+ * lets a caller tell a full last page from a full page with more behind it.
+ */
+export interface ReviewListPage {
+  items: ReviewListItem[];
+  total: number;
 }
 
 export interface ReviewCommentOut {

@@ -33,29 +33,66 @@ describe("useRepos", () => {
 });
 
 describe("useReviews", () => {
-  it("infers hasNextPage from a full page and hasPreviousPage from the offset", async () => {
+  it("offers a next page only while the total says there is one", async () => {
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useReviews({ limit: 2, offset: 0 }), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // 4 fixtures, page one of two.
+    expect(result.current.items).toHaveLength(2);
+    expect(result.current.total).toBe(4);
+    expect(result.current.hasNextPage).toBe(true);
+    expect(result.current.hasPreviousPage).toBe(false);
+  });
+
+  it("does not offer a Next that leads nowhere on an exact page boundary", async () => {
     const { Wrapper } = createWrapper();
     const { result } = renderHook(() => useReviews({ limit: 2, offset: 2 }), {
       wrapper: Wrapper,
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    // 4 fixtures, limit 2, offset 2 -> a full page, so there *may* be more.
-    expect(result.current.data).toHaveLength(2);
-    expect(result.current.hasNextPage).toBe(true);
+    // The regression this envelope exists for. 4 fixtures, limit 2, offset 2:
+    // a *full* page that is also the last one. The old heuristic — "a full
+    // page implies there may be more" — read this as another page and offered
+    // a Next onto an empty screen.
+    expect(result.current.items).toHaveLength(2);
+    expect(result.current.hasNextPage).toBe(false);
     expect(result.current.hasPreviousPage).toBe(true);
   });
 
-  it("reports no next page when the API returns a short page", async () => {
+  it("reports no next page on a short page", async () => {
     const { Wrapper } = createWrapper();
     const { result } = renderHook(() => useReviews({ limit: 20, offset: 0 }), {
       wrapper: Wrapper,
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toHaveLength(4);
+    expect(result.current.items).toHaveLength(4);
     expect(result.current.hasNextPage).toBe(false);
     expect(result.current.hasPreviousPage).toBe(false);
+  });
+
+  it("gives two different filters two different cache entries", async () => {
+    const { Wrapper } = createWrapper();
+
+    const failed = renderHook(() => useReviews({ status: "failed" }), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(failed.result.current.isSuccess).toBe(true));
+
+    const completed = renderHook(() => useReviews({ status: "completed" }), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(completed.result.current.isSuccess).toBe(true));
+
+    // Sharing a key would have the second filter served the first's rows —
+    // the failure mode is silent, and it looks like the filter did nothing.
+    expect(failed.result.current.items).toHaveLength(1);
+    expect(completed.result.current.items).toHaveLength(2);
+    expect(failed.result.current.items[0].status).toBe("failed");
   });
 });
 

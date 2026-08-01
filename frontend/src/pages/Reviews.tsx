@@ -16,7 +16,7 @@ export function Reviews() {
   const offset = parseOffset(searchParams.get("offset"));
 
   const reviews = useReviews({ limit: REVIEWS_PAGE_SIZE, offset });
-  const rows = reviews.data ?? [];
+  const rows = reviews.items;
 
   const [triggering, setTriggering] = useState(false);
   const [queued, setQueued] = useState<{
@@ -96,7 +96,7 @@ export function Reviews() {
           </Sheet.Body>
         )}
 
-        {reviews.data?.length === 0 && (
+        {reviews.data && rows.length === 0 && (
           <EmptyState
             title={
               offset === 0 ? "Nothing reviewed yet." : "Nothing on this page."

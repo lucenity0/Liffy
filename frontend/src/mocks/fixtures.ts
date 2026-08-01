@@ -6,6 +6,7 @@ import type {
   ReviewCommentOut,
   ReviewDetailOut,
   ReviewListItem,
+  ReviewListPage,
   TokenPair,
   UserOut,
 } from "@/types/api";
@@ -245,6 +246,20 @@ export const fixtureReviewListItems: ReviewListItem[] = [
   detailToListItem(fixtureReviewApproved),
   detailToListItem(fixtureReviewCompleted),
 ];
+
+/**
+ * Wraps rows in the `GET /reviews` envelope for a test that stubs the
+ * endpoint itself.
+ *
+ * `total` defaults to the number of rows given, which is right for the common
+ * case of a single short page. Pass it explicitly to describe a set larger
+ * than the page — that is the only way to make `hasNextPage` true, and the
+ * only way to test paging.
+ */
+export const reviewPage = (
+  items: ReviewListItem[],
+  total: number = items.length,
+): ReviewListPage => ({ items, total });
 
 export const fixtureReviewDetailById: Record<string, ReviewDetailOut> = {
   [fixtureReviewCompleted.id]: fixtureReviewCompleted,

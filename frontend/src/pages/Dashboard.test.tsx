@@ -10,6 +10,7 @@ import {
   fixtureRepoStatusNotIndexed,
   fixtureRepos,
   fixtureReviewListItems,
+  reviewPage,
 } from "@/mocks/fixtures";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { Dashboard } from "./Dashboard";
@@ -279,12 +280,16 @@ describe("Dashboard — recent reviews", () => {
     const rows = within(reviews).getAllByRole("listitem");
     expect(rows).toHaveLength(fixtureReviewListItems.length);
 
-    const first = fixtureReviewListItems[0];
+    // Newest first, by `created_at` — not the fixture array's own order, which
+    // is arbitrary and no longer what the handler replays.
+    const [newest] = [...fixtureReviewListItems].sort(
+      (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+    );
     expect(within(rows[0]).getByRole("link")).toHaveAttribute(
       "href",
-      `/reviews/${first.id}`,
+      `/reviews/${newest.id}`,
     );
-    expect(within(rows[0]).getByText(String(first.pr_number))).toBeInTheDocument();
+    expect(within(rows[0]).getByText(String(newest.pr_number))).toBeInTheDocument();
   });
 
   it("asks for exactly five", async () => {
@@ -292,7 +297,7 @@ describe("Dashboard — recent reviews", () => {
     server.use(
       http.get("*/reviews", ({ request }) => {
         requestedLimit = new URL(request.url).searchParams.get("limit");
-        return HttpResponse.json(fixtureReviewListItems.slice(0, 5));
+        return HttpResponse.json(reviewPage(fixtureReviewListItems.slice(0, 5)));
       }),
     );
 
@@ -308,14 +313,17 @@ describe("Dashboard — recent reviews", () => {
     const reviews = await screen.findByRole("list", { name: "Recent reviews" });
     const rows = within(reviews).getAllByRole("listitem");
 
-    // Fixture order: failed (no verdict), processing, approve, request_changes.
-    expect(within(rows[0]).getByText("Failed")).toBeInTheDocument();
-    expect(within(rows[0]).queryByText("Approve")).toBeNull();
+    // Newest first, which the handler now genuinely sorts by rather than
+    // replaying the fixture array's own order: processing (26th), completed
+    // (25th), approve (24th), failed (23rd).
+    expect(within(rows[0]).getByText("Processing")).toBeInTheDocument();
     expect(within(rows[2]).getByText("Approve")).toBeInTheDocument();
+    expect(within(rows[3]).getByText("Failed")).toBeInTheDocument();
+    expect(within(rows[3]).queryByText("Approve")).toBeNull();
   });
 
   it("has its own empty state", async () => {
-    server.use(http.get("*/reviews", () => HttpResponse.json([])));
+    server.use(http.get("*/reviews", () => HttpResponse.json(reviewPage([]))));
 
     renderWithProviders(<Dashboard />);
 

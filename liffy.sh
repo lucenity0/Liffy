@@ -36,12 +36,22 @@ require_docker() {
     docker info &>/dev/null || error "Docker isn't running. Start Docker Desktop and try again."
 }
 
-# Read one key out of backend/.env. Deliberately not `source`: that file holds
-# secrets with characters bash would try to interpret, and it is not a script.
+# Read one key out of backend/.env, or nothing if it is not there.
+#
+# Deliberately not `source`: that file holds secrets with characters bash would
+# try to interpret, and it is not a script.
+#
+# The `|| line=""` is load-bearing. A key that is simply absent — which is the
+# normal case, since none of these are in .env.example uncommented — makes grep
+# exit 1, `set -o pipefail` propagates it, and `set -e` then kills the whole
+# launcher on the assignment at the call site. That shipped once: ./liffy.sh
+# printed the .env line and exited silently before starting a single container.
 env_setting() {
+    local line=""
     [ -f backend/.env ] || return 0
-    grep -E "^${1}=" backend/.env 2>/dev/null | tail -1 | cut -d= -f2- \
-        | tr -d "\"'" | sed 's/[[:space:]]*$//'
+    line=$(grep -E "^${1}=" backend/.env 2>/dev/null | tail -1) || line=""
+    [ -n "$line" ] || return 0
+    printf '%s' "${line#*=}" | tr -d "\"'" | sed 's/[[:space:]]*$//'
 }
 
 # Pick the worker image and warn about the one thing that will otherwise fail.

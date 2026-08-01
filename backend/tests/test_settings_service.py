@@ -162,6 +162,58 @@ def test_every_editable_setting_names_a_real_field() -> None:
         assert key in fields, f"{key} is on the allowlist but not a Settings field"
 
 
+def test_every_provider_has_exactly_one_model_field(db) -> None:
+    """The asymmetry this replaced: three model boxes, and none for codex.
+
+    Each provider gets one editable model setting scoped to it, so the page can
+    render a single control instead of four with three inert.
+    """
+    from app.config import EDITABLE_SETTINGS as specs
+
+    for provider in specs["llm_provider"].choices:
+        owned = [
+            key
+            for key, spec in specs.items()
+            if key.endswith("_model") and provider in spec.applies_to
+        ]
+        assert len(owned) == 1, f"{provider} owns {owned}"
+
+
+def test_suggestions_do_not_close_the_field(db) -> None:
+    """`suggestions` is advisory — `choices` is the one that validates.
+
+    Load-bearing for `openai`, which also drives Ollama and Gemini: a closed
+    list would reject the model names those endpoints actually serve.
+    """
+    from app.config import EDITABLE_SETTINGS as specs
+
+    assert "qwen2.5-coder:14b" not in specs["openai_model"].suggestions[:1]
+    update_settings(db, {"openai_model": "some-local-model:70b"}, None)
+    assert settings.openai_model == "some-local-model:70b"
+
+
+def test_codex_model_accepts_empty_meaning_cli_default(db) -> None:
+    """Empty is a real answer here, not a missing one.
+
+    Codex slugs are version- and account-specific, so "use whatever
+    ~/.codex/config.toml says" is both the default and a choice someone may
+    need to return to after trying an explicit slug.
+    """
+    update_settings(db, {"codex_model": "gpt-5.6-luna"}, None)
+    assert settings.codex_model == "gpt-5.6-luna"
+
+    update_settings(db, {"codex_model": ""}, None)
+    assert settings.codex_model == ""
+    # Back to the default, so the row goes rather than pinning the value.
+    assert db.query(Setting).count() == 0
+
+
+def test_other_str_settings_still_reject_empty(db) -> None:
+    """`allow_empty` is per setting — an empty Anthropic model is a mistake."""
+    with pytest.raises(SettingError, match="Cannot be empty"):
+        update_settings(db, {"anthropic_model": "   "}, None)
+
+
 def test_subscription_token_is_secret_not_editable(db) -> None:
     """A subscription token is a credential and must behave like one.
 

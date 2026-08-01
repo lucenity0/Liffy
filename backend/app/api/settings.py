@@ -56,6 +56,8 @@ def _describe(db: Session) -> SettingsOut:
                 help=spec.help,
                 kind=spec.kind,
                 choices=list(spec.choices),
+                suggestions=list(spec.suggestions),
+                applies_to=list(spec.applies_to),
                 minimum=spec.minimum,
                 maximum=spec.maximum,
                 value=value,

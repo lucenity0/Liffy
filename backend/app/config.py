@@ -229,6 +229,21 @@ class SettingSpec:
     help: str
     kind: str  # "str" | "bool" | "int" | "choice"
     choices: tuple[str, ...] = ()
+    # Known-good values offered as a dropdown, *without* closing the field.
+    # Deliberately not `choices`: `openai` also drives Ollama, Gemini's compat
+    # endpoint, and anything else speaking that wire format, so a closed list
+    # would lock out the providers the field exists to support. The UI offers
+    # these and keeps a "custom" escape hatch; validation is unchanged.
+    suggestions: tuple[str, ...] = ()
+    # Which `llm_provider` values this setting is relevant to. Empty means
+    # always. The settings page shows four model fields today and three of them
+    # do nothing for whichever provider you picked — this is what lets the page
+    # show one.
+    applies_to: tuple[str, ...] = ()
+    # Empty is a real value for some settings, not a mistake. `codex_model`
+    # empty means "whatever ~/.codex/config.toml already says", which is the
+    # right default given Codex slugs are version- and account-specific.
+    allow_empty: bool = False
     minimum: int | None = None
     maximum: int | None = None
 
@@ -258,7 +273,7 @@ class SettingSpec:
             return raw
 
         text = raw.strip()
-        if not text:
+        if not text and not self.allow_empty:
             raise SettingError("Cannot be empty.")
         return text
 
@@ -286,22 +301,77 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
         kind="choice",
         choices=("anthropic", "openai", "claude_code", "codex"),
     ),
+    # One model field per provider, shown one at a time.
+    #
+    # The keys stay separate on purpose — a single combined `review_model`
+    # would carry a Gemini name into Anthropic after a provider switch and fail
+    # as an unhelpful 404, and switching back would have lost the old value.
+    # `applies_to` gives the page the single control without giving up that
+    # property: the storage is per-provider, only the *display* is unified.
     "anthropic_model": SettingSpec(
         group="review_model",
-        label="Anthropic model",
-        help="Used when the provider is `anthropic`.",
+        label="Model",
+        help="Runs the review through Anthropic's API, billed per token.",
         kind="str",
+        applies_to=("anthropic",),
+        # Ordered by what a reviewer should reach for first, not by price.
+        # Availability is per-account: a model your key cannot reach fails at
+        # review time, which is why this is a suggestion list and not `choices`.
+        suggestions=(
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+            "claude-fable-5",
+            "claude-opus-4-8",
+        ),
+    ),
+    "claude_code_model": SettingSpec(
+        group="review_model",
+        label="Model",
+        help=(
+            "Runs the review through the Claude Code CLI on your subscription. "
+            "The CLI also accepts the bare aliases `opus`, `sonnet`, `haiku` "
+            "and `fable`; which models you can actually reach depends on your "
+            "plan."
+        ),
+        kind="str",
+        applies_to=("claude_code",),
+        suggestions=(
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+            "claude-fable-5",
+        ),
+    ),
+    "codex_model": SettingSpec(
+        group="review_model",
+        label="Model",
+        help=(
+            "Leave empty unless you have a reason — empty means whatever "
+            "~/.codex/config.toml already says, which is the choice you "
+            "already made. Codex slugs are specific to the CLI version and the "
+            "account, so an outdated one fails the run outright with 'Model "
+            "metadata not found'. There is no list to offer here for the same "
+            "reason: Liffy cannot know which slugs your account has."
+        ),
+        kind="str",
+        applies_to=("codex",),
+        allow_empty=True,
     ),
     "openai_model": SettingSpec(
         group="review_model",
-        label="OpenAI model",
+        label="Model",
         help=(
-            "Used when the provider is `openai`. Per-provider deliberately: "
-            "the two namespaces share no model names, so one combined field "
-            "would send a Gemini name to Anthropic after a switch and fail as "
-            "an unhelpful 404."
+            "`openai` is the wire format, not the vendor — the same field "
+            "drives OpenAI, Gemini's compatibility endpoint, and a local "
+            "Ollama. Type any model name your endpoint serves."
         ),
         kind="str",
+        applies_to=("openai",),
+        # One per documented endpoint in .env.example rather than a catalogue:
+        # the point is to show the shape of a valid answer for each, since the
+        # right value depends entirely on OPENAI_BASE_URL.
+        suggestions=("gpt-4o", "gemini-2.5-flash", "qwen2.5-coder:14b"),
     ),
     "anthropic_effort": SettingSpec(
         group="review_model",
@@ -313,6 +383,9 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
         ),
         kind="choice",
         choices=("low", "medium", "high", "xhigh", "max"),
+        # An Anthropic API request parameter — the CLI providers take their
+        # effort from their own config, and `openai` has no equivalent.
+        applies_to=("anthropic",),
     ),
     "llm_max_tokens": SettingSpec(
         group="review_model",
@@ -336,6 +409,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
             "rather than degrading."
         ),
         kind="bool",
+        applies_to=("openai",),
     ),
     "post_reviews_to_github": SettingSpec(
         group="github_posting",
@@ -450,17 +524,11 @@ READ_ONLY_SETTINGS: dict[str, ReadOnlySetting] = {
     "claude_code_binary": ReadOnlySetting(
         "review_model", "Claude Code binary", "Path to the CLI on the host.",
     ),
-    "claude_code_model": ReadOnlySetting(
-        "review_model", "Claude Code model", "Used when the provider is `claude_code`.",
-    ),
     "claude_code_timeout": ReadOnlySetting(
         "review_model", "Claude Code timeout (s)", "Set it in backend/.env.",
     ),
     "codex_binary": ReadOnlySetting(
         "review_model", "Codex binary", "Path to the CLI on the host.",
-    ),
-    "codex_model": ReadOnlySetting(
-        "review_model", "Codex model", "Used when the provider is `codex`.",
     ),
     "codex_timeout": ReadOnlySetting(
         "review_model", "Codex timeout (s)", "Set it in backend/.env.",

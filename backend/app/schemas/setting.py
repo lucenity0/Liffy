@@ -20,6 +20,13 @@ class EditableSettingOut(BaseModel):
     help: str
     kind: str
     choices: list[str]
+    # Offered in the UI without closing the field — unlike `choices`, a value
+    # outside this list is still valid. See `SettingSpec.suggestions`.
+    suggestions: list[str]
+    # The `llm_provider` values this setting matters for; empty means always.
+    # Lets the page show one model field instead of four, three of which do
+    # nothing for the provider that is actually selected.
+    applies_to: list[str]
     minimum: int | None
     maximum: int | None
     value: Any

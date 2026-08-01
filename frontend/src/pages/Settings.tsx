@@ -102,6 +102,19 @@ export function Settings() {
 
   const data = settings.data!;
 
+  /**
+   * The provider the page is currently *showing*, drafts included.
+   *
+   * Read from the draft rather than the saved value so picking a provider
+   * swaps its model field in immediately — waiting for a save would mean
+   * choosing a provider and a model in two separate round trips, and the whole
+   * point of one model control is that you set both in one pass.
+   */
+  const providerSetting = data.editable.find((s) => s.key === "llm_provider");
+  const provider = providerSetting
+    ? (drafts[providerSetting.key] ?? String(providerSetting.value))
+    : "";
+
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-start gap-3">
@@ -132,7 +145,11 @@ export function Settings() {
       )}
 
       {GROUPS.map((group) => {
-        const rows = data.editable.filter((s) => s.group === group.id);
+        const rows = data.editable
+          .filter((s) => s.group === group.id)
+          .filter(
+            (s) => s.applies_to.length === 0 || s.applies_to.includes(provider),
+          );
         if (rows.length === 0) return null;
         return (
           <Sheet key={group.id}>

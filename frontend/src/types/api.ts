@@ -356,6 +356,10 @@ export interface EditableSetting {
   help: string;
   kind: "str" | "bool" | "int" | "choice";
   choices: string[];
+  /** Offered as a dropdown, but the field stays open — unlike `choices`. */
+  suggestions: string[];
+  /** `llm_provider` values this setting matters for; empty means always. */
+  applies_to: string[];
   minimum: number | null;
   maximum: number | null;
   value: string | number | boolean;

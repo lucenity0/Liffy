@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Input, Select } from "@/components/ui/Field";
 import type {
@@ -69,6 +70,80 @@ function Shell({
   );
 }
 
+/** The sentinel `<option>` that reveals the free-text input. */
+const CUSTOM = "__custom__";
+
+/**
+ * A dropdown of known-good values that still accepts anything.
+ *
+ * Model names are the case this exists for. Most people want one of a handful
+ * of current models and should not have to remember `claude-haiku-4-5` exactly
+ * — but the list cannot be closed, because `openai` also drives Ollama and
+ * Gemini, where the valid names are whatever that endpoint happens to serve.
+ * So: suggestions in a select, "Custom…" for everything else, and a value that
+ * arrived from `.env` outside the list opens in the text field rather than
+ * being silently replaced by the first suggestion.
+ */
+function SuggestedInput({
+  id,
+  setting,
+  value,
+  onChange,
+  disabled,
+  error,
+}: {
+  id: string;
+  setting: EditableSetting;
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+  error?: string;
+}) {
+  const known = setting.suggestions.includes(value);
+  // Latched, so clearing the box to type a new name does not snap the select
+  // back to a suggestion mid-keystroke.
+  const [custom, setCustom] = useState(!known);
+  const showText = custom || !known;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Select
+        id={id}
+        className="w-full"
+        value={showText ? CUSTOM : value}
+        disabled={disabled}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (next === CUSTOM) {
+            setCustom(true);
+            return;
+          }
+          setCustom(false);
+          onChange(next);
+        }}
+      >
+        {setting.suggestions.map((choice) => (
+          <option key={choice} value={choice}>
+            {choice}
+          </option>
+        ))}
+        <option value={CUSTOM}>Custom…</option>
+      </Select>
+      {showText && (
+        <Input
+          className="w-full"
+          value={value}
+          disabled={disabled}
+          aria-label={`${setting.label} (custom)`}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : undefined}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
 export function EditableSettingRow({
   setting,
   value,
@@ -85,7 +160,16 @@ export function EditableSettingRow({
   const id = `setting-${setting.key}`;
 
   const control =
-    setting.kind === "bool" ? (
+    setting.suggestions.length > 0 ? (
+      <SuggestedInput
+        id={id}
+        setting={setting}
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+        error={error}
+      />
+    ) : setting.kind === "bool" ? (
       <label className="flex items-center gap-2 text-base text-ink">
         <input
           id={id}

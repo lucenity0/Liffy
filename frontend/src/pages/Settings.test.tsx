@@ -155,6 +155,66 @@ describe("Settings", () => {
     await waitFor(() => expect(sent).toEqual({ anthropic_effort: "low" }));
   });
 
+  // ── One model field, chosen by the provider ─────────────────────────────
+  //
+  // The page used to render a separate model box per provider — three of which
+  // did nothing for whichever one you had selected, and none at all for codex.
+
+  it("shows only the selected provider's model field", async () => {
+    renderPage();
+
+    // Provider is `anthropic` in the fixture.
+    const model = await screen.findByLabelText("Model");
+    expect([...(model as HTMLSelectElement).options].map((o) => o.value)).toEqual(
+      ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "__custom__"],
+    );
+    // Anthropic-only settings come along for the ride.
+    expect(screen.getByLabelText("Thinking effort")).toBeInTheDocument();
+  });
+
+  it("swaps the model field when the provider changes, before saving", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.selectOptions(
+      await screen.findByLabelText("Provider"),
+      "openai",
+    );
+
+    // Waiting for a save would mean picking the provider and the model in two
+    // separate round trips.
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Thinking effort")).not.toBeInTheDocument(),
+    );
+    // openai_model's fixture value is outside its suggestion list, so the row
+    // opens on the custom input rather than silently showing a wrong model.
+    expect(screen.getByLabelText("Model (custom)")).toHaveValue("llama3.3:70b");
+  });
+
+  it("offers suggestions without closing the field", async () => {
+    const user = userEvent.setup();
+    let sent: Record<string, string> | null = null;
+    server.use(
+      http.patch("*/settings", async ({ request }) => {
+        sent = ((await request.json()) as { values: Record<string, string> }).values;
+        return HttpResponse.json(fixtureSettings);
+      }),
+    );
+
+    renderPage();
+    await user.selectOptions(await screen.findByLabelText("Model"), "__custom__");
+    const custom = screen.getByLabelText("Model (custom)");
+    await user.clear(custom);
+    await user.type(custom, "claude-opus-4-8");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    // A name outside the list still saves — `openai` also drives Ollama and
+    // Gemini, where a closed list would lock out the valid answer.
+    await waitFor(() =>
+      expect(sent).toEqual({ anthropic_model: "claude-opus-4-8" }),
+    );
+  });
+
   it("surfaces a validation error on the field, not as a page crash", async () => {
     const user = userEvent.setup();
     server.use(

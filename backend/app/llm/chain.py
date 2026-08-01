@@ -429,7 +429,21 @@ class ClaudeCodeReviewLLM:
         return [
             self._binary,
             "--print",
-            "--output-format", "json",
+            # Not "json", which returns only the CLI's *final* assistant turn.
+            #
+            # Claude Code is an agent loop, and on a real pull request it takes
+            # more than one turn even with every tool disabled: measured
+            # `num_turns: 2` on PR #246, where turn 1 was the review JSON and
+            # turn 2 was a human-facing summary ("Review complete — findings
+            # reported above"). "json" handed us turn 2, the review was
+            # discarded unseen, and the failure surfaced as the misleading
+            # `No JSON object found in model output`.
+            #
+            # The full transcript has the answer in it, so read the transcript.
+            # `--verbose` is not optional here — the CLI requires it alongside
+            # `--print --output-format stream-json`.
+            "--output-format", "stream-json",
+            "--verbose",
             # The same five levels the API takes (low|medium|high|xhigh|max),
             # and the same cost lever: this provider spends rate-limit quota
             # rather than money, but effort is still what decides how much.
@@ -477,14 +491,13 @@ class ClaudeCodeReviewLLM:
                 ClaudeCodeError,
             ) from None
 
-        try:
-            payload = json.loads(proc.stdout)
-        except json.JSONDecodeError as exc:
+        payload, turns = _claude_code_stream(proc.stdout)
+        if payload is None:
             # Never let a raw JSONDecodeError escape — it reads as a bug in the
             # output parser rather than a CLI that printed something unexpected.
             raise ClaudeCodeError(
                 f"Claude Code did not return JSON: {proc.stdout.strip()[:300]!r}"
-            ) from exc
+            )
 
         if payload.get("is_error") or payload.get("subtype") != "success":
             # A limit can also arrive as a clean exit with an error payload, so
@@ -498,13 +511,54 @@ class ClaudeCodeReviewLLM:
                 f"api_error_status={payload.get('api_error_status')})"
             )
 
-        text = payload.get("result") or ""
+        # Last turn that actually carries a JSON object, falling back to the
+        # final result text so a refusal or an empty run reports as itself.
+        text = next(
+            (t for t in reversed(turns) if "{" in t and "}" in t),
+            payload.get("result") or "",
+        )
         if not text:
             raise ClaudeCodeError(
                 f"Claude Code returned no result (stop_reason={payload.get('stop_reason')})"
             )
 
         return LLMResponse(text=text, tokens_used=_claude_code_tokens(payload))
+
+
+def _claude_code_stream(stdout: str) -> tuple[dict | None, list[str]]:
+    """Split a `--output-format stream-json` transcript into result and turns.
+
+    Returns the terminating ``result`` event and every assistant text block in
+    order. ``None`` for the result means the CLI printed something that was not
+    a transcript at all, which the caller reports as such.
+
+    Thinking blocks are skipped deliberately: with `--effort high` the model
+    reasons about the schema before emitting it, and reasoning that *discusses*
+    JSON would otherwise outrank the JSON.
+
+    Malformed lines are skipped rather than fatal. The transcript is a stream,
+    and one unparseable line — a warning the CLI decided to print mid-run — is
+    not a reason to throw away a review that completed.
+    """
+    result: dict | None = None
+    turns: list[str] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "result":
+            result = event
+        elif event.get("type") == "assistant":
+            for block in (event.get("message") or {}).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    turns.append(block.get("text") or "")
+    return result, turns
 
 
 def _claude_code_tokens(payload: dict) -> int:

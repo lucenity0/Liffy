@@ -356,7 +356,25 @@ class _Completed:
         self.stderr = stderr
 
 
-def _claude_code(monkeypatch, payload=None, *, stdout=None, returncode=0, raises=None):
+def _cc_transcript(payload: dict, turns: list[str] | None = None) -> str:
+    """A `--output-format stream-json` transcript: assistant turns, then result.
+
+    Defaults to one turn carrying the payload's ``result``, which is the
+    single-turn shape. Pass ``turns`` to reproduce the multi-turn one.
+    """
+    if turns is None:
+        turns = [payload.get("result") or ""]
+    lines = [
+        _json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": t}]}})
+        for t in turns
+    ]
+    lines.append(_json.dumps({"type": "result", **payload}))
+    return "\n".join(lines) + "\n"
+
+
+def _claude_code(
+    monkeypatch, payload=None, *, stdout=None, returncode=0, raises=None, turns=None
+):
     """Build the provider with `claude` faked. Never runs the real binary."""
     from app.llm import chain
 
@@ -372,7 +390,7 @@ def _claude_code(monkeypatch, payload=None, *, stdout=None, returncode=0, raises
         calls["kwargs"] = kwargs
         if raises is not None:
             raise raises
-        out = stdout if stdout is not None else _json.dumps(payload or _cc_payload())
+        out = stdout if stdout is not None else _cc_transcript(payload or _cc_payload(), turns)
         return _Completed(out, returncode)
 
     monkeypatch.setattr(chain.subprocess, "run", fake_run)
@@ -383,6 +401,85 @@ def test_claude_code_satisfies_protocol(monkeypatch: pytest.MonkeyPatch) -> None
     llm, _ = _claude_code(monkeypatch)
     assert isinstance(llm.model_name, str)
     assert callable(llm.complete)
+
+
+def test_claude_code_reads_the_review_from_an_earlier_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The multi-turn regression, taken from a real run.
+
+    Claude Code is an agent loop, so on a real pull request it takes more than
+    one turn even with every tool disabled — `num_turns: 2` on PR #246, the
+    review in turn 1 and a chatty summary in turn 2. `--output-format json`
+    returns only the final turn, so the review was generated, discarded, and
+    reported as `No JSON object found in model output`.
+    """
+    review = '{"summary":"ok","verdict":"approve","comments":[]}'
+    llm, _ = _claude_code(
+        monkeypatch,
+        _cc_payload(
+            num_turns=2,
+            result="Review complete — findings reported above (2 items, no criticals).",
+        ),
+        turns=[review, "Review complete — findings reported above (2 items, no criticals)."],
+    )
+
+    assert llm.complete("sys", "user").text == review
+
+
+def test_claude_code_asks_for_the_whole_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--output-format json` cannot express a multi-turn run; don't ask for it."""
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv = calls["argv"]
+    assert argv[argv.index("--output-format") + 1] == "stream-json"
+    # The CLI rejects the combination without it.
+    assert "--verbose" in argv
+
+
+def test_claude_code_ignores_thinking_that_talks_about_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reasoning *about* the schema must not outrank the schema."""
+    from app.llm import chain
+
+    review = '{"summary":"ok","verdict":"approve","comments":[]}'
+    transcript = "\n".join(
+        [
+            _json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "thinking", "thinking": 'I should emit {"summary": ...}'},
+                            {"type": "text", "text": review},
+                        ]
+                    },
+                }
+            ),
+            _json.dumps({"type": "result", **_cc_payload(result="done")}),
+        ]
+    )
+    payload, turns = chain._claude_code_stream(transcript)
+
+    assert payload is not None
+    assert turns == [review]
+
+
+def test_claude_code_survives_a_junk_line_in_the_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One unparseable line is not a reason to throw away a completed review."""
+    llm, _ = _claude_code(
+        monkeypatch,
+        stdout="warning: something\n"
+        + _cc_transcript(_cc_payload()),
+    )
+
+    assert llm.complete("sys", "user").text == '{"summary":"ok","verdict":"approve","comments":[]}'
 
 
 def test_claude_code_parses_result_and_usage(monkeypatch: pytest.MonkeyPatch) -> None:

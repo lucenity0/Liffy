@@ -35,3 +35,18 @@ export function categoryLabel(value: string): string {
 export function humanize(value: string): string {
   return value.replace(/_/g, " ");
 }
+
+/**
+ * Every comment Liffy has written, summed across the distribution.
+ *
+ * `Object.values` rather than the six known keys, so a non-zero `other` bucket
+ * is counted rather than quietly dropped — undercounting the denominator of a
+ * per-review average is the kind of error nobody notices.
+ *
+ * Lives here rather than in `CategoryDistribution` because the chart and the
+ * comments-per-review tile beside it both need it, and that file may only
+ * export components.
+ */
+export function totalComments(distribution: Record<string, number>): number {
+  return Object.values(distribution).reduce((sum, count) => sum + count, 0);
+}

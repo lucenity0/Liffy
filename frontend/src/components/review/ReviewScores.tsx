@@ -112,7 +112,7 @@ function Scores({ scores }: { scores: EvalScoresOut }) {
 
       <Sheet.Footer>
         <p className="text-sm text-ink-dim">
-          Report §8.1 asks for more than 70% approval. There is no separate
+          The target is more than 70% approval. There is no separate
           false-positive figure: a thumbs-down records no reason, so that rate
           is exactly the inverse of this one.
         </p>

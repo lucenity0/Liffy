@@ -350,8 +350,10 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
             "Listed from your signed-in Codex account, because the slugs are "
             "specific to the CLI version and the plan — an outdated one fails "
             "the run outright with 'Model metadata not found'. Empty means "
-            "whatever ~/.codex/config.toml already says. If the list is empty, "
-            "the CLI is not signed in where Liffy can see it."
+            "whatever ~/.codex/config.toml already says. An empty list means "
+            "Liffy cannot reach your Codex credentials — in Docker that is "
+            "usually the ~/.codex mount, which docker-compose.subscription.yml "
+            "needs uncommented for the API service too, not a sign-in problem."
         ),
         kind="str",
         applies_to=("codex",),

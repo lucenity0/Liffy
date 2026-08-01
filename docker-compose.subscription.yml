@@ -59,3 +59,18 @@ services:
     #
     # volumes:
     #   - ${HOME}/.codex:/codex-auth:ro
+
+  # The settings page needs the same credentials, for a different reason.
+  #
+  # `backend` runs no reviews, so it looks like it needs nothing. But the Codex
+  # model dropdown is discovered at runtime — `discover_codex_models` asks the
+  # signed-in account for its slugs, because they are version- and
+  # plan-specific — and that call happens in *this* container, not the worker's.
+  # Mounting only the worker leaves the dropdown permanently empty and its help
+  # text blaming a sign-in that is perfectly fine.
+  #
+  # Uncomment this together with the worker's, never on its own. Everything the
+  # note above says about what you are granting applies here too.
+  # backend:
+  #   volumes:
+  #     - ${HOME}/.codex:/codex-auth:ro

@@ -118,7 +118,10 @@ suggest_subscription_providers() {
     # Plain strings rather than an array: macOS still ships bash 3.2, where
     # ${#arr[@]} on an empty array trips `set -u`.
     local provider="" found=""
-    provider=$(env_setting LLM_PROVIDER)
+    # Resolved, not `env_setting`: the settings page writes the provider to the
+    # database, so reading only the dotfile suggests switching to a provider the
+    # user already switched to.
+    provider=$(resolved_setting llm_provider LLM_PROVIDER)
     case "$provider" in claude_code|codex) return 0 ;; esac
 
     command -v claude &>/dev/null && found="$found    • LLM_PROVIDER=claude_code — the 'claude' CLI is installed\n"

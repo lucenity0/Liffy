@@ -1,5 +1,8 @@
 import { PaperBackdrop } from "@/components/layout/PaperBackdrop";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useAuth } from "@/hooks/useAuth";
+import { Spinner } from "@/components/ui/Spinner";
+import { Navigate } from "react-router-dom";
 
 /**
  * The one screen an anonymous visitor can reach.
@@ -28,6 +31,22 @@ function authorizeUrl(): string {
 
 export function Login() {
   useDocumentTitle("Sign in");
+  const { status } = useAuth();
+
+  if (status === "loading") {
+    return (
+      <div
+        className="flex min-h-screen items-center justify-center"
+        aria-busy="true"
+      >
+        <Spinner size="md" label="Loading" />
+      </div>
+    );
+  }
+
+  if (status === "authenticated") {
+    return <Navigate to="/" replace />;
+  }
 
   return (
     <>

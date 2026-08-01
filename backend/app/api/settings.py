@@ -8,6 +8,7 @@ from app.config import (
     READ_ONLY_SETTINGS,
     SECRET_SETTINGS,
     SettingError,
+    redact_url_credentials,
     settings,
 )
 from app.database import get_db
@@ -64,13 +65,18 @@ def _describe(db: Session) -> SettingsOut:
             )
         )
 
+    # Read-only is not the same as harmless. `database_url` and `redis_url`
+    # carry a password in every deployment that has one — compose's is
+    # `postgresql://liffy:liffy@postgres:5432/liffy` — so the value is
+    # published with its credentials masked. The host stays, because that is
+    # the part that answers "where is this configured?".
     read_only = [
         ReadOnlySettingOut(
             key=key,
             group=meta.group,
             label=meta.label,
             reason=meta.reason,
-            value=getattr(settings, key),
+            value=redact_url_credentials(getattr(settings, key)),
         )
         for key, meta in READ_ONLY_SETTINGS.items()
     ]

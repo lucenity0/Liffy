@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Development default so a fresh clone runs without setup. It is a constant in a
 # public repo, so anything signed with it is forgeable by anyone who can read
@@ -132,6 +133,17 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    # Runtime overrides are the *third* source, not the only one. This still
+    # has to load `backend/.env` — it is where every key, secret and connection
+    # string actually lives, and none of them is runtime-editable. Dropping it
+    # silently empties `anthropic_api_key` and friends on any non-compose run,
+    # which reads as "my keys stopped working" rather than as a config change.
+    #
+    # `extra="ignore"` because a .env file is read whole: it carries keys this
+    # class does not declare (compose reads some of them too), and the
+    # pydantic-settings default of `forbid` turns each one into a boot failure.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     def __getattribute__(self, name: str) -> Any:
         """Consult the runtime override store before the field's own value.
@@ -424,6 +436,40 @@ SECRET_SETTINGS: tuple[str, ...] = (
     "openai_api_key",
 )
 
+def redact_url_credentials(value: Any) -> Any:
+    """Mask the password in a URL-shaped read-only value.
+
+    ``database_url`` and ``redis_url`` are read-only rather than secret, and
+    that is the right bucket: *where* the database lives is a real answer to
+    "where is this configured?". The password to it is not. Compose ships
+    ``postgresql://liffy:liffy@postgres:5432/liffy``, so publishing the value
+    verbatim hands the database credentials to every authenticated user —
+    which is the disclosure ``SECRET_SETTINGS`` exists to prevent, arriving
+    through the bucket next to it.
+
+    Only the password is replaced. Scheme, user, host, port and path all
+    survive, so the value still identifies the server it points at. A value
+    carrying no credentials comes back byte-identical.
+    """
+    if not isinstance(value, str) or "://" not in value:
+        return value
+    try:
+        parts = urlsplit(value)
+        password = parts.password
+    except ValueError:
+        # Unparseable as a URL, and it contains "://" — we cannot show that a
+        # password is absent, so we do not show the value.
+        return "***"
+    if not password:
+        return value
+
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    netloc = f"{parts.username}:***@{host}" if parts.username else f"***@{host}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 _OVERRIDABLE: frozenset[str] = frozenset(EDITABLE_SETTINGS)
 
 # The live override store, read by ``Settings.__getattribute__``.
@@ -441,9 +487,16 @@ def apply_overrides(values: dict[str, Any]) -> None:
     Wholesale rather than merged: a setting reset to its default is expressed
     by its row being *deleted*, and a merge would leave the old value behind
     forever.
+
+    Rebinding the name rather than ``clear()`` then ``update()``, because the
+    endpoints reading through this are sync defs and FastAPI runs those in a
+    threadpool. Mutating in place leaves a window — between the clear and the
+    update — in which a concurrent request sees *no* overrides and silently
+    reviews with the env values. Rebinding is atomic, so a reader gets either
+    the whole old mapping or the whole new one.
     """
-    _overrides.clear()
-    _overrides.update(values)
+    global _overrides
+    _overrides = dict(values)
 
 
 def active_overrides() -> dict[str, Any]:

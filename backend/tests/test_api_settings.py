@@ -256,3 +256,44 @@ def test_max_tokens_floor_rejected(seeded) -> None:
 
     assert response.status_code == 422
     assert "4000" in response.json()["detail"]
+
+
+# ── Read-only values are not automatically safe to publish ────────────────────
+
+
+def test_database_password_is_not_published_in_the_read_only_bucket(
+    seeded, monkeypatch
+) -> None:
+    """The read-only bucket carries values, and one of them holds a password.
+
+    `SECRET_SETTINGS` keeps API keys out of the response, but `database_url`
+    is classified read-only — correctly, since knowing *where* the database is
+    answers the question the page exists to answer. Its password does not, and
+    compose ships `postgresql://liffy:liffy@postgres:5432/liffy`, so shipping
+    the value verbatim hands the database credentials to every authenticated
+    user through the bucket next to the one guarding against exactly that.
+
+    The host survives; only the password is masked.
+    """
+    monkeypatch.setattr(
+        settings, "database_url", "postgresql://liffy:sup3rs3cret@postgres:5432/liffy"
+    )
+    monkeypatch.setattr(settings, "redis_url", "redis://:redispw@redis:6379/0")
+
+    raw = client.get("/settings", headers=seeded["headers"]).text
+
+    assert "sup3rs3cret" not in raw
+    assert "redispw" not in raw
+    # Still useful: the server it points at is intact.
+    assert "postgres:5432" in raw
+
+
+def test_credential_free_urls_are_left_alone(seeded, monkeypatch) -> None:
+    """Masking must not fire on the common case, or every local developer's
+    settings page starts reporting a password that is not there."""
+    monkeypatch.setattr(settings, "database_url", "postgresql://localhost/liffy")
+
+    body = client.get("/settings", headers=seeded["headers"]).json()
+    by_key = {s["key"]: s["value"] for s in body["read_only"]}
+
+    assert by_key["database_url"] == "postgresql://localhost/liffy"

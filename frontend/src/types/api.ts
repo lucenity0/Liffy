@@ -19,7 +19,7 @@ export type Category =
   | "convention"
   | "improvement";
 export type Severity = "critical" | "warning" | "info";
-export type IndexStatus = "indexed" | "not_indexed";
+export type IndexStatus = "indexed" | "indexing" | "not_indexed";
 
 export interface RepoOut {
   id: string;

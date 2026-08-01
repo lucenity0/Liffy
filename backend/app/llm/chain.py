@@ -36,35 +36,24 @@ Return the corrected review as ONLY a valid JSON object matching the schema. No 
 # leaving the author with prose in their source. The prompt tells the model to
 # return replacement text only, and this small last-mile guard protects the
 # publisher when a provider ignores that instruction.
-_PROSE_SUGGESTION_MARKERS = (
-    "e.g.",
-    "for example",
-    "pin exact versions",
-    "bump them deliberately",
-    "consider ",
-    "make sure ",
-    "should ",
-    "must ",
-)
-
-
 def _is_prose_suggestion(value: str | None) -> bool:
     if not value or not value.strip():
         return False
     suggestion = value.strip()
-    lowered = suggestion.lower()
-
-    # Markdown syntax is never part of the replacement text. Inline code in a
-    # sentence is the exact failure this guard is meant to catch.
-    if "`" in suggestion or "```" in suggestion:
-        return True
-    if any(marker in lowered for marker in _PROSE_SUGGESTION_MARKERS):
+    # Markdown fences are never part of the replacement text. A single
+    # backtick, however, is valid inside a template literal, shell command, or
+    # Markdown replacement and is not enough to classify the whole suggestion.
+    if "```" in suggestion:
         return True
 
     # A one-line sentence with no code punctuation is prose. Keep ordinary
-    # expression/statement suggestions such as `return value` or `useMemo(...)`.
+    # expression/statement suggestions such as `return value`, template
+    # literals, and identifiers such as `shouldRender` or `must_be_valid`.
     if "\n" not in suggestion and suggestion.endswith((".", "!", "?")):
-        if not re.search(r"[=;{}()[\]<>]|\b(return|const|let|var|def|class|import|from)\b", suggestion):
+        if not re.search(
+            r"[=;{}()[\]<>]|\b(return|const|let|var|def|class|import|from)\b|^\s{0,3}#{1,6}\s",
+            suggestion,
+        ):
             return True
     return False
 

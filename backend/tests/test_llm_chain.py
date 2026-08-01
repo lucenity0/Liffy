@@ -220,6 +220,38 @@ def test_code_suggestions_are_preserved() -> None:
     assert cleaned.comments[0].suggestion == "return value"
 
 
+def test_code_like_backticks_and_identifiers_are_preserved() -> None:
+    from app.llm.chain import _remove_prose_suggestions
+
+    suggestions = [
+        "const url = `${base}/repos/${name}`;",
+        "echo $(git rev-parse HEAD)",
+        "shouldRender = true",
+        "must_be_valid",
+    ]
+    output = LLMReviewOutput.model_validate(
+        {
+            "summary": "Several issues.",
+            "verdict": "comment",
+            "comments": [
+                {
+                    "file": "app/util.py",
+                    "line_start": 4,
+                    "line_end": 4,
+                    "category": "improvement",
+                    "severity": "info",
+                    "comment": "Use the replacement directly.",
+                    "suggestion": suggestion,
+                }
+                for suggestion in suggestions
+            ],
+        }
+    )
+
+    cleaned = _remove_prose_suggestions(output)
+    assert [comment.suggestion for comment in cleaned.comments] == suggestions
+
+
 # ── AnthropicReviewLLM (LLM-1) ────────────────────────────────────────────────
 
 

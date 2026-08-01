@@ -60,6 +60,16 @@ def index_repo_task(repo_id: str) -> dict:
             # outside the worker log, which is the thing it exists to avoid.
             "files_failed": result.files_failed,
         }
+    except Exception:
+        # A failed task must not strand the repository in the in-flight state.
+        # Roll back first so partial ORM work from a failed run is not
+        # accidentally committed alongside the marker cleanup.
+        db.rollback()
+        failed_repo = db.get(Repository, uuid.UUID(repo_id))
+        if failed_repo is not None and failed_repo.indexing_started_at is not None:
+            failed_repo.indexing_started_at = None
+            db.commit()
+        raise
     finally:
         db.close()
 

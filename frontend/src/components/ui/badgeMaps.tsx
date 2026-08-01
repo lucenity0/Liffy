@@ -72,6 +72,7 @@ const CATEGORY = {
 
 const INDEX = {
   indexed: { label: "Indexed", tone: "sage", dot: true },
+  indexing: { label: "Indexing", tone: "ochre", dot: true, pulse: true },
   not_indexed: { label: "Indexing", tone: "ochre", dot: true, pulse: true },
 } satisfies Record<IndexStatus, BadgeSpec>;
 

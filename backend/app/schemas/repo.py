@@ -29,7 +29,7 @@ class RepoOut(BaseModel):
 class RepoStatusOut(BaseModel):
     id: uuid.UUID
     full_name: str
-    status: str  # "indexed" | "not_indexed"
+    status: str  # "indexed" | "indexing" | "not_indexed"
     indexed_at: datetime | None
     chunk_count: int
     # How the last index run went. Both null on repositories indexed before

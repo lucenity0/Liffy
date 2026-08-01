@@ -339,7 +339,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "openai_base_url": SettingSpec(
         group="review_model",
         label="Endpoint",
-        help="Endpoint used by the OpenAI-compatible provider.",
+        help="Endpoint used by the OpenAI-compatible provider. Non-local endpoints receive your code.",
         kind="str",
         applies_to=("openai",),
         allow_empty=True,
@@ -393,7 +393,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "post_reviews_to_github": SettingSpec(
         group="github_posting",
         label="Post reviews to GitHub",
-        help="Allow Liffy to write reviews to GitHub.",
+        help="Allow Liffy to write comments to real pull requests.",
         kind="bool",
     ),
     "github_review_event_mode": SettingSpec(

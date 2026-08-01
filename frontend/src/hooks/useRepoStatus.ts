@@ -20,6 +20,9 @@ export function useRepoStatus(repoId: string, options?: { enabled?: boolean }) {
     queryFn: () => getRepoStatus(repoId),
     enabled: options?.enabled ?? true,
     refetchInterval: (query) =>
-      query.state.data?.status === "not_indexed" ? 5000 : false,
+      query.state.data?.status === "indexing" ||
+      query.state.data?.status === "not_indexed"
+        ? 5000
+        : false,
   });
 }

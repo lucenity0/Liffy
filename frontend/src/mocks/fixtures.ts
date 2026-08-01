@@ -55,6 +55,11 @@ export const fixtureRepoStatusNotIndexed: RepoStatusOut = {
   last_indexed_files_seen: null,
 };
 
+export const fixtureRepoStatusIndexing: RepoStatusOut = {
+  ...fixtureRepoStatusIndexed,
+  status: "indexing",
+};
+
 /** A run that succeeded but left holes — #210's whole reason for existing. */
 export const fixtureRepoStatusPartial: RepoStatusOut = {
   ...fixtureRepoStatusIndexed,
@@ -508,7 +513,7 @@ export const fixtureSettings: SettingsOut = {
       key: "openai_base_url",
       group: "review_model",
       label: "Endpoint",
-      help: "Endpoint used by the OpenAI-compatible provider.",
+      help: "Endpoint used by the OpenAI-compatible provider. Non-local endpoints receive your code.",
       kind: "str",
       choices: [],
       suggestions: [
@@ -612,7 +617,7 @@ export const fixtureSettings: SettingsOut = {
       key: "post_reviews_to_github",
       group: "github_posting",
       label: "Post reviews to GitHub",
-      help: "Allow Liffy to write reviews to GitHub.",
+      help: "Allow Liffy to write comments to real pull requests.",
       kind: "bool",
       choices: [],
       suggestions: [],

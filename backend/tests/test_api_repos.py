@@ -175,7 +175,7 @@ def test_list_and_status(session_factory, caller, indexed, fake_github) -> None:
     assert status == {
         "id": created["id"],
         "full_name": "octo/demo",
-        "status": "not_indexed",
+        "status": "indexing",
         "indexed_at": None,
         "chunk_count": 0,
         # Null, not 0: no run has recorded a count yet. The distinction is what
@@ -287,9 +287,18 @@ def test_trigger_index_endpoint(session_factory, caller, indexed, fake_github) -
     created = _connect(caller)
     indexed.clear()
 
+    with session_factory() as db:
+        repo = db.get(Repository, uuid.UUID(created["id"]))
+        repo.indexed_at = datetime.now(timezone.utc)
+        db.commit()
+
     response = client.post(f"/repos/{created['id']}/index", headers=caller)
     assert response.status_code == 202
     assert indexed == [created["id"]]
+    with session_factory() as db:
+        repo = db.get(Repository, uuid.UUID(created["id"]))
+        assert repo.indexed_at is not None
+        assert repo.indexing_started_at is not None
     assert client.post(f"/repos/{uuid.uuid4()}/index", headers=caller).status_code == 404
 
 

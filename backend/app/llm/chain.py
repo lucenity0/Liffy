@@ -8,6 +8,7 @@ anchors comment line numbers to the actual diff.
 import atexit
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -29,6 +30,46 @@ Your previous output failed validation:
 {error}
 
 Return the corrected review as ONLY a valid JSON object matching the schema. No other text."""
+
+# A GitHub suggestion block is pasted into the changed file. A sentence that
+# describes a fix is therefore actively harmful: it looks like a patch while
+# leaving the author with prose in their source. The prompt tells the model to
+# return replacement text only, and this small last-mile guard protects the
+# publisher when a provider ignores that instruction.
+def _is_prose_suggestion(value: str | None) -> bool:
+    if not value or not value.strip():
+        return False
+    suggestion = value.strip()
+    # Markdown fences are never part of the replacement text. A single
+    # backtick, however, is valid inside a template literal, shell command, or
+    # Markdown replacement and is not enough to classify the whole suggestion.
+    if "```" in suggestion:
+        return True
+
+    # A one-line sentence with no code punctuation is prose. Keep ordinary
+    # expression/statement suggestions such as `return value`, template
+    # literals, and identifiers such as `shouldRender` or `must_be_valid`.
+    if "\n" not in suggestion and suggestion.endswith((".", "!", "?")):
+        if not re.search(
+            r"[=;{}()[\]<>]|\b(return|const|let|var|def|class|import|from)\b|^\s{0,3}#{1,6}\s",
+            suggestion,
+        ):
+            return True
+    return False
+
+
+def _remove_prose_suggestions(output: LLMReviewOutput) -> LLMReviewOutput:
+    """Keep comments, but never publish prose as a pasteable suggestion."""
+    return output.model_copy(
+        update={
+            "comments": [
+                comment.model_copy(update={"suggestion": None})
+                if _is_prose_suggestion(comment.suggestion)
+                else comment
+                for comment in output.comments
+            ]
+        }
+    )
 
 
 @dataclass
@@ -732,6 +773,9 @@ class CodexReviewLLM:
             # session files behind on a worker that reviews all day.
             "--skip-git-repo-check",
             "--ephemeral",
+            # Override the user's config so reviews use the effort selected in
+            # Liffy rather than silently inheriting ~/.codex/config.toml.
+            "-c", f"model_reasoning_effort={settings.codex_effort}",
             *model_flag,
             "--color", "never",
             # `-` is the CLI's own spelling of "read the prompt from stdin".
@@ -945,6 +989,7 @@ def generate_review(
         raise last_error
 
     output, dropped = _anchor_comments(output, file_diffs)
+    output = _remove_prose_suggestions(output)
     return ReviewResult(
         output=output,
         model_used=llm.model_name,

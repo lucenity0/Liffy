@@ -199,6 +199,25 @@ describe("Settings", () => {
     expect(screen.getByLabelText("Model (custom)")).toHaveValue("llama3.3:70b");
   });
 
+  it("shows Codex thinking effort and keeps it separate from Claude effort", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.selectOptions(
+      await screen.findByLabelText("Provider"),
+      "codex",
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Thinking effort")).toBeInTheDocument(),
+    );
+    const effort = screen.getByLabelText("Thinking effort");
+    expect(effort).toHaveValue("medium");
+    expect([...(effort as HTMLSelectElement).options].map((o) => o.value)).toEqual(
+      ["low", "medium", "high", "xhigh"],
+    );
+  });
+
   it("offers suggestions without closing the field", async () => {
     const user = userEvent.setup();
     let sent: Record<string, string> | null = null;

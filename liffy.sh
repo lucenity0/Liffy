@@ -95,7 +95,14 @@ select_compose_files() {
         # different things: Claude Code reads a token from the environment,
         # Codex only reads a credential directory.
         claude_code) credential=$(resolved_setting claude_code_oauth_token CLAUDE_CODE_OAUTH_TOKEN) ;;
-        codex)       credential=$(resolved_setting codex_home CODEX_HOME) ;;
+        codex)
+            credential=$(resolved_setting codex_home CODEX_HOME)
+            # Codex has no token environment variable. The dedicated overlay
+            # mounts the host's signed-in credential directory and sets
+            # CODEX_HOME inside both containers. Keep it separate from the
+            # Claude overlay so Claude users do not expose ~/.codex.
+            COMPOSE_FILES+=(-f docker-compose.codex.yml)
+            ;;
         *)           return 0 ;;
     esac
 
@@ -106,7 +113,9 @@ select_compose_files() {
         if [ "$provider" = "claude_code" ]; then
             warn "CLAUDE_CODE_OAUTH_TOKEN is empty in backend/.env. Run 'claude setup-token' on this machine and paste the result there — the worker will refuse to start without it."
         else
-            warn "CODEX_HOME is empty in backend/.env. The Codex CLI has no token login, so the container needs ~/.codex mounted: uncomment the volume in docker-compose.subscription.yml (read what it grants first) and set CODEX_HOME to match — the worker will refuse to start without it."
+            # liffy.sh supplies CODEX_HOME and the bind mount through the
+            # Codex overlay. Only warn when the host has no credential store.
+            [ -f "$HOME/.codex/auth.json" ] || warn "No ~/.codex/auth.json found. Run 'codex login' on this machine before starting the Codex worker."
         fi
     fi
 }

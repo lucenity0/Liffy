@@ -1,0 +1,16 @@
+# Docker-only Codex support. liffy.sh adds this overlay automatically when
+# LLM_PROVIDER=codex is selected. Keep it separate from the general
+# subscription overlay so Claude users do not grant the worker access to the
+# host's Codex credential store.
+services:
+  worker:
+    environment:
+      CODEX_HOME: /codex-auth
+    volumes:
+      - ${HOME}/.codex:/codex-auth:ro
+
+  backend:
+    environment:
+      CODEX_HOME: /codex-auth
+    volumes:
+      - ${HOME}/.codex:/codex-auth:ro

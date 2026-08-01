@@ -351,14 +351,16 @@ subscription token because it expects an agent-identity JWT. The only thing that
 authenticates the CLI is a real `auth.json`, so the container needs the
 credential *directory*:
 
-```yaml
-# docker-compose.subscription.yml — uncomment
-volumes:
-  - ${HOME}/.codex:/codex-auth:ro
-```
+`./liffy.sh` adds `docker-compose.codex.yml` automatically when Codex is
+selected. That overlay mounts `${HOME}/.codex` read-only at `/codex-auth` in
+the backend and worker and sets `CODEX_HOME=/codex-auth`. Inspect that file
+before starting if you want to review the credential access. For a manual
+Compose invocation, add it as a third file:
+
 ```bash
-# backend/.env
-CODEX_HOME=/codex-auth
+docker compose -f docker-compose.yml \
+  -f docker-compose.subscription.yml \
+  -f docker-compose.codex.yml up --build
 ```
 
 That mount lets anything in the worker container read your ChatGPT access,
@@ -457,4 +459,3 @@ Make sure you're running uvicorn from inside the `backend/` directory with the v
 You need Node 22.12+. Run `nvm use 22.12` before starting the frontend.
 
 ---
-

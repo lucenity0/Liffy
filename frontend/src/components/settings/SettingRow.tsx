@@ -58,13 +58,13 @@ function Shell({
   htmlFor?: string;
 }) {
   return (
-    <div className="flex flex-col gap-2 border-b border-rule px-4 py-3 last:border-b-0 sm:flex-row sm:items-start sm:gap-6">
+    <div className="flex flex-col gap-1.5 border-b border-rule px-4 py-2.5 last:border-b-0 sm:flex-row sm:items-start sm:gap-6">
       <div className="min-w-0 flex-1">
         <label htmlFor={htmlFor} className="label text-ink">
           {label}
         </label>
-        <p className="mt-1 max-w-prose text-sm text-ink-dim">{help}</p>
-        <div className="mt-1.5">{meta}</div>
+        <p className="mt-0.5 max-w-prose text-xs leading-5 text-ink-dim">{help}</p>
+        <div className="mt-1">{meta}</div>
       </div>
       <div className="shrink-0 sm:w-64">{control}</div>
     </div>

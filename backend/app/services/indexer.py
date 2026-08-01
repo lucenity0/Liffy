@@ -269,5 +269,6 @@ def index_repository(
     repo.last_index_failed_files = result.files_failed
     repo.last_indexed_files_seen = result.files_seen
     repo.indexed_at = datetime.now(timezone.utc)
+    repo.indexing_started_at = None
     db.commit()
     return result

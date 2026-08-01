@@ -122,7 +122,7 @@ const CATEGORIES: Category[] = [
   "convention",
   "improvement",
 ];
-const INDEXES: IndexStatus[] = ["indexed", "not_indexed"];
+const INDEXES: IndexStatus[] = ["indexed", "indexing", "not_indexed"];
 
 function Section({
   title,

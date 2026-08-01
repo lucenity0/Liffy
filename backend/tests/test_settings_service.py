@@ -47,6 +47,14 @@ def test_precedence_db_over_env_over_default(db) -> None:
     assert env_value("anthropic_effort") == "medium"
 
 
+def test_codex_effort_defaults_locally_instead_of_cli_config(db) -> None:
+    assert settings.codex_effort == "medium"
+
+    update_settings(db, {"codex_effort": "high"}, None)
+
+    assert settings.codex_effort == "high"
+
+
 def test_override_is_visible_to_an_existing_call_site(db, monkeypatch) -> None:
     """The point of the whole exercise, asserted where it actually matters.
 

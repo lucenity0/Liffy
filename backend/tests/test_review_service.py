@@ -79,7 +79,7 @@ VALID_COMMENT = {
     "category": "logic_error",
     "severity": "warning",
     "comment": "Possible bug in the new branch.",
-    "suggestion": "Guard against None.",
+    "suggestion": "return value if value is not None else fallback",
 }
 
 
@@ -142,7 +142,7 @@ def test_run_review_persists_review_and_comments(db: Session) -> None:
     assert (c.file_path, c.line_start, c.line_end) == ("app/util.py", 11, 12)
     assert c.category == "logic_error"
     assert c.severity == "warning"
-    assert c.suggestion == "Guard against None."
+    assert c.suggestion == "return value if value is not None else fallback"
 
     repo = db.scalar(select(Repository).where(Repository.full_name == "octo/demo"))
     assert repo is not None

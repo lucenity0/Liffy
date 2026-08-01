@@ -1,7 +1,7 @@
 # Contributors
 
-GitHub's contributor graph shows commit authorship, which doesn't say much
-about scope. This is the honest version.
+GitHub's contributor graph shows commit authorship, which doesn't provide much
+context about roles or scope. This file adds that context.
 
 - **[Nafees S](https://github.com/lucenity0)** — project lead and maintainer.
   Wrote and maintains the codebase.

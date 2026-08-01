@@ -448,16 +448,34 @@ def test_only_connectable_secrets_can_be_written(seeded, monkeypatch) -> None:
 
 
 def test_disconnecting_falls_back_to_env(seeded, monkeypatch) -> None:
-    monkeypatch.setattr(claude_code_auth.httpx, "get", _unreachable)
-    _connect(seeded, "claude_code_oauth_token", "sk-ant-oat01-" + "w" * 40)
+    """Disconnect removes Liffy's copy; `.env` is what it falls back *to*.
 
+    Both halves are pinned here because the first version of this test asserted
+    only the empty case and then failed on a machine whose `.env` genuinely had
+    the token set — the test was reading the developer's dotfile through the
+    mounted source tree and calling correct behaviour a bug.
+    """
+    monkeypatch.setattr(claude_code_auth.httpx, "get", _unreachable)
+
+    # Nothing in .env: disconnecting leaves it unset.
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+    _connect(seeded, "claude_code_oauth_token", "sk-ant-oat01-" + "w" * 40)
     response = client.delete(
         "/settings/secrets/claude_code_oauth_token", headers=seeded["headers"]
     )
-
     assert response.status_code == 200
     by_key = {s["key"]: s for s in response.json()["secrets"]}
     assert by_key["claude_code_oauth_token"]["is_set"] is False
+
+    # A value in .env: disconnecting reveals it again rather than blanking it.
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "from-dotenv")
+    _connect(seeded, "claude_code_oauth_token", "sk-ant-oat01-" + "e" * 40)
+    response = client.delete(
+        "/settings/secrets/claude_code_oauth_token", headers=seeded["headers"]
+    )
+    by_key = {s["key"]: s for s in response.json()["secrets"]}
+    assert by_key["claude_code_oauth_token"]["is_set"] is True
+    assert settings.claude_code_oauth_token == "from-dotenv"
 
 
 def test_connecting_requires_authentication() -> None:

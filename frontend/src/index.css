@@ -70,9 +70,9 @@
   /* Raw-CSS-only constants — deliberately not theme variables. */
   --grain-opacity: 0.032;
   --grain-blend: multiply; /* darkens the paper — see .dark */
-  --ruled-opacity: 0.4;
+  --grid-opacity: 0.5;
   --grain-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-  --rule-step: 28px; /* ruled-line pitch; the prose block matches it exactly */
+  --rule-step: 28px; /* grid pitch; the prose block matches it exactly */
 }
 
 /* ==================================================================== *
@@ -131,7 +131,10 @@
      and needs more of it to read as texture rather than dirt. */
   --grain-blend: screen;
   --grain-opacity: 0.045;
-  --ruled-opacity: 0.3;
+  /* Higher than paper's, for the same reason the tints are: --rule sits only
+     ~37/255 off --paper down here, so the same alpha that reads as a grid on
+     light paper reads as nothing at all on graphite. */
+  --grid-opacity: 0.45;
 }
 
 /* ==================================================================== *
@@ -312,29 +315,35 @@
   mix-blend-mode: var(--grain-blend);
 }
 
-@utility paper-ruled {
+/* Graph paper: the same hairline as every divider, on both axes, at the
+   pitch the prose is set to. Two hard-stop gradients tiled by
+   `background-size` rather than one `repeating-linear-gradient` per axis —
+   repeating gradients resample their stops at fractional device pixels and
+   the lines shimmer while a laptop is on an external display; a tiled
+   background snaps to the same grid every repeat.
+
+   Deliberately unmasked. It used to fade out through a radial mask a third
+   of the way down, which left every page below the fold as flat colour and
+   made the grid read as a rendering artefact rather than as paper. It now
+   covers the viewport evenly, which is the whole point of graph paper.
+
+   Still `fixed`, so content slides over a stationary grid instead of
+   dragging 28px of tiling with it on every scroll frame. */
+@utility paper-grid {
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent calc(var(--rule-step) - 1px),
-    var(--rule) calc(var(--rule-step) - 1px),
-    var(--rule) var(--rule-step)
-  );
-  opacity: var(--ruled-opacity);
-  -webkit-mask-image: radial-gradient(
-    120% 80% at 50% 0%,
-    #000 30%,
-    transparent 100%
-  );
-  mask-image: radial-gradient(120% 80% at 50% 0%, #000 30%, transparent 100%);
+  background-image:
+    linear-gradient(to right, var(--rule) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--rule) 1px, transparent 1px);
+  background-size: var(--rule-step) var(--rule-step);
+  opacity: var(--grid-opacity);
 }
 
-/* The one place ruled lines are literal rather than texture: Liffy's
-   review prose, where the line-height is pinned to the rule pitch. */
+/* Where the grid stops being texture and becomes literal: Liffy's review
+   prose, whose line-height is pinned to the same pitch, so its lines land
+   on the grid rather than drifting against it. */
 @utility prose-hand {
   font-family: var(--font-hand);
   font-size: var(--text-md);
@@ -420,14 +429,14 @@
 
 @media (prefers-contrast: more) {
   .paper-grain,
-  .paper-ruled {
+  .paper-grid {
     display: none;
   }
 }
 
 @media print {
   .paper-grain,
-  .paper-ruled {
+  .paper-grid {
     display: none;
   }
 }

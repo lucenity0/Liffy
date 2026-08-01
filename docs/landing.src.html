@@ -1,0 +1,2030 @@
+<title>Liffy — self-hosted AI code review</title>
+
+<style>
+/* ==================================================================== *
+ * Fonts — Monaspace, the two faces Liffy itself ships. The src values
+ * are filled in by build-site.py, because this page ships both with the
+ * fonts served from /fonts and with them inlined.
+ * ==================================================================== */
+@font-face {
+  font-family: "Monaspace Neon";
+  src: __NEON_SRC__;
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Monaspace Argon";
+  src: __ARGON_SRC__;
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Monaspace Fallback";
+  src: local("SF Mono"), local("SFMono-Regular"), local("Menlo"),
+       local("Consolas"), local("DejaVu Sans Mono");
+  size-adjust: 103.3%;
+  ascent-override: 94.5%;
+  descent-override: 20%;
+  line-gap-override: 10%;
+}
+
+/* ==================================================================== *
+ * Palette — verbatim from frontend/src/index.css, so the front door and
+ * the product are the same ink.
+ * ==================================================================== */
+:root {
+  --paper: #f4f1ea;
+  --card: #faf8f3;
+  --recessed: #efebe2;
+  --rule: #ded8cb;
+  --rule-strong: #c9c1b0;
+  --shadow-edge: #c9c1b0;
+
+  --ink: #2b2925;
+  --ink-dim: #6b6459;
+  --ink-sub: #8e8678;
+
+  --oxide: #9a3f2b;
+  --sage: #4a6b4a;
+  --ochre: #7d6019;
+  --payne: #3f5a73;
+
+  --tint: 9%;
+  --oxide-tint: color-mix(in oklab, var(--oxide) var(--tint), var(--card));
+  --sage-tint: color-mix(in oklab, var(--sage) var(--tint), var(--card));
+  --ochre-tint: color-mix(in oklab, var(--ochre) var(--tint), var(--card));
+  --payne-tint: color-mix(in oklab, var(--payne) var(--tint), var(--card));
+
+  --grain-opacity: 0.034;
+  --grain-blend: multiply;
+  --grid-opacity: 0.5;
+  --grid-step: 28px;
+
+  /* The closing band is the recessed surface, in both themes — no
+     inversion anywhere.
+
+     It began as `background: var(--ink); color: var(--paper)`, which
+     inverts an already-inverted palette, so in graphite it came out as a
+     full-bleed sheet of near white. Pinning it to a literal dark fixed
+     that but left light mode with a black slab dropped into a paper
+     page, which is a different kind of wrong.
+
+     --recessed and --ink already resolve per theme, so one pair of
+     values covers both: sunken paper with normal ink on light, sunken
+     graphite with normal ink on dark. The band reads as a deliberate
+     dip in the page rather than as a hole cut through it, and nothing
+     needs re-stating in the graphite blocks below. */
+  --band-bg: var(--recessed);
+  --band-ink: var(--ink);
+
+  --f-display: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+  --f-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
+
+  --sheet: 72rem;
+  --page: 64rem;
+  --measure: 60ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) {
+    --paper: #1d1b18;
+    --card: #28251f;
+    --recessed: #141311;
+    --rule: #423d36;
+    --rule-strong: #5a5349;
+    --shadow-edge: #0d0c0a;
+    --ink: #e6e1d6;
+    --ink-dim: #9c9280;
+    --ink-sub: #786f60;
+    --oxide: #dd8462;
+    --sage: #7ba171;
+    --ochre: #bd9433;
+    --payne: #84a5c2;
+    --tint: 17%;
+    --grain-opacity: 0.05;
+    --grain-blend: screen;
+    --grid-opacity: 0.45;
+  }
+}
+:root[data-theme="dark"],
+:root.dark {
+  --paper: #1d1b18;
+  --card: #28251f;
+  --recessed: #141311;
+  --rule: #423d36;
+  --rule-strong: #5a5349;
+  --shadow-edge: #0d0c0a;
+  --ink: #e6e1d6;
+  --ink-dim: #9c9280;
+  --ink-sub: #786f60;
+  --oxide: #dd8462;
+  --sage: #7ba171;
+  --ochre: #bd9433;
+  --payne: #84a5c2;
+  --tint: 17%;
+  --grain-opacity: 0.05;
+  --grain-blend: screen;
+  --grid-opacity: 0.45;
+}
+
+/* ==================================================================== *
+ * Frame
+ * ==================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-display);
+  font-size: 16px;
+  line-height: 1.6;
+  font-synthesis-weight: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Graph paper, then grain. Tiled with background-size rather than
+   repeating gradients — repeating gradients resample their stops at
+   fractional device pixels and shimmer on an external display. */
+body::before, body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+body::before {
+  background-image:
+    linear-gradient(to right, var(--rule) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--rule) 1px, transparent 1px);
+  background-size: var(--grid-step) var(--grid-step);
+  opacity: var(--grid-opacity);
+}
+body::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+}
+@media (prefers-contrast: more) { body::before, body::after { display: none; } }
+@media print { body::before, body::after { display: none; } }
+
+/* ==================================================================== *
+ * The sheet — the fix for text sitting straight on the graph paper.
+ *
+ * The grid is a good page texture and a terrible backing for words: at
+ * body size, a 28px rule crossing every line of a paragraph reads as
+ * interference, and low-contrast items (footer links, dim captions)
+ * vanish into it. So the grid keeps the margins and everything with
+ * words in it gets a solid surface, exactly as the under-construction
+ * page does with its own .sheet.
+ *
+ * --paper rather than --card so the panels *inside* it (--card) still
+ * read as raised. Side rules and a hard shadow give it an edge, so it
+ * reads as a sheet laid on the drafting table rather than as the page
+ * simply having lost its texture.
+ *
+ * No `overflow` here, ever: the scroll sections use position: sticky,
+ * and any overflow value other than visible on an ancestor silently
+ * kills sticky.
+ * ==================================================================== */
+.sheet {
+  position: relative;
+  z-index: 1;
+  max-width: var(--sheet);
+  margin: 0 auto;
+  background: var(--paper);
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--rule) 45%, transparent);
+}
+/* Below the sheet width there are no margins left to show grid in, so
+   the borders would just be two stray lines against the screen edge. */
+@media (max-width: 72rem) {
+  .sheet { border-left: none; border-right: none; box-shadow: none; }
+}
+
+.pg {
+  position: relative;
+  z-index: 1;
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 clamp(1.15rem, 4vw, 2.5rem);
+}
+
+::selection { background: var(--ink); color: var(--paper); }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* ==================================================================== *
+ * Type. Body copy is --ink, not --ink-dim: the first pass set every
+ * paragraph in the secondary tone and the page was a strain to read.
+ * --ink-dim is for labels and captions only now.
+ * ==================================================================== */
+.lbl {
+  font-family: var(--f-ui);
+  font-size: 0.68rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  margin: 0;
+  line-height: 1.5;
+}
+.h2 {
+  font-size: clamp(1.5rem, 3.4vw, 2.2rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  margin: 0.6rem 0 0;
+  max-width: 22ch;
+}
+.p {
+  font-size: 1rem;
+  line-height: 1.7;
+  margin: 1rem 0 0;
+  max-width: var(--measure);
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.p.small { font-size: 0.9rem; }
+.p.dim { color: var(--ink-dim); }
+b { font-weight: 650; }
+i { font-style: italic; }
+
+code, .mono {
+  font-family: var(--f-ui);
+  font-size: 0.9em;
+}
+a { color: inherit; }
+
+/* The blinking status dot and caret from the under-construction page —
+   the same two motions, so the front door and the WIP page feel like one
+   hand made them. */
+.blip {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--sage);
+  flex: 0 0 auto;
+}
+.caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.05em;
+  background: currentColor;
+  vertical-align: -0.18em;
+  margin-left: 0.1em;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .blip { animation: blip 1.8s ease-in-out infinite; }
+  .caret { animation: caret 1s steps(1) infinite; }
+}
+@keyframes blip { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+/* ==================================================================== *
+ * Nav
+ * ==================================================================== */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--paper) 86%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--rule);
+}
+.nav-in {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 clamp(1.15rem, 4vw, 2.5rem);
+  height: 3.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+.nav-mark {
+  font-family: var(--f-ui);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  letter-spacing: -0.01em;
+}
+.nav-mark [data-sprite] { color: var(--ink-sub); display: block; }
+.nav-a {
+  font-family: var(--f-ui);
+  font-size: 0.68rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: none;
+  border: none;
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+  text-decoration: none;
+  font-weight: inherit;
+}
+.nav-a:hover { color: var(--ink); }
+@media (max-width: 32rem) { .nav-a.opt { display: none; } }
+
+/* ==================================================================== *
+ * Hero
+ * ==================================================================== */
+.hero { padding: clamp(3.5rem, 10vw, 6.5rem) 0 clamp(2rem, 5vw, 3rem); }
+
+/* Two columns: the pitch, and a reserved slot for the illustration.
+   The slot carries its aspect-ratio whether or not an image is in it
+   yet, so dropping the real artwork in never reflows the hero. */
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 23rem);
+  gap: clamp(2rem, 5vw, 3.5rem);
+  align-items: center;
+}
+@media (max-width: 58rem) {
+  .hero-grid { grid-template-columns: minmax(0, 1fr); }
+  /* Stacked, not hidden — it is a feature, not decoration, and a phone
+     is where a lot of a shared link gets opened. Capped so it cannot
+     push the buttons off a small screen. */
+  .hero-art { max-width: 20rem; }
+}
+.hero-copy { min-width: 0; }
+
+.hero-art {
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--rule);
+  background: var(--card);
+  box-shadow: 4px 4px 0 var(--shadow-edge);
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  min-width: 0;
+}
+.hero-art > * { max-width: 100%; height: auto; }
+.hero-art img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.hero-art [data-sprite] { color: var(--ink-sub); }
+.hero-art [data-sprite] svg { width: 100%; height: auto; }
+.hero-lede {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--ink-sub);
+  font-family: var(--f-ui);
+  font-size: 0.68rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.wordmark {
+  font-size: clamp(3.6rem, 13vw, 7rem);
+  line-height: 0.85;
+  letter-spacing: -0.055em;
+  font-weight: 600;
+  margin: clamp(1rem, 2.5vw, 1.5rem) 0 0;
+}
+.hero-sub {
+  font-size: clamp(1.1rem, 2.4vw, 1.5rem);
+  line-height: 1.45;
+  margin: clamp(1.1rem, 3vw, 1.6rem) 0 0;
+  max-width: 34ch;
+  text-wrap: balance;
+}
+.hero-sub .q { color: var(--ink-dim); }
+
+.cta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: clamp(1.75rem, 4vw, 2.25rem); }
+.btn {
+  font-family: var(--f-ui);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  padding: 0.68rem 1.1rem;
+  border: 1px solid var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: transform 0.08s ease, background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+.btn.solid { background: var(--ink); color: var(--paper); box-shadow: 3px 3px 0 var(--shadow-edge); }
+.btn.solid:hover { background: var(--ink-dim); border-color: var(--ink-dim); }
+.btn.solid:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shadow-edge); }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--rule-strong); }
+.btn.ghost:hover { border-color: var(--ink); background: var(--card); }
+.btn svg { display: block; }
+@media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+
+/* ==================================================================== *
+ * Console — the hero's moving part. A worker log that plays on a loop:
+ * the pipeline, narrating itself, in the voice of the WIP page's status
+ * ticker. Fixed height so the page never reflows as lines arrive.
+ * ==================================================================== */
+.console {
+  margin-top: clamp(2.5rem, 6vw, 3.5rem);
+  border: 1px solid var(--rule);
+  background: var(--card);
+  box-shadow: 4px 4px 0 var(--shadow-edge);
+}
+.console-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--recessed);
+  font-family: var(--f-ui);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+}
+.console-bar .right { margin-left: auto; }
+.console-body {
+  padding: 0.85rem 0.9rem;
+  font-family: var(--f-ui);
+  font-size: clamp(0.72rem, 1.55vw, 0.84rem);
+  line-height: 1.75;
+  height: 11.5rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.cl { display: flex; gap: 0.6rem; white-space: pre; }
+.cl-t { color: var(--ink-sub); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.cl-m { color: var(--ink-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cl.hi .cl-m { color: var(--ink); }
+.cl.ok .cl-m { color: var(--sage); }
+.cl.crit .cl-m { color: var(--oxide); }
+
+/* ==================================================================== *
+ * Section frame. Deliberately varied: some sections are a plain block,
+ * one is a full-bleed inverted band, one is sticky. The first pass gave
+ * every section the same kicker/heading/box rhythm and it read as
+ * chapters rather than as a product page.
+ * ==================================================================== */
+.sec { padding: clamp(3.5rem, 9vw, 6rem) 0; }
+.sec.ruled { border-top: 1px solid var(--rule); }
+.sec-hd { margin-bottom: clamp(1.75rem, 4vw, 2.5rem); }
+
+/* ==================================================================== *
+ * SCROLLY — the centerpiece. A tall scroll track with a sticky figure
+ * inside; scroll position within the track drives a 0..1 progress value,
+ * which drives every stage. Scrubs backwards as cleanly as forwards,
+ * which is the whole feel of the thing.
+ *
+ * The figure is one <figure> on purpose: dropping a real screen capture
+ * in later means replacing its contents and nothing else.
+ * ==================================================================== */
+.scrolly { position: relative; }
+.scrolly-track { height: 360vh; }
+@media (max-width: 48rem) { .scrolly-track { height: 300vh; } }
+
+.stick {
+  position: sticky;
+  top: 3.25rem; /* the nav */
+  height: calc(100vh - 3.25rem);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(0.75rem, 2vw, 1.25rem);
+}
+
+/* Stage rail — four ticks, the active one filled. */
+.rail { display: flex; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.rail-i {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--card);
+  padding: 0.5rem 0.6rem;
+  font-family: var(--f-ui);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.25s, background-color 0.25s;
+}
+.rail-i.on { background: var(--ink); color: var(--paper); }
+@media (prefers-reduced-motion: reduce) { .rail-i { transition: none; } }
+@media (max-width: 40rem) {
+  .rail-i { font-size: 0.55rem; padding: 0.45rem 0.35rem; letter-spacing: 0.04em; }
+}
+
+.frame {
+  border: 1px solid var(--rule);
+  background: var(--card);
+  box-shadow: 4px 4px 0 var(--shadow-edge);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: 34rem;
+}
+.frame-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--recessed);
+  font-family: var(--f-ui);
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+}
+.frame-bar .right { margin-left: auto; font-variant-numeric: tabular-nums; }
+.frame-in {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
+  min-height: 0;
+  flex: 1 1 auto;
+}
+@media (max-width: 52rem) {
+  .frame-in { grid-template-columns: minmax(0, 1fr); }
+  .ctx { display: none; }
+}
+
+/* --- the diff ----------------------------------------------------- */
+.diff {
+  font-family: var(--f-ui);
+  font-size: clamp(0.66rem, 1.45vw, 0.8rem);
+  line-height: 1.9;
+  padding: 0.6rem 0;
+  overflow: hidden;
+  min-width: 0;
+}
+.dl { display: flex; gap: 0.75rem; padding: 0 0.85rem; white-space: pre; transition: background-color 0.3s; }
+.dl-n { color: var(--ink-sub); flex: 0 0 2.4em; text-align: right; font-variant-numeric: tabular-nums; }
+.dl-c { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dl.add { background: color-mix(in oklab, var(--sage) 12%, var(--card)); }
+.dl.add .dl-c::before { content: "+ "; color: var(--sage); }
+.dl.ctxln .dl-c::before { content: "  "; }
+.dl.flag { background: var(--oxide-tint); }
+.dl.flag .dl-n { color: var(--oxide); }
+@media (prefers-reduced-motion: reduce) { .dl { transition: none; } }
+
+/* Short viewports: the figure is capped at the visible height and the
+   diff clips rather than scrolls, so on a phone the review comment — the
+   entire payoff — was the thing being cut off the bottom. Drop the
+   surrounding context lines instead; the flagged line and the comment
+   are what the sequence is for. */
+@media (max-height: 44rem), (max-width: 34rem) {
+  .dl.trim { display: none; }
+}
+
+/* the review comment, pinned under the flagged line */
+.pin {
+  margin: 0.5rem 0.85rem 0.5rem calc(0.85rem + 3.15em);
+  border: 1px solid var(--oxide);
+  background: var(--oxide-tint);
+  padding: 0.6rem 0.7rem;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.pin.on { opacity: 1; transform: none; }
+.pin-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.45rem; }
+.pin-b {
+  font-family: var(--f-display);
+  font-size: clamp(0.78rem, 1.6vw, 0.88rem);
+  line-height: 1.55;
+  margin: 0;
+  white-space: normal;
+  text-wrap: pretty;
+}
+@media (prefers-reduced-motion: reduce) { .pin { transition: none; } }
+
+/* --- retrieved context panel -------------------------------------- */
+.ctx {
+  border-left: 1px solid var(--rule);
+  background: var(--recessed);
+  padding: 0.7rem 0.75rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.ctx-hd {
+  font-family: var(--f-ui);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.chunk {
+  border: 1px solid var(--rule);
+  background: var(--card);
+  padding: 0.45rem 0.55rem;
+  font-family: var(--f-ui);
+  font-size: 0.64rem;
+  line-height: 1.6;
+  opacity: 0;
+  transform: translateX(10px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  min-width: 0;
+}
+.chunk.on { opacity: 1; transform: none; }
+.chunk.key { border-color: var(--payne); background: var(--payne-tint); }
+.chunk-f { color: var(--ink-sub); display: block; margin-bottom: 0.2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chunk-c { color: var(--ink-dim); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chunk.key .chunk-c { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .chunk { transition: none; } }
+
+/* --- verdict stamp ------------------------------------------------- */
+.stamp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  padding: 0.55rem 0.85rem;
+  border-top: 1px solid var(--rule);
+  background: var(--recessed);
+  font-family: var(--f-ui);
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.stamp.on { opacity: 1; }
+.stamp b { color: var(--ink); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .stamp { transition: none; } }
+
+/* ==================================================================== *
+ * The second sequence — indexing. Same scroll engine, same frame, so
+ * the two read as one mechanism seen twice. This one answers the
+ * question the review sequence plants: how did it know to go and look
+ * at setup-macos.sh?
+ * ==================================================================== */
+.ix { grid-template-columns: minmax(0, 1fr) minmax(0, 17rem); }
+@media (max-width: 52rem) {
+  .ix { grid-template-columns: minmax(0, 1fr); }
+  .ix-store { display: none; }
+}
+
+.ix-files { padding: 0.7rem 0; min-width: 0; overflow: hidden; }
+.ixf {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.3rem 0.85rem;
+  font-family: var(--f-ui);
+  font-size: clamp(0.66rem, 1.4vw, 0.78rem);
+  line-height: 1.8;
+  min-width: 0;
+}
+.ixf-n { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ixf-c {
+  margin-left: auto;
+  color: var(--ink-sub);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.ixf.split .ixf-n { color: var(--ink); }
+.ixf.split .ixf-c { opacity: 1; transform: none; }
+.ixf.hit .ixf-n { color: var(--payne); }
+.ixf.hit .ixf-c { color: var(--payne); }
+@media (prefers-reduced-motion: reduce) { .ixf-c { transition: none; } }
+
+/* The chunk boundary illustration — one file opened up, so "split at
+   function boundaries" is shown rather than asserted. */
+.ix-open {
+  margin: 0.5rem 0.85rem;
+  border-left: 2px solid var(--rule);
+  padding-left: 0.75rem;
+  font-family: var(--f-ui);
+  font-size: clamp(0.62rem, 1.3vw, 0.72rem);
+  line-height: 1.85;
+  color: var(--ink-sub);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.ix-open.on { opacity: 1; }
+.ix-open b { color: var(--ink); font-weight: 400; }
+.ix-open .cut { color: var(--sage); }
+@media (prefers-reduced-motion: reduce) { .ix-open { transition: none; } }
+
+.ix-query {
+  margin: 0.6rem 0.85rem 0;
+  border: 1px solid var(--payne);
+  background: var(--payne-tint);
+  padding: 0.5rem 0.65rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.86rem;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.ix-query.on { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .ix-query { transition: none; } }
+
+.ix-store {
+  border-left: 1px solid var(--rule);
+  background: var(--recessed);
+  padding: 0.7rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.ix-count { font-variant-numeric: tabular-nums; color: var(--ink); }
+.cells { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 2px; }
+.cell {
+  aspect-ratio: 1 / 1;
+  background: var(--rule);
+  opacity: 0.3;
+  transition: opacity 0.25s ease, background-color 0.25s ease;
+}
+.cell.on { opacity: 1; background: var(--ink-sub); }
+.cell.hit { opacity: 1; background: var(--payne); }
+@media (prefers-reduced-motion: reduce) { .cell { transition: none; } }
+.ix-hit {
+  margin: auto 0 0;
+  font-family: var(--f-ui);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--payne);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.ix-hit.on { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .ix-hit { transition: none; } }
+
+.pill {
+  font-family: var(--f-ui);
+  font-size: 0.6rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  padding: 0.16rem 0.4rem;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.pill.ok { color: var(--sage); }
+.pill.crit { color: var(--oxide); }
+.pill.info { color: var(--payne); }
+.pill.none { color: var(--ink-sub); }
+
+/* ==================================================================== *
+ * Context switch — the one interactive control on the page. One idea,
+ * one button: the same model, with and without the codebase.
+ * ==================================================================== */
+.switch-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 0.85rem; margin-bottom: 1.5rem; }
+.switch {
+  display: inline-flex;
+  border: 1px solid var(--rule-strong);
+  background: var(--card);
+  padding: 2px;
+  gap: 2px;
+}
+.switch button {
+  font-family: var(--f-ui);
+  font-size: 0.66rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  border: none;
+  background: none;
+  color: var(--ink-dim);
+  padding: 0.42rem 0.8rem;
+  cursor: pointer;
+  transition: background-color 0.18s, color 0.18s;
+}
+.switch button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+@media (prefers-reduced-motion: reduce) { .switch button { transition: none; } }
+
+.answer {
+  border: 1px solid var(--rule);
+  background: var(--card);
+  padding: clamp(1.1rem, 3vw, 1.6rem);
+  min-height: 12rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.answer-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.answer-q {
+  font-size: clamp(1rem, 2.2vw, 1.2rem);
+  line-height: 1.55;
+  margin: 0;
+  text-wrap: pretty;
+}
+.answer-n {
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--ink-dim);
+  margin: auto 0 0;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--rule);
+  text-wrap: pretty;
+}
+.answer.grounded { border-color: var(--sage); }
+
+/* ==================================================================== *
+ * Steps — a compact rail, not four big boxes.
+ * ==================================================================== */
+.rungs { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.rung { background: var(--card); padding: clamp(1rem, 2.4vw, 1.35rem); display: flex; flex-direction: column; gap: 0.5rem; }
+.rung-t { display: flex; align-items: center; gap: 0.5rem; color: var(--ink-sub); }
+.rung-t [data-sprite] { display: block; }
+.rung-n { font-family: var(--f-ui); font-size: 0.62rem; letter-spacing: 0.14em; }
+.rung h3 { font-size: 0.98rem; margin: 0; font-weight: 600; line-height: 1.35; }
+.rung p { font-size: 0.88rem; line-height: 1.62; margin: 0; color: var(--ink-dim); text-wrap: pretty; }
+
+/* ==================================================================== *
+ * Numbers — count up when they scroll into view.
+ * ==================================================================== */
+.nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.num { background: var(--card); padding: clamp(0.9rem, 2.2vw, 1.25rem); display: flex; flex-direction: column; gap: 0.3rem; }
+.num-v {
+  font-family: var(--f-ui);
+  font-size: clamp(1.5rem, 3.6vw, 2.1rem);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.num-l { font-family: var(--f-ui); font-size: 0.62rem; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-sub); }
+
+/* ==================================================================== *
+ * Install block — dev-tool table stakes: a command you can copy.
+ * ==================================================================== */
+.install { border: 1px solid var(--rule); background: var(--card); }
+.install-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--recessed);
+  font-family: var(--f-ui);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+}
+.copy {
+  margin-left: auto;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--ink-dim);
+  background: none;
+  border: 1px solid var(--rule);
+  padding: 0.15rem 0.45rem;
+  cursor: pointer;
+}
+.copy:hover { color: var(--ink); border-color: var(--rule-strong); }
+.install pre {
+  margin: 0;
+  padding: 0.85rem 0.9rem;
+  font-family: var(--f-ui);
+  font-size: clamp(0.72rem, 1.5vw, 0.82rem);
+  line-height: 1.9;
+  overflow-x: auto;
+}
+.install .c { color: var(--ink-sub); }
+.install .pr { color: var(--sage); }
+
+.providers { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-top: 1.25rem; }
+.prov { background: var(--card); padding: 0.85rem 0.9rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.prov-n { font-weight: 600; font-size: 0.92rem; }
+.prov-c { font-family: var(--f-ui); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; }
+.prov-c.free { color: var(--sage); }
+.prov-c.paid { color: var(--ink-sub); }
+.prov-d { font-size: 0.8rem; color: var(--ink-dim); line-height: 1.55; }
+
+/* ==================================================================== *
+ * Status — built vs building, as two plain lists.
+ * ==================================================================== */
+.state { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: clamp(1.5rem, 4vw, 2.5rem); }
+.state ul { margin: 0.9rem 0 0; padding: 0; list-style: none; }
+.state li { font-size: 0.92rem; line-height: 1.6; padding: 0.3rem 0 0.3rem 1.4rem; position: relative; text-wrap: pretty; }
+.state li::before { position: absolute; left: 0; top: 0.3rem; font-family: var(--f-ui); font-size: 0.8rem; }
+.state .done li::before { content: "\2713"; color: var(--sage); }
+.state .wip li { color: var(--ink-dim); }
+.state .wip li::before { content: "\00B7\00B7"; color: var(--ochre); letter-spacing: 0.08em; }
+
+/* ==================================================================== *
+ * Closing band — full-bleed inversion, the one place the page flips.
+ * ==================================================================== */
+.band {
+  position: relative;
+  z-index: 1;
+  background: var(--band-bg);
+  color: var(--band-ink);
+  margin-top: clamp(3rem, 8vw, 5rem);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.band .pg { padding-top: clamp(3rem, 8vw, 5rem); padding-bottom: clamp(3rem, 8vw, 5rem); }
+.band .h2 { max-width: 18ch; }
+.band .p { color: color-mix(in oklab, var(--band-ink) 80%, var(--band-bg)); }
+.band .lbl { color: color-mix(in oklab, var(--band-ink) 55%, var(--band-bg)); }
+.band .btn.solid { background: var(--band-ink); color: var(--band-bg); border-color: var(--band-ink); box-shadow: 3px 3px 0 color-mix(in oklab, var(--band-bg) 55%, var(--band-ink)); }
+.band .btn.solid:hover { background: color-mix(in oklab, var(--band-ink) 84%, var(--band-bg)); border-color: color-mix(in oklab, var(--band-ink) 84%, var(--band-bg)); }
+.band .btn.ghost { color: var(--band-ink); border-color: color-mix(in oklab, var(--band-ink) 40%, var(--band-bg)); }
+.band .btn.ghost:hover { border-color: var(--band-ink); background: color-mix(in oklab, var(--band-ink) 12%, var(--band-bg)); }
+
+/* The ticker. The band was the one section with nothing moving in it,
+   and as a full-width slab of flat colour that read as a dead patch
+   rather than as a pause.
+
+   It carries the actual fifteen steps rather than decorative text, so
+   the motion is the section's own claim — "every step, drawn out in
+   full" — going past, and the two unbuilt ones are marked honestly.
+
+   The run is duplicated and translated by exactly -50%, which is what
+   makes the wrap seamless: at -50% the second copy sits precisely where
+   the first started. `width: max-content` stops the flex row from being
+   squeezed to the container and breaking that alignment. */
+.ticker {
+  margin-top: clamp(2.5rem, 6vw, 3.5rem);
+  padding-top: 1.1rem;
+  border-top: 1px solid color-mix(in oklab, var(--band-ink) 22%, var(--band-bg));
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+}
+.ticker-run {
+  display: flex;
+  width: max-content;
+  font-family: var(--f-ui);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--band-ink) 66%, var(--band-bg));
+}
+/* Trailing padding per item rather than `gap` on the row. With `gap`,
+   30 items carry 29 gaps, so half the width lands half a gap short of
+   where the second copy begins and the wrap visibly stutters once a
+   cycle. Uniform trailing space makes half the width exactly item 16. */
+.ticker-run > span {
+  display: inline-flex;
+  gap: 0.55rem;
+  align-items: baseline;
+  padding-right: 2.25rem;
+}
+.ticker-run i { font-style: normal; color: color-mix(in oklab, var(--band-ink) 52%, var(--band-bg)); }
+.ticker-run .todo { color: color-mix(in oklab, var(--ochre) 70%, var(--band-ink)); }
+@media (prefers-reduced-motion: no-preference) {
+  .ticker-run { animation: run 72s linear infinite; }
+}
+@keyframes run { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* ==================================================================== *
+ * Product footer — columns, not a byline.
+ * ==================================================================== */
+/* Solid, not transparent. The footer's links are the lowest-contrast text
+   on the page, and with the grid showing through them they were the first
+   thing to disappear. --recessed also gives the page a floor to end on
+   rather than trailing off into texture. */
+.foot {
+  position: relative;
+  z-index: 1;
+  background: var(--recessed);
+  border-top: 1px solid var(--rule);
+}
+/* Raised off --recessed, so they clear the surface they sit on. */
+.foot-col a, .foot-brand p { color: var(--ink-dim); }
+.foot-col a:hover { color: var(--ink); }
+/* Explicit tracks, not auto-fit. `repeat(auto-fit, …)` alongside a sized
+   first track resolves against available width in ways that reflow the
+   link columns unpredictably between breakpoints; four named tracks and
+   two breakpoints are duller and always land where you expect. */
+.foot-in {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  gap: clamp(1.75rem, 4vw, 3rem);
+  padding: clamp(2.5rem, 6vw, 3.5rem) 0 clamp(1.5rem, 4vw, 2rem);
+}
+@media (max-width: 52rem) {
+  .foot-in { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .foot-brand { grid-column: 1 / -1; }
+}
+@media (max-width: 30rem) {
+  .foot-in { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.foot-brand { display: flex; flex-direction: column; gap: 0.75rem; }
+.foot-mark { display: flex; align-items: center; gap: 0.6rem; font-family: var(--f-ui); font-size: 0.95rem; font-weight: 600; }
+.foot-mark [data-sprite] { color: var(--ink-sub); display: block; }
+.foot-brand p { margin: 0; font-size: 0.86rem; line-height: 1.6; color: var(--ink-dim); max-width: 32ch; }
+.foot-col h4 {
+  margin: 0 0 0.7rem;
+  font-family: var(--f-ui);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  font-weight: 400;
+}
+.foot-col ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.45rem; }
+.foot-col a { font-size: 0.86rem; color: var(--ink-dim); text-decoration: none; border-bottom: 1px solid transparent; }
+.foot-col a:hover { color: var(--ink); border-color: var(--rule-strong); }
+.foot-bar {
+  border-top: 1px solid var(--rule);
+  padding: 1rem 0 2.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.5rem;
+  font-family: var(--f-ui);
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  color: var(--ink-sub);
+}
+.foot-bar .right { margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
+
+/* ==================================================================== *
+ * Reveal. Gated on `.anim` so a blocked script never hides anything.
+ * ==================================================================== */
+.anim .rvl { opacity: 0; transform: translateY(10px); }
+.anim .rvl.in { opacity: 1; transform: none; transition: opacity 0.55s ease, transform 0.55s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .anim .rvl { opacity: 1; transform: none; }
+  .anim .rvl.in { transition: none; }
+}
+
+.skip {
+  position: absolute; left: -9999px; top: 0;
+  background: var(--card); color: var(--ink); border: 1px solid var(--ink);
+  padding: 0.6rem 1rem; z-index: 60;
+  font-family: var(--f-ui); font-size: 0.7rem; text-decoration: none;
+}
+.skip:focus { left: 0.5rem; top: 0.5rem; }
+</style>
+
+<script>
+  /* Adds the class the reveal CSS keys off, so content is hidden only once
+     we know the script that reveals it is running. */
+  document.documentElement.classList.add("anim");
+</script>
+
+<a class="skip" href="#main">skip to content</a>
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="nav-mark" href="/">
+      <span data-sprite="cat" data-cell="1" aria-hidden="true"></span>
+      liffy
+    </a>
+    <a class="nav-a opt" href="#watch">Watch it work</a>
+    <a class="nav-a opt" href="#run">Run it</a>
+    <a class="nav-a" href="/report">How it works</a>
+    <button class="nav-a" id="theme-toggle" type="button" aria-pressed="false">graphite</button>
+  </div>
+</nav>
+
+<!-- Everything with words in it rides on one solid sheet; the graph
+     paper keeps the margins. See .sheet. -->
+<div class="sheet">
+
+<main id="main">
+
+  <!-- ================================================================ -->
+  <!-- HERO                                                             -->
+  <!-- ================================================================ -->
+  <header class="pg hero">
+   <div class="hero-grid">
+    <div class="hero-copy">
+    <p class="hero-lede"><i class="blip" aria-hidden="true"></i> self-hosted &middot; working end to end</p>
+    <h1 class="wordmark">liffy</h1>
+    <p class="hero-sub">
+      Code review that has actually read your codebase.
+      <span class="q">Not the file. The codebase.</span>
+    </p>
+
+    <div class="cta">
+      <a class="btn solid" href="#watch">
+        Watch it work
+        <svg width="14" height="10" viewBox="0 0 14 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 5h11M8.5 1.5 12 5 8.5 8.5"/></svg>
+      </a>
+      <a class="btn ghost" href="#run">Run it yourself</a>
+    </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- ILLUSTRATION SLOT                                              -->
+    <!--                                                                -->
+    <!-- Replace the <div data-sprite> below with the artwork:          -->
+    <!--                                                                -->
+    <!--   <img src="/hero-illustration.svg"                            -->
+    <!--        alt="<one sentence describing what it shows>" />        -->
+    <!--                                                                -->
+    <!-- Put the file in frontend/public/ and add it to the copy list   -->
+    <!-- in deploy-preview.sh's copy_shared_assets, or it will 404 on   -->
+    <!-- the live site while working fine locally.                      -->
+    <!--                                                                -->
+    <!-- The box is square and already reserves its space, so the hero  -->
+    <!-- will not jump when the image lands. If the artwork wants a     -->
+    <!-- different shape, change `aspect-ratio` on .hero-art — that is  -->
+    <!-- the only value tied to it. Until then the cat holds the frame  -->
+    <!-- so the hero looks finished rather than gap-toothed.            -->
+    <!-- ============================================================== -->
+    <div class="hero-art">
+      <div data-sprite="cat" data-cell="8" aria-hidden="true"></div>
+    </div>
+   </div>
+
+    <!-- The moving part: a worker log, narrating the pipeline on a loop. -->
+    <div class="console" aria-hidden="true">
+      <div class="console-bar">
+        <i class="blip"></i>
+        <span>liffy worker</span>
+        <span class="right" id="con-repo">lucenity0/Liffy</span>
+      </div>
+      <div class="console-body" id="con"></div>
+    </div>
+  </header>
+
+  <!-- ================================================================ -->
+  <!-- THE CENTREPIECE — scroll-scrubbed review                         -->
+  <!-- ================================================================ -->
+  <section class="scrolly" id="watch" aria-label="Watching Liffy review a pull request">
+    <div class="scrolly-track" data-scrolly="review">
+      <div class="stick pg">
+
+        <div class="rail" data-rail="review">
+          <div class="rail-i" data-stage="0">01 &middot; pull request</div>
+          <div class="rail-i" data-stage="1">02 &middot; retrieve</div>
+          <div class="rail-i" data-stage="2">03 &middot; review</div>
+          <div class="rail-i" data-stage="3">04 &middot; verdict</div>
+        </div>
+
+        <figure class="frame" id="figure">
+          <figcaption class="frame-bar">
+            <span>setup-windows.bat</span>
+            <span class="right" id="frame-note">pull request #58</span>
+          </figcaption>
+
+          <div class="frame-in">
+            <div class="diff">
+              <div class="dl ctxln trim"><span class="dl-n">121</span><span class="dl-c">:: generate a signing secret</span></div>
+              <div class="dl add"><span class="dl-n">122</span><span class="dl-c">call :gen_hex 32 SECRET</span></div>
+              <div class="dl ctxln trim"><span class="dl-n">123</span><span class="dl-c"></span></div>
+              <div class="dl ctxln"><span class="dl-n">124</span><span class="dl-c">:: write it into backend\.env</span></div>
+              <div class="dl add flag" id="flagline"><span class="dl-n">125</span><span class="dl-c">set "L=%L:JWT_SECRET_KEY==JWT_SECRET_KEY=%SECRET%%"</span></div>
+
+              <div class="pin" id="pin">
+                <div class="pin-hd">
+                  <span class="pill crit">critical</span>
+                  <span class="pill none">logic error</span>
+                </div>
+                <p class="pin-b" id="pin-text"></p>
+              </div>
+
+              <div class="dl ctxln trim"><span class="dl-n">126</span><span class="dl-c">echo %L%&gt;&gt; backend\.env</span></div>
+            </div>
+
+            <aside class="ctx">
+              <div class="ctx-hd" id="ctx-hd">retrieved from your codebase</div>
+              <div class="chunk key" data-chunk="0">
+                <span class="chunk-f">setup-macos.sh &middot; 0.91</span>
+                <span class="chunk-c">sed -i '' "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=$SECRET|"</span>
+              </div>
+              <div class="chunk" data-chunk="1">
+                <span class="chunk-f">config.py &middot; 0.84</span>
+                <span class="chunk-c">jwt_secret_key: str = Field(min_length=32)</span>
+              </div>
+              <div class="chunk" data-chunk="2">
+                <span class="chunk-f">.env.example &middot; 0.79</span>
+                <span class="chunk-c">JWT_SECRET_KEY=changeme</span>
+              </div>
+            </aside>
+          </div>
+
+          <div class="stamp" id="stamp">
+            <span><span class="pill crit">request changes</span></span>
+            <span>comments <b>8</b></span>
+            <span>tokens read <b>25,043</b></span>
+            <span>elapsed <b>2m 07s</b></span>
+          </div>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- SECOND SEQUENCE — how it could possibly have known               -->
+  <!-- ================================================================ -->
+  <section class="pg sec ruled">
+    <div class="sec-hd">
+      <p class="lbl">// how it knew where to look</p>
+      <h2 class="h2">Nobody told it those two files were related</h2>
+      <p class="p">The Windows script and the macOS script share almost no words. Searching
+        for text would never have connected them. Liffy connects them because, once, it read
+        the whole project and stored what each piece <i>means</i>.</p>
+    </div>
+  </section>
+
+  <section class="scrolly" id="index" aria-label="How Liffy reads a codebase">
+    <div class="scrolly-track" data-scrolly="index">
+      <div class="stick pg">
+
+        <div class="rail" data-rail="index">
+          <div class="rail-i">01 &middot; your repo</div>
+          <div class="rail-i">02 &middot; split</div>
+          <div class="rail-i">03 &middot; embed</div>
+          <div class="rail-i">04 &middot; recall</div>
+        </div>
+
+        <figure class="frame">
+          <figcaption class="frame-bar">
+            <span>indexing lucenity0/Liffy</span>
+            <span class="right" id="ix-note">412 files</span>
+          </figcaption>
+
+          <div class="frame-in ix">
+            <div class="ix-files">
+              <div class="ixf"><span class="ixf-n">backend/app/services/rag_service.py</span><span class="ixf-c">12 chunks</span></div>
+              <div class="ixf"><span class="ixf-n">backend/app/services/chunker.py</span><span class="ixf-c">9 chunks</span></div>
+              <div class="ixf"><span class="ixf-n">backend/app/config.py</span><span class="ixf-c">4 chunks</span></div>
+              <div class="ixf"><span class="ixf-n">setup-macos.sh</span><span class="ixf-c">6 chunks</span></div>
+              <div class="ixf"><span class="ixf-n">setup-windows.bat</span><span class="ixf-c">5 chunks</span></div>
+
+              <div class="ix-open" id="ix-open">
+                <span class="cut">┌ chunk 04</span><br />
+                <b>&nbsp;&nbsp;def write_secret(env_path, secret):</b><br />
+                &nbsp;&nbsp;&nbsp;&nbsp;replace the JWT_SECRET_KEY line in place<br />
+                <span class="cut">└ cut at the function boundary, not at line 40</span>
+              </div>
+
+              <div class="ix-query" id="ix-query">
+                <span class="lbl">query</span>
+                <span>&ldquo;how does this project write the signing secret into .env?&rdquo;</span>
+              </div>
+            </div>
+
+            <aside class="ix-store">
+              <div class="ctx-hd">vector store &middot; <span class="ix-count" id="ix-count">0</span></div>
+              <div class="cells" id="ix-cells"></div>
+              <p class="ix-hit" id="ix-hit">5 nearest &rarr; sent to the model</p>
+            </aside>
+          </div>
+
+          <div class="stamp" id="ix-stamp">
+            <span><span class="pill info">indexed</span></span>
+            <span>files <b>412</b></span>
+            <span>chunks <b>4,062</b></span>
+            <span>runs once, then only on change</span>
+          </div>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- WHAT JUST HAPPENED                                               -->
+  <!-- ================================================================ -->
+  <section class="pg sec ruled">
+    <div class="sec-hd">
+      <p class="lbl">// what just happened</p>
+      <h2 class="h2">It found the bug by reading a different file</h2>
+      <p class="p">Nothing in that Windows script is wrong on its own terms. It is only wrong
+        next to the macOS script, which does the same job correctly &mdash; and Liffy pulled
+        that file up on its own, because it had read the whole project and knew the two
+        belonged together.</p>
+      <p class="p">That bug was already merged and sitting in the main branch. Nobody had
+        noticed.</p>
+    </div>
+
+    <div class="nums" data-nums>
+      <div class="num"><span class="num-v" data-to="8">0</span><span class="num-l">comments</span></div>
+      <div class="num"><span class="num-v" data-to="25043" data-sep="1">0</span><span class="num-l">tokens read</span></div>
+      <div class="num"><span class="num-v" data-to="127" data-fmt="time">0</span><span class="num-l">elapsed</span></div>
+      <div class="num"><span class="num-v" data-to="1" data-suffix=" of 8">0</span><span class="num-l">already in main</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- THE SWITCH                                                       -->
+  <!-- ================================================================ -->
+  <section class="pg sec ruled">
+    <div class="sec-hd">
+      <p class="lbl">// why not just ask an ai</p>
+      <h2 class="h2">Same model. One of them has read your code.</h2>
+      <p class="p">Every AI review tool sends the diff to a model. The only question that
+        matters is what <i>else</i> it sends. Flip the switch.</p>
+    </div>
+
+    <div class="switch-wrap">
+      <div class="switch" role="group" aria-label="Codebase context">
+        <button type="button" id="ctx-off" aria-pressed="true">context: off</button>
+        <button type="button" id="ctx-on" aria-pressed="false">context: on</button>
+      </div>
+      <p class="lbl" id="switch-note">what everyone else ships</p>
+    </div>
+
+    <div class="answer" id="answer">
+      <div class="answer-hd">
+        <span class="pill none" id="answer-pill">generic</span>
+        <span class="lbl" id="answer-src">0 files retrieved</span>
+      </div>
+      <p class="answer-q" id="answer-q"></p>
+      <p class="answer-n" id="answer-n"></p>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- STEPS                                                            -->
+  <!-- ================================================================ -->
+  <section class="pg sec ruled">
+    <div class="sec-hd">
+      <p class="lbl">// start to finish</p>
+      <h2 class="h2">You do step one. It does the rest.</h2>
+    </div>
+
+    <div class="rungs">
+      <div class="rung rvl">
+        <div class="rung-t"><span class="rung-n">01</span><span data-sprite="key" data-cell="2" aria-hidden="true"></span></div>
+        <h3>Connect a repo</h3>
+        <p>Sign in with GitHub. Liffy never sees your password, and you can revoke its
+          access from your GitHub settings whenever you like.</p>
+      </div>
+      <div class="rung rvl">
+        <div class="rung-t"><span class="rung-n">02</span><span data-sprite="book" data-cell="2" aria-hidden="true"></span></div>
+        <h3>It reads everything</h3>
+        <p>Split at function and class boundaries, not arbitrary line counts, then indexed
+          by meaning &mdash; so it finds code that is <i>about</i> the same thing.</p>
+      </div>
+      <div class="rung rvl">
+        <div class="rung-t"><span class="rung-n">03</span><span data-sprite="eye" data-cell="2" aria-hidden="true"></span></div>
+        <h3>A PR arrives</h3>
+        <p>A webhook fires, the job goes on a queue, the review runs in the background. A
+          forty-file change blocks nothing.</p>
+      </div>
+      <div class="rung rvl">
+        <div class="rung-t"><span class="rung-n">04</span><span data-sprite="star" data-cell="2" aria-hidden="true"></span></div>
+        <h3>You score it</h3>
+        <p>Rate any comment up or down. Those ratings roll into a score for the whole
+          system &mdash; a review nobody scores cannot improve.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- RUN IT                                                           -->
+  <!-- ================================================================ -->
+  <section class="pg sec ruled" id="run">
+    <div class="sec-hd">
+      <p class="lbl">// run it</p>
+      <h2 class="h2">Your repos. Your keys. Your machine.</h2>
+      <p class="p">Liffy is not a service you sign up for &mdash; there is no account and no
+        upload. You run it, and it talks to whichever model you point it at. Set that to a
+        local one and nothing leaves the building.</p>
+    </div>
+
+    <div class="install">
+      <div class="install-bar">
+        <span>quickstart</span>
+        <button class="copy" type="button" id="copy">copy</button>
+      </div>
+      <pre id="cmd"><span class="pr">$</span> git clone https://github.com/lucenity0/Liffy.git
+<span class="pr">$</span> cd Liffy
+<span class="pr">$</span> cp .env.example backend/.env   <span class="c"># add your keys, or don't</span>
+<span class="pr">$</span> docker compose up</pre>
+    </div>
+
+    <div class="providers">
+      <div class="prov">
+        <span class="prov-n">Ollama</span>
+        <span class="prov-c free">free &middot; no account</span>
+        <span class="prov-d">Runs on your machine. Nothing leaves it.</span>
+      </div>
+      <div class="prov">
+        <span class="prov-n">Gemini</span>
+        <span class="prov-c free">free tier</span>
+        <span class="prov-d">A free Google account is the whole cost.</span>
+      </div>
+      <div class="prov">
+        <span class="prov-n">Claude Code</span>
+        <span class="prov-c paid">your subscription</span>
+        <span class="prov-d">One you are probably already paying for.</span>
+      </div>
+      <div class="prov">
+        <span class="prov-n">Anthropic</span>
+        <span class="prov-c paid">metered</span>
+        <span class="prov-d">An API key. What the demo above ran on.</span>
+      </div>
+    </div>
+    <p class="p small dim">Embeddings run locally by default and never need a key, whichever
+      model you pick. With Ollama nothing leaves your machine at all; the three hosted
+      options send the diff and the retrieved context to that provider, under their terms.
+      <a href="https://github.com/lucenity0/Liffy#-where-your-code-goes">Exactly what gets
+      sent &rarr;</a></p>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- STATUS                                                           -->
+  <!-- ================================================================ -->
+  <section class="pg sec ruled">
+    <div class="sec-hd">
+      <p class="lbl">// where it stands</p>
+      <h2 class="h2">Thirteen of fifteen steps run today</h2>
+      <p class="p">Liffy is a student project built in the open. This is the real state of
+        it, not a roadmap written to look finished.</p>
+    </div>
+
+    <div class="state">
+      <div class="done">
+        <p class="lbl">Working</p>
+        <ul>
+          <li>GitHub sign-in and repo connection</li>
+          <li>Whole-codebase indexing at function boundaries</li>
+          <li>Webhook-triggered reviews on every push</li>
+          <li>Retrieval-grounded, line-anchored comments</li>
+          <li>Background queue and a dashboard to watch it</li>
+          <li>Four interchangeable model providers</li>
+        </ul>
+      </div>
+      <div class="wip">
+        <p class="lbl">Being built</p>
+        <ul>
+          <li>Rating comments up or down</li>
+          <li>Scoring the system against those ratings</li>
+          <li>Posting reviews back to the PR itself</li>
+          <li>Indexing languages beyond Python</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ================================================================== -->
+<!-- CLOSING BAND                                                       -->
+<!-- ================================================================== -->
+<section class="band">
+  <div class="pg">
+    <p class="lbl">// the long version</p>
+    <h2 class="h2">Every step, drawn out in full<span class="caret" aria-hidden="true"></span></h2>
+    <p class="p">Fifteen numbered steps from sign-in to score, written for someone who does
+      not write software. It is the piece to send to anyone who asks what you have been
+      building.</p>
+    <div class="cta">
+      <a class="btn solid" href="/report">
+        Read the walkthrough
+        <svg width="14" height="10" viewBox="0 0 14 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 5h11M8.5 1.5 12 5 8.5 8.5"/></svg>
+      </a>
+      <a class="btn ghost" href="https://github.com/lucenity0/Liffy">Source</a>
+    </div>
+
+    <div class="ticker" aria-hidden="true">
+      <div class="ticker-run">
+        <span><i>01</i>Someone opens a pull request</span>
+        <span><i>02</i>GitHub knocks on Liffy&rsquo;s door</span>
+        <span><i>03</i>Liffy verifies the knock is really GitHub</span>
+        <span><i>04</i>Fetch the change itself</span>
+        <span><i>05</i>Break the diff into per-file pieces</span>
+        <span><i>06</i>Take a ticket and let GitHub go</span>
+        <span><i>07</i>Convert the changed code into coordinates</span>
+        <span><i>08</i>Ask the library for the nearest neighbours</span>
+        <span><i>09</i>Write the briefing</span>
+        <span><i>10</i>The AI writes the review</span>
+        <span><i>11</i>Check the answer, pin it to real lines</span>
+        <span><i>12</i>File it permanently</span>
+        <span><i>13</i>It appears on screen</span>
+        <span class="todo"><i>14</i>You rate the comment &mdash; being built</span>
+        <span class="todo"><i>15</i>The score updates &mdash; being built</span>
+        <span><i>01</i>Someone opens a pull request</span>
+        <span><i>02</i>GitHub knocks on Liffy&rsquo;s door</span>
+        <span><i>03</i>Liffy verifies the knock is really GitHub</span>
+        <span><i>04</i>Fetch the change itself</span>
+        <span><i>05</i>Break the diff into per-file pieces</span>
+        <span><i>06</i>Take a ticket and let GitHub go</span>
+        <span><i>07</i>Convert the changed code into coordinates</span>
+        <span><i>08</i>Ask the library for the nearest neighbours</span>
+        <span><i>09</i>Write the briefing</span>
+        <span><i>10</i>The AI writes the review</span>
+        <span><i>11</i>Check the answer, pin it to real lines</span>
+        <span><i>12</i>File it permanently</span>
+        <span><i>13</i>It appears on screen</span>
+        <span class="todo"><i>14</i>You rate the comment &mdash; being built</span>
+        <span class="todo"><i>15</i>The score updates &mdash; being built</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================== -->
+<!-- FOOTER                                                             -->
+<!-- ================================================================== -->
+<footer class="foot">
+  <div class="pg">
+    <div class="foot-in">
+      <div class="foot-brand">
+        <div class="foot-mark">
+          <span data-sprite="cat" data-cell="2" aria-hidden="true"></span>
+          liffy
+        </div>
+        <p>Self-hosted AI code review that reads your whole codebase before it opens its
+          mouth.</p>
+      </div>
+
+      <div class="foot-col">
+        <h4>Product</h4>
+        <ul>
+          <li><a href="#watch">Watch it work</a></li>
+          <li><a href="#run">Run it yourself</a></li>
+          <li><a href="/report">How it works</a></li>
+        </ul>
+      </div>
+
+      <div class="foot-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/lucenity0/Liffy">Source</a></li>
+          <li><a href="https://github.com/lucenity0/Liffy/issues">Issues</a></li>
+          <li><a href="https://github.com/lucenity0/Liffy/blob/main/docs/SETUP.md">Setup guide</a></li>
+          <li><a href="https://github.com/lucenity0/Liffy/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/lucenity0/Liffy/blob/main/LICENSE">License</a></li>
+        </ul>
+      </div>
+
+      <div class="foot-col">
+        <h4>Built by</h4>
+        <ul>
+          <li><a href="https://github.com/lucenity0">Nafees S</a></li>
+          <li><a href="https://github.com/gajalakshmishashir">S Gaja Lakshmi</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="foot-bar">
+      <span>&copy; 2026 &middot; liffy</span>
+      <span class="right"><i class="blip" aria-hidden="true"></i> all systems nominal, the cat is asleep</span>
+    </div>
+  </div>
+</footer>
+
+</div><!-- /.sheet -->
+
+<script>
+/* ==================================================================== *
+ * Pixel sprites — text maps expanded into <rect>s at run time. Same
+ * renderer and same maps as the under-construction page and the report,
+ * so the cat is character-for-character the same animal everywhere.
+ * ==================================================================== */
+(function () {
+  var MAPS = {
+    cat: [
+      "..#.......#...............",
+      ".###.....###..............",
+      ".#.##....#.##.............",
+      ".#..##..##..##............",
+      ".#.########..##...........",
+      ".################.........",
+      ".#################........",
+      ".##################.......",
+      ".##################.......",
+      "###################.......",
+      "###################.#####.",
+      "##...####...##############",
+      "##########################",
+      "####################...###",
+      ".################.........",
+      "..#############..........."
+    ],
+    key: [".###.", "#...#", "#...#", ".###.", "..#..", "..##.", "..#..", "..##."],
+    book: ["########", "#......#", "#.####.#", "#......#", "#.####.#", "#......#", "#.####.#", "########"],
+    eye: ["..####..", ".#....#.", "#..##..#", "#.####.#", "#..##..#", ".#....#.", "..####..", "........"],
+    star: ["...#...", "...#...", ".#####.", "..###..", ".##.##.", "##...##", "#.....#"]
+  };
+
+  function build(map, cell) {
+    var w = map[0].length * cell, h = map.length * cell, rects = "";
+    for (var y = 0; y < map.length; y++) {
+      var row = map[y], x = 0;
+      while (x < row.length) {
+        if (row.charAt(x) === "#") {
+          var run = 0;
+          while (x + run < row.length && row.charAt(x + run) === "#") run++;
+          rects += '<rect x="' + x * cell + '" y="' + y * cell +
+                   '" width="' + run * cell + '" height="' + cell + '"/>';
+          x += run;
+        } else x++;
+      }
+    }
+    return '<svg viewBox="0 0 ' + w + " " + h + '" width="' + w + '" height="' + h +
+           '" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true">' + rects + "</svg>";
+  }
+
+  var nodes = document.querySelectorAll("[data-sprite]");
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i], map = MAPS[el.getAttribute("data-sprite")];
+    if (map) el.innerHTML = build(map, parseInt(el.getAttribute("data-cell"), 10) || 4);
+  }
+})();
+
+var REDUCE = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ==================================================================== *
+ * Hero console. A worker log that plays the pipeline on a loop, in the
+ * voice of the WIP page's status ticker. Lines are appended and the
+ * oldest trimmed, so the block never grows and the page never reflows.
+ * ==================================================================== */
+(function () {
+  var box = document.getElementById("con");
+  if (!box) return;
+
+  /* Timestamps are fixed rather than random so the column lands on 02:07
+     — the real elapsed time of this review, and what the last line and
+     the receipt below both claim. A drifting clock that ended at 03:40
+     next to "done in 2m 07s" is exactly the detail someone notices. */
+  var SCRIPT = [
+    ["00:00", "webhook received — pull request #58", ""],
+    ["00:01", "queued as job 4f2a1c", ""],
+    ["00:04", "retrieving context from 4,062 indexed chunks", ""],
+    ["00:09", "5 chunks matched — top hit setup-macos.sh", "hi"],
+    ["00:11", "reviewing 6 changed files", ""],
+    ["00:48", "the cat is reading it properly, give it a second", ""],
+    ["01:52", "8 comments written", "hi"],
+    ["01:58", "1 critical — setup-windows.bat:125", "crit"],
+    ["02:03", "verdict: request changes", "crit"],
+    ["02:07", "done in 2m 07s", "ok"]
+  ];
+
+  var MAX = 6;
+
+  function line(time, text, kind) {
+    var row = document.createElement("div");
+    row.className = "cl" + (kind ? " " + kind : "");
+    var t = document.createElement("span");
+    t.className = "cl-t";
+    t.textContent = time;
+    var m = document.createElement("span");
+    m.className = "cl-m";
+    m.textContent = text;
+    row.appendChild(t);
+    row.appendChild(m);
+    return row;
+  }
+
+  /* Reduced motion gets the finished log, not an empty box. */
+  if (REDUCE) {
+    for (var i = SCRIPT.length - MAX; i < SCRIPT.length; i++) {
+      box.appendChild(line(SCRIPT[i][0], SCRIPT[i][1], SCRIPT[i][2]));
+    }
+    return;
+  }
+
+  var idx = 0;
+  function step() {
+    if (idx === 0) box.textContent = "";
+    var entry = SCRIPT[idx];
+    box.appendChild(line(entry[0], entry[1], entry[2]));
+    while (box.children.length > MAX) box.removeChild(box.firstChild);
+
+    idx++;
+    var wait = 900 + Math.random() * 700;
+    if (idx >= SCRIPT.length) {
+      idx = 0;
+      wait = 2600; /* let the verdict sit before the loop restarts */
+    }
+    setTimeout(step, wait);
+  }
+  setTimeout(step, 350);
+})();
+
+/* ==================================================================== *
+ * Scroll sequences. One track drives a 0..1 progress value and every
+ * stage reads off it — so a sequence scrubs backwards exactly as
+ * cleanly as it plays forwards, which is the entire feel of the thing.
+ *
+ * Shared by both sequences rather than written twice: they are the same
+ * mechanism shown twice, and a fix to the progress maths that landed on
+ * one and missed the other would be immediately visible.
+ *
+ * Everything a sequence does is a class toggle or a text slice inside a
+ * rAF tick, so scrolling never touches layout.
+ * ==================================================================== */
+function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+function scrolly(track, apply) {
+  if (!track) return;
+
+  /* Reduced motion: show the finished state and never listen to scroll. */
+  if (REDUCE) { apply(1); return; }
+
+  var ticking = false;
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function () {
+      ticking = false;
+      var r = track.getBoundingClientRect();
+      /* Progress across the part of the track where the figure is
+         actually pinned: from the moment the track's top reaches the
+         viewport top to the moment its bottom reaches the bottom. */
+      var span = r.height - window.innerHeight;
+      apply(span > 0 ? clamp01(-r.top / span) : 0);
+    });
+  }
+
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll, { passive: true });
+  apply(0);
+  onScroll();
+}
+
+function stageOf(p, bounds) {
+  for (var i = 0; i < bounds.length; i++) if (p < bounds[i]) return i;
+  return bounds.length;
+}
+
+function paintRail(rail, stage) {
+  if (!rail) return;
+  var items = rail.children;
+  for (var i = 0; i < items.length; i++) {
+    items[i].classList.toggle("on", i === stage);
+  }
+}
+
+/* ---- sequence one: reviewing the pull request ---------------------- */
+(function () {
+  var track = document.querySelector('[data-scrolly="review"]');
+  var rail = document.querySelector('[data-rail="review"]');
+  var pin = document.getElementById("pin");
+  var pinText = document.getElementById("pin-text");
+  var stamp = document.getElementById("stamp");
+  var note = document.getElementById("frame-note");
+  var ctxHd = document.getElementById("ctx-hd");
+  var flag = document.getElementById("flagline");
+  if (!track || !pin || !pinText) return;
+
+  var chunks = [].slice.call(document.querySelectorAll(".chunk"));
+
+  var COMMENT =
+    "This replaces the substring JWT_SECRET_KEY= with JWT_SECRET_KEY=<hex>, which " +
+    "prepends the generated secret to whatever placeholder is already there. The macOS " +
+    "script replaces the whole line. Rewrite the line, not the key prefix.";
+
+  var NOTES = ["pull request #58", "retrieving …", "writing review …", "complete · 2m 07s"];
+  var BOUNDS = [0.18, 0.44, 0.78];
+
+  scrolly(track, function (p) {
+    var stage = stageOf(p, BOUNDS);
+    paintRail(rail, stage);
+
+    if (note) note.textContent = NOTES[stage];
+    if (flag) flag.classList.toggle("flag", stage >= 2);
+    if (ctxHd) {
+      ctxHd.textContent = stage >= 1
+        ? "retrieved from your codebase"
+        : "waiting for the diff";
+    }
+
+    /* Chunks arrive one at a time across stage 1. */
+    var ctxP = clamp01((p - 0.18) / 0.26);
+    for (var c = 0; c < chunks.length; c++) {
+      chunks[c].classList.toggle("on", ctxP > c / chunks.length);
+    }
+
+    /* The comment types itself in across stage 2 — a character slice of
+       the real text, so scrubbing back un-types it. */
+    var typeP = clamp01((p - 0.44) / 0.3);
+    pin.classList.toggle("on", p >= 0.44);
+    pinText.textContent =
+      COMMENT.slice(0, Math.round(typeP * COMMENT.length)) +
+      (typeP < 1 && p >= 0.44 ? "█" : "");
+
+    stamp.classList.toggle("on", stage >= 3);
+  });
+})();
+
+/* ---- sequence two: reading the codebase in the first place --------- */
+(function () {
+  var track = document.querySelector('[data-scrolly="index"]');
+  var rail = document.querySelector('[data-rail="index"]');
+  var cellBox = document.getElementById("ix-cells");
+  var count = document.getElementById("ix-count");
+  var open = document.getElementById("ix-open");
+  var query = document.getElementById("ix-query");
+  var hit = document.getElementById("ix-hit");
+  var note = document.getElementById("ix-note");
+  var stamp = document.getElementById("ix-stamp");
+  if (!track || !cellBox) return;
+
+  var files = [].slice.call(document.querySelectorAll(".ixf"));
+
+  /* The store, as 120 cells. Built here rather than in the markup: 120
+     empty spans is a lot of HTML to ship and read for one texture. */
+  var CELLS = 120;
+  var cells = [];
+  for (var i = 0; i < CELLS; i++) {
+    var c = document.createElement("span");
+    c.className = "cell";
+    cellBox.appendChild(c);
+    cells.push(c);
+  }
+
+  /* Scattered rather than adjacent — the nearest five chunks to a query
+     are not neighbours in the store, and a tidy row would imply they
+     were. setup-macos.sh is index 3 in the file list. */
+  var HITS = [14, 37, 52, 88, 103];
+  var HIT_FILES = [3, 4];
+
+  var NOTES = ["412 files", "splitting …", "embedding …", "ready"];
+  var BOUNDS = [0.2, 0.45, 0.75];
+  var TOTAL = 4062;
+
+  scrolly(track, function (p) {
+    var stage = stageOf(p, BOUNDS);
+    paintRail(rail, stage);
+    if (note) note.textContent = NOTES[stage];
+
+    /* Files are split one at a time across stage 1, and one of them
+       opens up so "cut at function boundaries" is shown, not asserted. */
+    var splitP = clamp01((p - 0.2) / 0.25);
+    for (var f = 0; f < files.length; f++) {
+      files[f].classList.toggle("split", splitP > f / files.length);
+    }
+    if (open) open.classList.toggle("on", stage >= 1);
+
+    /* Stage 2 fills the store. The counter is derived from the same
+       progress value as the cells, so they can never disagree. */
+    var fillP = clamp01((p - 0.45) / 0.3);
+    var n = Math.round(fillP * CELLS);
+    for (var i = 0; i < CELLS; i++) cells[i].classList.toggle("on", i < n);
+    if (count) count.textContent = Math.round(fillP * TOTAL).toLocaleString("en-US");
+
+    /* Stage 3 asks a question and lights what comes back. */
+    var recall = stage >= 3;
+    for (var h = 0; h < HITS.length; h++) cells[HITS[h]].classList.toggle("hit", recall);
+    for (var g = 0; g < HIT_FILES.length; g++) {
+      if (files[HIT_FILES[g]]) files[HIT_FILES[g]].classList.toggle("hit", recall);
+    }
+    if (query) query.classList.toggle("on", recall);
+    if (hit) hit.classList.toggle("on", recall);
+    if (stamp) stamp.classList.toggle("on", stage >= 2);
+  });
+})();
+
+/* ==================================================================== *
+ * The context switch. Same model, two briefings.
+ * ==================================================================== */
+(function () {
+  var off = document.getElementById("ctx-off");
+  var on = document.getElementById("ctx-on");
+  var box = document.getElementById("answer");
+  var q = document.getElementById("answer-q");
+  var n = document.getElementById("answer-n");
+  var pill = document.getElementById("answer-pill");
+  var src = document.getElementById("answer-src");
+  var switchNote = document.getElementById("switch-note");
+  if (!off || !on) return;
+
+  var STATES = {
+    off: {
+      q: "“Consider adding error handling to this function, and make sure the variable names are descriptive.”",
+      n: "True of almost any code ever written. Nothing here required reading this project — so nothing here tells the developer anything they did not already know.",
+      pill: "generic",
+      pillClass: "pill none",
+      src: "0 files retrieved",
+      note: "what everyone else ships"
+    },
+    on: {
+      q: "“The macOS script replaces the whole line here; this one replaces only the prefix, so the generated secret gets written in front of the placeholder instead of over it.”",
+      n: "Only possible because the other script was retrieved and put in front of the model first. That is a real comment Liffy wrote, and the bug was real.",
+      pill: "grounded",
+      pillClass: "pill ok",
+      src: "5 files retrieved",
+      note: "what retrieval buys you"
+    }
+  };
+
+  function paint(key) {
+    var s = STATES[key];
+    off.setAttribute("aria-pressed", String(key === "off"));
+    on.setAttribute("aria-pressed", String(key === "on"));
+    q.textContent = s.q;
+    n.textContent = s.n;
+    pill.textContent = s.pill;
+    pill.className = s.pillClass;
+    src.textContent = s.src;
+    switchNote.textContent = s.note;
+    box.classList.toggle("grounded", key === "on");
+  }
+
+  off.addEventListener("click", function () { paint("off"); });
+  on.addEventListener("click", function () { paint("on"); });
+  paint("off");
+})();
+
+/* ==================================================================== *
+ * Count-up numbers, and the scroll reveal.
+ * ==================================================================== */
+(function () {
+  function fmt(el, v) {
+    if (el.getAttribute("data-fmt") === "time") {
+      var m = Math.floor(v / 60), s = Math.round(v % 60);
+      return m + "m " + (s < 10 ? "0" : "") + s + "s";
+    }
+    var out = el.getAttribute("data-sep")
+      ? Math.round(v).toLocaleString("en-US")
+      : String(Math.round(v));
+    return out + (el.getAttribute("data-suffix") || "");
+  }
+
+  function countUp(el) {
+    var to = parseFloat(el.getAttribute("data-to"));
+    if (REDUCE) { el.textContent = fmt(el, to); return; }
+    var dur = 1100, t0 = null;
+    function tick(now) {
+      if (t0 === null) t0 = now;
+      var p = Math.min(1, (now - t0) / dur);
+      /* easeOutCubic — fast off the line, settles rather than stops. */
+      var e = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt(el, to * e);
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  var reveals = [].slice.call(document.querySelectorAll(".rvl"));
+  var nums = [].slice.call(document.querySelectorAll("[data-nums] .num-v"));
+
+  if (REDUCE || !("IntersectionObserver" in window)) {
+    reveals.forEach(function (el) { el.classList.add("in"); });
+    nums.forEach(countUp);
+    return;
+  }
+
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      var el = e.target;
+      if (el.classList.contains("num-v")) {
+        countUp(el);
+      } else {
+        var sibs = [].slice.call(el.parentNode.children);
+        el.style.transitionDelay = Math.min(sibs.indexOf(el), 4) * 60 + "ms";
+        el.classList.add("in");
+      }
+      io.unobserve(el);
+    });
+  }, { rootMargin: "0px 0px -8% 0px", threshold: 0.15 });
+
+  reveals.concat(nums).forEach(function (el) { io.observe(el); });
+})();
+
+/* ==================================================================== *
+ * Copy the quickstart. Falls back to a select-all range where the
+ * clipboard API is unavailable (any non-secure origin, which includes
+ * plain http:// previews).
+ * ==================================================================== */
+(function () {
+  var btn = document.getElementById("copy");
+  var pre = document.getElementById("cmd");
+  if (!btn || !pre) return;
+
+  btn.addEventListener("click", function () {
+    /* The prompts are decoration, not part of the command. */
+    var text = pre.innerText
+      .split("\n")
+      .map(function (l) { return l.replace(/^\$\s*/, ""); })
+      .join("\n")
+      .trim();
+
+    function done() {
+      btn.textContent = "copied";
+      setTimeout(function () { btn.textContent = "copy"; }, 1600);
+    }
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done, select);
+    } else {
+      select();
+    }
+
+    function select() {
+      var r = document.createRange();
+      r.selectNodeContents(pre);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      btn.textContent = "select + copy";
+      setTimeout(function () { btn.textContent = "copy"; }, 2200);
+    }
+  });
+})();
+</script>

@@ -42,7 +42,7 @@ celerybeat-schedule
 #deploy
 .preview-slug
 deploy-preview.sh
-build-report.py
+build-site.py
 create_liffy_issues.sh
 front_end_issues.sh
 create_issues.sh

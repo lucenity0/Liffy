@@ -1,6 +1,6 @@
 /**
- * The two texture layers that make the page read as paper: a fractal-noise
- * grain and a faint ruled wash.
+ * The two texture layers that make the page read as paper: a graph-paper
+ * grid and a fractal-noise grain.
  *
  * Both are fixed at z-index 0 and the app content sits above them, because
  * the grain multiplies — over content it would tint modals and Monaco.
@@ -10,7 +10,7 @@
 export function PaperBackdrop() {
   return (
     <div aria-hidden="true">
-      <div className="paper-ruled" />
+      <div className="paper-grid" />
       <div className="paper-grain" />
     </div>
   );

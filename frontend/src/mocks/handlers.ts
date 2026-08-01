@@ -9,6 +9,7 @@ import {
   fixtureTokenPair,
   fixtureUser,
 } from "./fixtures";
+import type { ReviewDetailOut } from "@/types/api";
 
 /**
  * Wildcard path matching (a leading "*" instead of a full origin) so the
@@ -22,6 +23,40 @@ import {
  */
 
 const FULL_NAME_RE = /^[^/\s]+\/[^/\s]+$/;
+
+/**
+ * Ratings recorded by the feedback POST, keyed by comment id.
+ *
+ * Stateful on purpose, and the only handler here that is. `useCommentFeedback`
+ * invalidates the review detail on settle, so a handler that replayed the
+ * frozen fixture would answer that refetch with the *old* `my_rating` — the
+ * thumb would un-press a beat after being clicked. In `dev:mock` that reads as
+ * broken, and a test asserting the rating stuck would be asserting a fiction.
+ *
+ * One entry per comment, replaced rather than appended, mirroring the unique
+ * `(comment_id, user_id)` row the real backend keeps.
+ */
+const ratings = new Map<string, number>();
+
+/**
+ * Wired into setupTests' `afterEach` alongside `server.resetHandlers()`,
+ * which restores handler *definitions* and knows nothing about this map — so
+ * without it one test's thumbs-up leaks into the next test's fixtures.
+ */
+export function resetFeedback() {
+  ratings.clear();
+}
+
+/** The detail fixtures are shared module constants: overlay, never mutate. */
+function withRatings(review: ReviewDetailOut): ReviewDetailOut {
+  return {
+    ...review,
+    comments: review.comments.map((comment) => {
+      const rating = ratings.get(comment.id);
+      return rating === undefined ? comment : { ...comment, my_rating: rating };
+    }),
+  };
+}
 
 export const handlers = [
   http.get("*/repos", () => HttpResponse.json(fixtureRepos)),
@@ -94,7 +129,7 @@ export const handlers = [
     if (!review) {
       return HttpResponse.json({ detail: "Review not found" }, { status: 404 });
     }
-    return HttpResponse.json(review);
+    return HttpResponse.json(withRatings(review));
   }),
 
   http.get("*/prs/:prId/review", ({ params }) => {
@@ -107,7 +142,7 @@ export const handlers = [
         { status: 404 },
       );
     }
-    return HttpResponse.json(review);
+    return HttpResponse.json(withRatings(review));
   }),
 
   http.post("*/reviews/trigger", async ({ request }) => {
@@ -178,9 +213,13 @@ export const handlers = [
         { status: 422 },
       );
     }
+    ratings.set(params.commentId as string, body.rating);
     return HttpResponse.json({
       comment_id: params.commentId,
       rating: body.rating,
+      // The row's *original* creation time on the real API — re-rating
+      // replaces `rating` and leaves this alone, since `comment_feedback` has
+      // no `updated_at` by design. Close enough here: nothing renders it.
       created_at: new Date().toISOString(),
     });
   }),

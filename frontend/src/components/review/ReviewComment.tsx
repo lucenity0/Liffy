@@ -3,6 +3,7 @@ import { CategoryBadge, SeverityBadge } from "@/components/ui/badgeMaps";
 import { commentAnchorId } from "@/lib/reviewUtils";
 import { cn } from "@/lib/utils";
 import type { ReviewCommentOut } from "@/types/api";
+import { CommentRating } from "./CommentRating";
 
 /**
  * One line-anchored comment. Not a Sheet — these already sit inside one, and
@@ -18,9 +19,12 @@ const EDGE: Record<string, string> = {
 
 export function ReviewComment({
   comment,
+  reviewId,
   onReveal,
 }: {
   comment: ReviewCommentOut;
+  /** Which review's cache a rating writes into — the key is per review. */
+  reviewId: string;
   /** Present only when there is a diff to reveal it in. */
   onReveal?: (comment: ReviewCommentOut) => void;
 }) {
@@ -49,14 +53,6 @@ export function ReviewComment({
 
       <p className="prose-hand">{comment.comment_text}</p>
 
-      {onReveal && (
-        <div>
-          <Button variant="ghost" onClick={() => onReveal(comment)}>
-            Show in diff
-          </Button>
-        </div>
-      )}
-
       {comment.suggestion && (
         <div className="flex flex-col gap-1">
           <p className="label">Suggestion</p>
@@ -67,6 +63,24 @@ export function ReviewComment({
           </pre>
         </div>
       )}
+
+      {/* Actions last, below the suggestion rather than above it: the thing
+          being rated is the comment *and* whatever it proposes, so asking
+          before the proposal is on screen asks about half of it.
+
+          The rating does not go in the badge row — that row is what Liffy
+          said about the code, and a control that records what you think of it
+          is not more of the same metadata. */}
+      <div className="flex items-start gap-2 pt-1">
+        {onReveal && (
+          <Button variant="ghost" onClick={() => onReveal(comment)}>
+            Show in diff
+          </Button>
+        )}
+        <div className="ml-auto">
+          <CommentRating comment={comment} reviewId={reviewId} />
+        </div>
+      </div>
     </article>
   );
 }

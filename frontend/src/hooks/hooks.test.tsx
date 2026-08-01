@@ -14,9 +14,12 @@ import { useRepos } from "./useRepos";
 import { useRepoStatus } from "./useRepoStatus";
 import { useReview } from "./useReview";
 import { useReviews } from "./useReviews";
+import { useCommentFeedback } from "./useCommentFeedback";
 import { useConnectRepo, useDisconnectRepo } from "./useRepoMutations";
 import { useTriggerReview } from "./useReviewMutations";
 import { THEME_KEY, useTheme } from "./useTheme";
+import type { QueryClient } from "@tanstack/react-query";
+import type { ReviewDetailOut } from "@/types/api";
 
 describe("useRepos", () => {
   it("returns the fixture repos", async () => {
@@ -237,6 +240,178 @@ describe("mutations", () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: keys.reviews.all });
+  });
+});
+
+describe("useCommentFeedback", () => {
+  const REVIEW_ID = fixtureReviewCompleted.id;
+  /** Already rated 1, so a rollback has something to roll back *to*. */
+  const RATED = fixtureReviewCompleted.comments[0];
+  const UNRATED = fixtureReviewCompleted.comments[1];
+
+  /**
+   * Seeds the detail cache without mounting a query for it. Nothing is
+   * observing the key, so `onSettled`'s invalidation marks it stale but never
+   * refetches — which is what leaves the optimistic write inspectable.
+   */
+  function seeded() {
+    const wrapper = createWrapper();
+    wrapper.queryClient.setQueryData(
+      keys.reviews.detail(REVIEW_ID),
+      fixtureReviewCompleted,
+    );
+    return wrapper;
+  }
+
+  const ratingOf = (queryClient: QueryClient, commentId: string) =>
+    queryClient
+      .getQueryData<ReviewDetailOut>(keys.reviews.detail(REVIEW_ID))
+      ?.comments.find((comment) => comment.id === commentId)?.my_rating;
+
+  /** A POST held open until the test releases it. */
+  function gatedFeedback() {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post("*/comments/:commentId/feedback", async ({ params, request }) => {
+        const body = (await request.json()) as { rating: number };
+        await gate;
+        return HttpResponse.json({
+          comment_id: params.commentId,
+          rating: body.rating,
+          created_at: "2026-07-25T14:40:00Z",
+        });
+      }),
+    );
+    return () => release();
+  }
+
+  it("writes the new rating into the cache before the request resolves", async () => {
+    const { Wrapper, queryClient } = seeded();
+    const release = gatedFeedback();
+
+    const { result } = renderHook(() => useCommentFeedback(REVIEW_ID), {
+      wrapper: Wrapper,
+    });
+    act(() => result.current.mutate({ commentId: UNRATED.id, rating: -1 }));
+
+    // The whole point of the hook: the cache moves while the POST is still
+    // open, so the thumb presses on click rather than on response.
+    await waitFor(() => expect(ratingOf(queryClient, UNRATED.id)).toBe(-1));
+    expect(result.current.isPending).toBe(true);
+
+    release();
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("leaves every other comment alone", async () => {
+    const { Wrapper, queryClient } = seeded();
+
+    const { result } = renderHook(() => useCommentFeedback(REVIEW_ID), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ commentId: UNRATED.id, rating: 1 });
+    });
+
+    expect(ratingOf(queryClient, RATED.id)).toBe(RATED.my_rating);
+  });
+
+  /**
+   * The test that proves the snapshot logic. Without `onError`, a failed POST
+   * leaves the optimistic value on screen and the user believes a rating was
+   * recorded that the database never saw.
+   */
+  it("rolls back to the previous rating when the request fails", async () => {
+    const { Wrapper, queryClient } = seeded();
+    server.use(
+      http.post("*/comments/:commentId/feedback", () =>
+        HttpResponse.json({ detail: "nope" }, { status: 500 }),
+      ),
+    );
+
+    const { result } = renderHook(() => useCommentFeedback(REVIEW_ID), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current
+        .mutateAsync({ commentId: RATED.id, rating: -1 })
+        .catch(() => {});
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(ratingOf(queryClient, RATED.id)).toBe(RATED.my_rating);
+  });
+
+  it("invalidates the review detail on settle, on both paths", async () => {
+    const { Wrapper, queryClient } = seeded();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(() => useCommentFeedback(REVIEW_ID), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ commentId: UNRATED.id, rating: 1 });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: keys.reviews.detail(REVIEW_ID),
+    });
+  });
+
+  /**
+   * Ordering, not just occurrence. ReviewDetail polls every 3s while a review
+   * is processing; a refetch already in flight when the optimistic write
+   * lands would resolve afterwards and overwrite it, reverting the button
+   * under the user's finger with no error to explain it.
+   */
+  it("cancels in-flight detail queries before writing the cache", async () => {
+    const { Wrapper, queryClient } = seeded();
+    const cancelSpy = vi.spyOn(queryClient, "cancelQueries");
+    const setSpy = vi.spyOn(queryClient, "setQueryData");
+
+    const { result } = renderHook(() => useCommentFeedback(REVIEW_ID), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ commentId: UNRATED.id, rating: 1 });
+    });
+
+    expect(cancelSpy).toHaveBeenCalledWith({
+      queryKey: keys.reviews.detail(REVIEW_ID),
+    });
+    expect(cancelSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      setSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  /**
+   * The key is per review, so a hook built for one review must not reach into
+   * another's cache entry — which is why `reviewId` is an argument rather
+   * than something the hook reads off the router.
+   */
+  it("touches only the review it was given", async () => {
+    const { Wrapper, queryClient } = seeded();
+    queryClient.setQueryData(
+      keys.reviews.detail(fixtureReviewProcessing.id),
+      fixtureReviewProcessing,
+    );
+    const before = queryClient.getQueryData(
+      keys.reviews.detail(fixtureReviewProcessing.id),
+    );
+
+    const { result } = renderHook(() => useCommentFeedback(REVIEW_ID), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ commentId: UNRATED.id, rating: 1 });
+    });
+
+    expect(
+      queryClient.getQueryData(keys.reviews.detail(fixtureReviewProcessing.id)),
+    ).toBe(before);
   });
 });
 

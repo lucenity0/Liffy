@@ -207,6 +207,120 @@ describe("ReviewDetail — re-review", () => {
   });
 });
 
+describe("ReviewDetail — rating comments", () => {
+  /**
+   * Groups sort by file path, so `setup-mac.sh` comes before
+   * `src/lib/diff.ts` — card 0 is the unrated comment, card 1 the one the
+   * fixture already rated 1. Both initial states are asserted below rather
+   * than assumed, so a fixture change fails here instead of silently
+   * inverting what the test means.
+   */
+  async function cards() {
+    await screen.findByText(fixtureReviewCompleted.summary!);
+    // Scoped: the diff viewer renders its own stack of the same comments.
+    const comments = screen.getByRole("region", { name: "Comments" });
+    return within(comments).getAllByRole("article");
+  }
+
+  it("rates a comment in place, and the rating survives the refetch", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderDetail(fixtureReviewCompleted.id);
+
+    const [unrated, alreadyRated] = await cards();
+    const helpful = within(unrated).getByRole("button", { name: "Helpful" });
+    expect(helpful).toHaveAttribute("aria-pressed", "false");
+    expect(
+      within(alreadyRated).getByRole("button", { name: "Helpful" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(helpful);
+
+    await waitFor(() => expect(helpful).toHaveAttribute("aria-pressed", "true"));
+    // The page never went back to a skeleton — the same review is still
+    // mounted around the button that was clicked.
+    expect(screen.getByText(fixtureReviewCompleted.summary!)).toBeInTheDocument();
+
+    // And it is still pressed once `onSettled`'s invalidation has refetched,
+    // which is the difference between an optimistic write and a real one.
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    expect(helpful).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("switches sides without leaving both thumbs pressed", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderDetail(fixtureReviewCompleted.id);
+
+    const [, alreadyRated] = await cards();
+    await user.click(
+      within(alreadyRated).getByRole("button", { name: "Not helpful" }),
+    );
+
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    expect(
+      within(alreadyRated).getByRole("button", { name: "Helpful" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(
+      within(alreadyRated).getByRole("button", { name: "Not helpful" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  /**
+   * The settle refetch is held open on purpose.
+   *
+   * Written the obvious way — click, fail, assert unpressed — this test passes
+   * with `onError` deleted entirely, because `onSettled` invalidates and the
+   * server's answer puts the thumb back on its own. Blocking that answer
+   * leaves the rollback as the only thing that can restore the control, which
+   * is the behaviour the test is named after.
+   */
+  it("puts the thumb back on failure, before the server gets a chance to", async () => {
+    server.use(
+      http.post("*/comments/:commentId/feedback", () =>
+        HttpResponse.json(
+          {
+            detail: [
+              { type: "literal_error", loc: ["body", "rating"], msg: "bad" },
+            ],
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    let release!: () => void;
+    const refetched = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let detailCalls = 0;
+    server.use(
+      http.get("*/reviews/:reviewId", async () => {
+        detailCalls += 1;
+        if (detailCalls > 1) await refetched;
+        return HttpResponse.json(fixtureReviewCompleted);
+      }),
+    );
+
+    const user = userEvent.setup();
+    const { queryClient } = renderDetail(fixtureReviewCompleted.id);
+
+    const [unrated] = await cards();
+    const helpful = within(unrated).getByRole("button", { name: "Helpful" });
+
+    await user.click(helpful);
+
+    const alert = await within(unrated).findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't save that rating.");
+    expect(alert).not.toHaveTextContent(/owner\/name/);
+
+    // Still in flight, so nothing but the rollback has touched the cache.
+    expect(queryClient.isFetching()).toBeGreaterThan(0);
+    expect(helpful).toHaveAttribute("aria-pressed", "false");
+
+    release();
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  });
+});
+
 describe("ReviewDetail — missing", () => {
   it("says the review is not there instead of showing a raw 404", async () => {
     renderDetail("00000000-0000-0000-0000-000000000000");

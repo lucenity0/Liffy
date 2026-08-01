@@ -37,6 +37,21 @@ export function ReviewInFlight({ review }: { review: ReviewDetailOut }) {
 }
 
 export function ReviewFailed({ review }: { review: ReviewDetailOut }) {
+  /**
+   * The worker writes the reason onto the row now, so show it.
+   *
+   * This used to be a paragraph of plausible causes — "a missing or
+   * rate-limited LLM key, or a diff too large" — because at the time the row
+   * genuinely carried nothing. Once it did, the guesses stayed and buried the
+   * fact. A real failure read `'claude' is not on PATH`, which is neither of
+   * the causes listed and is fixed in one step, while the page sent the user
+   * to `docker compose logs` to find that out.
+   *
+   * The stored value is prefixed, because it is also what the list renders as
+   * a one-line summary. It reads better here without it.
+   */
+  const reason = review.summary?.replace(/^Review failed:\s*/i, "").trim();
+
   return (
     <Sheet className="border-oxide/30">
       <Sheet.Header title="Failed" className="bg-oxide-tint" />
@@ -44,14 +59,17 @@ export function ReviewFailed({ review }: { review: ReviewDetailOut }) {
         <p className="font-hand text-lg leading-tight text-ink">
           This review did not finish.
         </p>
+        {reason ? (
+          <p className="max-w-prose whitespace-pre-wrap break-words text-base text-ink">
+            {reason}
+          </p>
+        ) : null}
         <p className="max-w-prose text-base text-ink-dim">
-          {/* The API keeps no failure reason on the row — the worker logs it
-              and moves on — so pointing at the logs beats inventing a cause. */}
           The worker gave up
           {review.completed_at && ` ${formatRelative(review.completed_at)}`}.
-          Common causes are a missing or rate-limited LLM key, or a diff too
-          large for the model's context. The worker log has the reason; Re-review
-          runs the whole pipeline again.
+          {reason
+            ? " Re-review runs the whole pipeline again."
+            : " The worker log has the reason; Re-review runs the whole pipeline again."}
         </p>
       </Sheet.Body>
     </Sheet>

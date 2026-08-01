@@ -81,13 +81,43 @@ class Settings(BaseSettings):
     # high | xhigh | max.
     anthropic_effort: str = Field(default="medium")
     # llm_provider="claude_code" drives the locally-installed Claude Code CLI,
-    # which authenticates with the user's own subscription — the only provider
-    # that needs no API key. Local deployment only: the credentials live in the
-    # user's home directory, not in the container.
+    # and "codex" the Codex CLI. Both authenticate with the user's own
+    # subscription — the only providers that need no API key.
+    #
+    # Outside a container they read the credentials in the user's home
+    # directory and need nothing here. *Inside* one there is no home directory
+    # to read, so the token below is required; see the OAuth token fields.
     claude_code_binary: str = Field(default="claude")
     claude_code_model: str = Field(default="claude-opus-5")
     # Generous: a review is a long single call, and reviews are already async.
     claude_code_timeout: float = Field(default=600.0)
+    codex_binary: str = Field(default="codex")
+    # Empty on purpose, unlike every other model field. Codex model slugs are
+    # specific to the CLI version *and* the account — this machine's config
+    # names `gpt-5.6-luna`, while an older pin like `gpt-5-codex` fails the run
+    # outright with "Model metadata not found". Empty means "whatever
+    # ~/.codex/config.toml already says", which is both more likely to work and
+    # the choice the user already made. Set it to override.
+    codex_model: str = Field(default="")
+    codex_timeout: float = Field(default=600.0)
+    # Minted on the *host* with `claude setup-token` and handed to the container
+    # as an environment variable, which is what makes claude_code work in Docker
+    # at all. Deliberately a token rather than a mounted ~/.claude: a bind-mount
+    # of a live credential store is fragile across platforms and gives the
+    # container a credential it can rewrite. A token is a copy, and revocable.
+    claude_code_oauth_token: str = Field(default="")
+    # Codex gets no equivalent, because the CLI provides none. Measured against
+    # codex-cli 0.146: there is no auth environment variable, and
+    # `codex login --with-access-token` rejects a ChatGPT subscription token —
+    # it wants an agent-identity JWT. The only thing that works is pointing
+    # CODEX_HOME at a directory holding a real auth.json.
+    #
+    # So in a container this provider needs the credential *directory* mounted,
+    # which is a weaker position than the Claude path and is why it is opt-in
+    # and empty by default: unset means "host only", and the provider refuses to
+    # start in a container rather than failing later. docker-compose.subscription.yml
+    # has the mount, commented, with the trade-offs written out.
+    codex_home: str = Field(default="")
     # Caps thinking *and* response text together on Claude models, where
     # thinking is on by default — too tight and the review truncates mid-JSON,
     # which reads like a parser bug rather than a budget problem.
@@ -247,11 +277,14 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
         help=(
             "Which transport runs the review. `openai` also covers anything "
             "speaking the OpenAI wire format — Gemini's compat endpoint, or a "
-            "local Ollama. `claude_code` uses the CLI and your own "
-            "subscription, and only works when Liffy runs outside a container."
+            "local Ollama. `claude_code` and `codex` drive those CLIs against "
+            "a subscription you already pay for, so they need no API key. In "
+            "Docker they additionally need an OAuth token in backend/.env and "
+            "the subscription compose overlay; see the README. Both are for "
+            "local, personal use."
         ),
         kind="choice",
-        choices=("anthropic", "openai", "claude_code"),
+        choices=("anthropic", "openai", "claude_code", "codex"),
     ),
     "anthropic_model": SettingSpec(
         group="review_model",
@@ -423,6 +456,20 @@ READ_ONLY_SETTINGS: dict[str, ReadOnlySetting] = {
     "claude_code_timeout": ReadOnlySetting(
         "review_model", "Claude Code timeout (s)", "Set it in backend/.env.",
     ),
+    "codex_binary": ReadOnlySetting(
+        "review_model", "Codex binary", "Path to the CLI on the host.",
+    ),
+    "codex_model": ReadOnlySetting(
+        "review_model", "Codex model", "Used when the provider is `codex`.",
+    ),
+    "codex_timeout": ReadOnlySetting(
+        "review_model", "Codex timeout (s)", "Set it in backend/.env.",
+    ),
+    "codex_home": ReadOnlySetting(
+        "review_model", "Codex credential directory",
+        "Only needed in Docker, where the CLI has no home directory to read. "
+        "A path, not a secret — the credentials it points at never enter Liffy.",
+    ),
 }
 
 # Never sent to the frontend — not the value, not a masked value, not a length.
@@ -434,6 +481,10 @@ SECRET_SETTINGS: tuple[str, ...] = (
     "github_token",
     "anthropic_api_key",
     "openai_api_key",
+    # A long-lived credential for a personal subscription — the one thing worse
+    # than leaking an API key, since revoking it means re-running the CLI's
+    # login on the host.
+    "claude_code_oauth_token",
 )
 
 def redact_url_credentials(value: Any) -> Any:

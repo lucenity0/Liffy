@@ -475,7 +475,7 @@ export const fixtureSettings: SettingsOut = {
       label: "Provider",
       help: "Which transport runs the review.",
       kind: "choice",
-      choices: ["anthropic", "openai", "claude_code"],
+      choices: ["anthropic", "openai", "claude_code", "codex"],
       minimum: null,
       maximum: null,
       value: "anthropic",

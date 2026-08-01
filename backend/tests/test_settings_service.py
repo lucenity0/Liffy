@@ -160,3 +160,28 @@ def test_every_editable_setting_names_a_real_field() -> None:
     fields = type(settings).model_fields
     for key in EDITABLE_SETTINGS:
         assert key in fields, f"{key} is on the allowlist but not a Settings field"
+
+
+def test_subscription_token_is_secret_not_editable(db) -> None:
+    """A subscription token is a credential and must behave like one.
+
+    It is long-lived, it is not revocable from inside Liffy, and revoking it
+    means re-running the CLI's login on the host — so it belongs in .env with
+    the API keys, never in a database row a settings request can write.
+    """
+    from app.config import SECRET_SETTINGS
+
+    assert "claude_code_oauth_token" in SECRET_SETTINGS
+    assert "claude_code_oauth_token" not in EDITABLE_SETTINGS
+    with pytest.raises(SettingError):
+        update_settings(db, {"claude_code_oauth_token": "sk-ant-oat01-leaked"}, None)
+
+    # codex_home is the opposite case and deliberately not a secret: it is a
+    # filesystem path, and the credentials it points at never enter Liffy. It is
+    # still not editable, because pointing the CLI at a different credential
+    # store is deployment shape rather than review tuning.
+    assert "codex_home" not in EDITABLE_SETTINGS
+    with pytest.raises(SettingError):
+        update_settings(db, {"codex_home": "/tmp/evil"}, None)
+
+    assert db.query(Setting).count() == 0

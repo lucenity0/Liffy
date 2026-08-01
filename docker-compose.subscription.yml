@@ -1,0 +1,52 @@
+# Overlay for the subscription-backed providers (LLM_PROVIDER=claude_code or
+# codex). Use it alongside the base file, never on its own:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
+#
+# What it changes: the worker — the only service that calls a model — is built
+# from an image that has the `claude` and `codex` CLIs installed. Everything
+# else is inherited.
+#
+# Why this exists at all: `liffy.sh` runs the worker in Docker, and the CLIs
+# authenticate against credentials in the user's *home directory*, which does
+# not exist in a container. Before this overlay, selecting `claude_code` in the
+# settings page produced a review that failed on a subprocess error.
+#
+# ⚠ Nothing is restated under `environment:` here, and nothing should be. That
+# block outranks `env_file`, so adding `CLAUDE_CODE_OAUTH_TOKEN: ${...:-}`
+# would resolve to an empty string and overwrite the real token in
+# backend/.env — the same failure as #228. The token reaches the process
+# through env_file in the base file, which is already correct.
+services:
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.subscription
+
+    # ── LLM_PROVIDER=codex only ───────────────────────────────────────────────
+    # Uncomment this volume, and set CODEX_HOME=/codex-auth in backend/.env.
+    #
+    # Why a mount here when claude_code gets away with a token: the Codex CLI
+    # has no token login. Measured against codex-cli 0.146 — there is no auth
+    # environment variable, and `codex login --with-access-token` rejects a
+    # ChatGPT subscription token because it wants an agent-identity JWT. The
+    # only thing that authenticates the CLI is a real auth.json, so the
+    # credential directory itself has to be visible to the container.
+    #
+    # What you are agreeing to by uncommenting it:
+    #
+    #   - The worker can read your ChatGPT access, refresh, and ID tokens. Not
+    #     Liffy's code specifically — anything running in that container.
+    #   - `:ro` means the CLI cannot refresh the token in place, so when it
+    #     expires you re-run `codex login` on the host. Dropping `:ro` fixes
+    #     that by letting the container rewrite your host credential store,
+    #     which is a worse trade than re-running a login.
+    #   - It is Linux/macOS shaped. On Windows the path will not resolve.
+    #
+    # If that is more than you want to grant, LLM_PROVIDER=claude_code reaches
+    # the same place with a revocable token, and running the worker on the host
+    # needs none of this. Without the mount the provider refuses to start and
+    # says so — it never fails silently.
+    #
+    # volumes:
+    #   - ${HOME}/.codex:/codex-auth:ro

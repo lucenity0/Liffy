@@ -5,7 +5,9 @@ seam, validates the JSON (retrying with the validation error fed back), and
 anchors comment line numbers to the actual diff.
 """
 
+import atexit
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -32,7 +34,12 @@ Return the corrected review as ONLY a valid JSON object matching the schema. No 
 @dataclass
 class LLMResponse:
     text: str
-    tokens_used: int = 0
+    # ``None`` means *unknown*, not zero. A provider that cannot report usage
+    # must say so: a 0 reads as "this review was free", and since the §8 metrics
+    # divide by token counts, a fabricated zero corrupts them silently while a
+    # None is filtered out (see ``eval_service.py`` — it already excludes both
+    # NULL and 0 rows, which is what makes this distinction safe to introduce).
+    tokens_used: int | None = 0
 
 
 class ReviewLLM(Protocol):
@@ -176,8 +183,157 @@ class AnthropicReviewLLM:
         )
 
 
-class ClaudeCodeError(RuntimeError):
+class SubscriptionCLIError(RuntimeError):
+    """A subscription-backed CLI provider could not produce a review."""
+
+
+class ClaudeCodeError(SubscriptionCLIError):
     """The Claude Code CLI could not produce a review."""
+
+
+class CodexError(SubscriptionCLIError):
+    """The Codex CLI could not produce a review."""
+
+
+class SubscriptionLimitError(SubscriptionCLIError):
+    """The subscription's own rate limit or quota was reached.
+
+    Its own class because it is the one CLI failure that is not a bug and not a
+    misconfiguration: nothing about the setup is wrong and retrying later fixes
+    it. Folded into the generic error it surfaces as "did not return JSON",
+    which sends the reader looking for a parser bug that is not there.
+    """
+
+
+class SubscriptionAuthError(SubscriptionCLIError):
+    """The CLI is installed but has no usable credentials."""
+
+
+# Substrings both CLIs print when the *subscription* — not an API key — runs
+# out. Matched case-insensitively against stdout and stderr before any attempt
+# to parse the output, because a rate-limited run exits nonzero with prose
+# where the JSON should be.
+_LIMIT_MARKERS = (
+    "rate limit",
+    "usage limit",
+    "quota",
+    "too many requests",
+    "429",
+    "resets at",
+)
+
+_AUTH_MARKERS = (
+    "not logged in",
+    "not authenticated",
+    "please run /login",
+    "please log in",
+    "invalid api key",
+    "oauth token has expired",
+    "authentication_error",
+)
+
+
+def running_in_container() -> bool:
+    """True when this process is inside Docker/Kubernetes.
+
+    The subscription providers hinge on this: outside a container the CLIs read
+    the credentials in the user's home directory and need nothing configured,
+    inside one there is no such directory and a token is mandatory. Getting the
+    answer wrong in either direction produces a confusing error, so it is one
+    helper rather than a check copy-pasted into each provider.
+    """
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", encoding="utf-8") as fh:
+            return any(
+                marker in fh.read() for marker in ("docker", "kubepods", "containerd")
+            )
+    except OSError:
+        # No /proc at all — macOS or Windows, which means not a Linux container.
+        return False
+
+
+def _classify_cli_failure(
+    provider: str,
+    returncode: int,
+    blob: str,
+    error_cls: type[SubscriptionCLIError],
+) -> SubscriptionCLIError:
+    """Turn a failed CLI run into the most specific error the output supports.
+
+    ``error_cls`` is the provider's own error type, used when the output says
+    nothing recognisable — so an unexplained failure still arrives as the
+    ``ClaudeCodeError``/``CodexError`` a caller would think to catch.
+    """
+    haystack = (blob or "").lower()
+    if any(marker in haystack for marker in _LIMIT_MARKERS):
+        return SubscriptionLimitError(
+            f"{provider} hit its subscription rate limit or quota. Nothing is "
+            f"misconfigured — the account is out of allowance for now. "
+            f"Output: {(blob or '').strip()[:300]}"
+        )
+    if any(marker in haystack for marker in _AUTH_MARKERS):
+        return SubscriptionAuthError(
+            f"{provider} is installed but not authenticated. "
+            f"Output: {(blob or '').strip()[:300]}"
+        )
+    return error_cls(f"{provider} exited {returncode}: {(blob or '').strip()[:300]}")
+
+
+_CODEX_HOME_CACHE: dict[str, str] = {}
+
+
+def _writable_codex_home(source: str) -> str:
+    """A copy of the Codex credential directory that the CLI can write into.
+
+    The mount in ``docker-compose.subscription.yml`` is ``:ro`` deliberately —
+    the container should not be able to rewrite the host's credential store.
+    But the CLI writes into ``CODEX_HOME`` while running, and against a
+    read-only directory it dies with ``failed to initialize in-process
+    app-server client: Read-only file system`` *after* authenticating, which
+    reads as a Liffy bug rather than a mount option.
+
+    Copying resolves both halves: the CLI gets a writable home, the host store
+    stays read-only. The copy lasts for the life of the process, so a token the
+    CLI refreshes into it is lost on restart — which is the price of not
+    granting write access to the real one, and cheap next to re-running a login.
+
+    A source that is already writable is used as-is; that is the host case,
+    where this whole dance is unnecessary.
+    """
+    if source in _CODEX_HOME_CACHE:
+        return _CODEX_HOME_CACHE[source]
+    if os.access(source, os.W_OK):
+        _CODEX_HOME_CACHE[source] = source
+        return source
+
+    # Under the home directory, not /tmp: the CLI installs helper binaries into
+    # CODEX_HOME and refuses outright to do that beneath a temporary directory
+    # ("Refusing to create helper binaries under temporary dir").
+    target = os.path.join(os.path.expanduser("~"), ".liffy-codex-home")
+    os.makedirs(target, mode=0o700, exist_ok=True)
+    os.chmod(target, 0o700)
+    for name in ("auth.json", "config.toml"):
+        origin = os.path.join(source, name)
+        if os.path.isfile(origin):
+            shutil.copy2(origin, os.path.join(target, name))
+    # Credentials should not outlive the process that needed them.
+    atexit.register(shutil.rmtree, target, True)
+    _CODEX_HOME_CACHE[source] = target
+    return target
+
+
+def _cli_env(name: str, value: str) -> dict[str, str] | None:
+    """The child environment, with the CLI's credential variable set.
+
+    Returns ``None`` — meaning "inherit ours" — when nothing is configured, so
+    the host path keeps working exactly as before: the CLI finds the credentials
+    in the user's home directory and this provider never touches them.
+    """
+    if not value:
+        return None
+    return {**os.environ, name: value}
 
 
 class ClaudeCodeReviewLLM:
@@ -211,11 +367,27 @@ class ClaudeCodeReviewLLM:
         self.model_name = model or settings.claude_code_model
         self._binary = binary or settings.claude_code_binary
         self._timeout = timeout if timeout is not None else settings.claude_code_timeout
+        self._token = settings.claude_code_oauth_token
 
         if shutil.which(self._binary) is None:
             raise ClaudeCodeError(
                 f"{self._binary!r} is not on PATH. Install Claude Code and sign in, "
                 f"or set LLM_PROVIDER to a different provider."
+            )
+
+        # Deliberately at construction, which for this provider is startup —
+        # `get_llm()` is called before the review begins. The whole point is
+        # that a misconfigured subscription provider fails while someone is
+        # watching, not forty seconds into a queued review where it surfaces as
+        # a subprocess error against a pull request.
+        if running_in_container() and not self._token:
+            raise SubscriptionAuthError(
+                "LLM_PROVIDER=claude_code is running inside a container, where "
+                "there is no home directory holding your Claude credentials. "
+                "Run `claude setup-token` on the host and set "
+                "CLAUDE_CODE_OAUTH_TOKEN in backend/.env, then start with "
+                "`docker compose -f docker-compose.yml "
+                "-f docker-compose.subscription.yml up`."
             )
 
     def _argv(self, system: str, user: str) -> list[str]:
@@ -246,6 +418,7 @@ class ClaudeCodeReviewLLM:
                     text=True,
                     timeout=self._timeout,
                     cwd=workdir,
+                    env=_cli_env("CLAUDE_CODE_OAUTH_TOKEN", self._token),
                 )
             except subprocess.TimeoutExpired as exc:
                 raise ClaudeCodeError(
@@ -253,9 +426,15 @@ class ClaudeCodeReviewLLM:
                 ) from exc
 
         if proc.returncode != 0:
-            raise ClaudeCodeError(
-                f"Claude Code exited {proc.returncode}: {(proc.stderr or '').strip()[:300]}"
-            )
+            # Classify before reporting. A hit rate limit and a genuine crash
+            # both arrive here as a nonzero exit, and telling them apart is the
+            # difference between "wait" and "something is broken".
+            raise _classify_cli_failure(
+                "Claude Code",
+                proc.returncode,
+                f"{proc.stderr or ''}\n{proc.stdout or ''}",
+                ClaudeCodeError,
+            ) from None
 
         try:
             payload = json.loads(proc.stdout)
@@ -267,6 +446,11 @@ class ClaudeCodeReviewLLM:
             ) from exc
 
         if payload.get("is_error") or payload.get("subtype") != "success":
+            # A limit can also arrive as a clean exit with an error payload, so
+            # the same classification applies here as to a nonzero exit.
+            blob = json.dumps(payload)
+            if any(marker in blob.lower() for marker in _LIMIT_MARKERS):
+                raise _classify_cli_failure("Claude Code", 0, blob, ClaudeCodeError)
             raise ClaudeCodeError(
                 f"Claude Code reported failure "
                 f"(subtype={payload.get('subtype')}, "
@@ -319,20 +503,243 @@ def _claude_code_tokens(payload: dict) -> int:
     )
 
 
+class CodexReviewLLM:
+    """Drives the locally-installed Codex CLI as a completion endpoint.
+
+    The ChatGPT-subscription counterpart to ``ClaudeCodeReviewLLM``, and shaped
+    to match it. Two differences are forced by the CLI rather than chosen:
+
+    ``codex exec`` has **no system-prompt flag**, so the reviewer persona is
+    prepended to the user prompt instead of replacing an agent persona. Codex
+    also has no ``--disallowed-tools``; the sandbox is the control instead —
+    ``-s read-only`` in an empty temporary directory leaves its tools with
+    nothing to reach, which is the same guarantee by a different route.
+    """
+
+    def __init__(
+        self,
+        model: str | None = None,
+        binary: str | None = None,
+        timeout: float | None = None,
+    ) -> None:
+        # `model_name` is persisted as a review's `model_used`, so when the
+        # model is left to the CLI it has to say that rather than report an
+        # empty string as if nothing ran.
+        self._model = model or settings.codex_model
+        self.model_name = self._model or "codex (CLI default)"
+        self._binary = binary or settings.codex_binary
+        self._timeout = timeout if timeout is not None else settings.codex_timeout
+        self._codex_home = settings.codex_home
+
+        if shutil.which(self._binary) is None:
+            raise CodexError(
+                f"{self._binary!r} is not on PATH. Install the Codex CLI and run "
+                f"`codex login`, or set LLM_PROVIDER to a different provider."
+            )
+
+        # Codex is host-only unless CODEX_HOME is explicitly configured, and
+        # that is a property of the CLI rather than a decision Liffy made.
+        # Measured against codex-cli 0.146: no auth environment variable exists,
+        # and `codex login --with-access-token` rejects a ChatGPT subscription
+        # token outright ("agent identity JWT payload is not valid JSON"). So
+        # unlike Claude Code there is no token to copy in — only the credential
+        # directory itself, which the operator has to opt into mounting.
+        if running_in_container() and not self._codex_home:
+            raise SubscriptionAuthError(
+                "LLM_PROVIDER=codex is running inside a container, where there "
+                "is no home directory holding your Codex credentials — and the "
+                "Codex CLI has no token-based login to work around it. Either "
+                "run the worker on the host, use LLM_PROVIDER=claude_code "
+                "(which does support a token), or mount ~/.codex into the "
+                "worker and set CODEX_HOME — see the commented volume in "
+                "docker-compose.subscription.yml for the trade-offs."
+            )
+
+        if self._codex_home:
+            self._codex_home = _writable_codex_home(self._codex_home)
+
+        self._preflight()
+
+    def _preflight(self) -> None:
+        """Confirm the CLI is actually signed in, before any review depends on it.
+
+        Codex is checkable for free — ``codex login status`` reads local state
+        and calls nothing — so there is no reason to discover an expired login
+        by burning a review on it. Claude Code has no equivalent free probe, and
+        a live probe there would spend real subscription quota on every worker
+        start, so that provider verifies its credentials only where it can do so
+        without cost: the container-token check above.
+        """
+        try:
+            proc = subprocess.run(
+                [self._binary, "login", "status"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=_cli_env("CODEX_HOME", self._codex_home),
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise CodexError(f"`{self._binary} login status` did not respond") from exc
+
+        # Read the output, not the exit code. `codex login status` exits 0 while
+        # printing "Not logged in" — trusting the status here would let an
+        # unauthenticated worker start cleanly and fail on its first review,
+        # which is the exact behaviour this preflight exists to prevent.
+        combined = f"{proc.stdout or ''}{proc.stderr or ''}"
+        if proc.returncode != 0 or "not logged in" in combined.lower():
+            raise SubscriptionAuthError(
+                f"The Codex CLI is installed but not signed in. Run `codex login` "
+                f"on the host. ({combined.strip()[:200]})"
+            )
+
+    def _argv(self, prompt: str, workdir: str) -> list[str]:
+        model_flag = ["--model", self._model] if self._model else []
+        return [
+            self._binary,
+            "exec",
+            "--json",
+            # Liffy hands over a finished prompt; nothing here should read the
+            # filesystem, and `workdir` is an empty temp dir precisely so that
+            # `read-only` has nothing to see. Same reasoning as the Claude Code
+            # provider's disabled tools.
+            "--sandbox", "read-only",
+            "-C", workdir,
+            # The temp dir is not a git repo, and a review must not leave
+            # session files behind on a worker that reviews all day.
+            "--skip-git-repo-check",
+            "--ephemeral",
+            *model_flag,
+            "--color", "never",
+            prompt,
+        ]
+
+    def complete(self, system: str, user: str) -> LLMResponse:
+        prompt = f"{system}\n\n{user}"
+        with tempfile.TemporaryDirectory(prefix="liffy-review-") as workdir:
+            try:
+                proc = subprocess.run(
+                    self._argv(prompt, workdir),
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout,
+                    cwd=workdir,
+                    env=_cli_env("CODEX_HOME", self._codex_home),
+                    # Without this the CLI waits on stdin for more prompt and
+                    # the run hangs until the timeout rather than answering.
+                    stdin=subprocess.DEVNULL,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise CodexError(f"Codex timed out after {self._timeout}s") from exc
+
+        if proc.returncode != 0:
+            raise _classify_cli_failure(
+                "Codex",
+                proc.returncode,
+                f"{proc.stderr or ''}\n{proc.stdout or ''}",
+                CodexError,
+            ) from None
+
+        text, usage, failure = _codex_events(proc.stdout)
+        if failure is not None:
+            raise _classify_cli_failure("Codex", 0, failure, CodexError)
+        if not text:
+            raise CodexError(
+                f"Codex returned no agent message. This usually means the event "
+                f"format changed — Liffy expects `item.completed` events carrying "
+                f"an `agent_message` item, as emitted by codex-cli 0.146. "
+                f"Output: {proc.stdout.strip()[:300]!r}"
+            )
+
+        return LLMResponse(text=text, tokens_used=_codex_tokens(usage))
+
+
+def _codex_events(stdout: str) -> tuple[str, dict | None, str | None]:
+    """Pull the answer, the usage block, and any failure out of `--json` output.
+
+    ``codex exec --json`` emits JSONL, one event per line, and is tolerant by
+    design: unrecognised lines are skipped rather than raising, so a new event
+    type in a future release adds noise instead of breaking reviews.
+    """
+    text_parts: list[str] = []
+    usage: dict | None = None
+    failure: str | None = None
+
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        kind = event.get("type")
+        if kind == "item.completed":
+            item = event.get("item") or {}
+            if item.get("type") == "agent_message" and item.get("text"):
+                text_parts.append(str(item["text"]))
+        elif kind == "turn.completed":
+            raw = event.get("usage")
+            usage = raw if isinstance(raw, dict) else None
+        elif kind in ("turn.failed", "error"):
+            failure = json.dumps(event)
+
+    return "\n".join(text_parts), usage, failure
+
+
+def _codex_tokens(usage: dict | None) -> int | None:
+    """Total tokens for a Codex call, or ``None`` when the CLI did not say.
+
+    Deliberately *not* the same arithmetic as ``_claude_code_tokens``. Codex
+    reports ``cached_input_tokens`` as the cached *portion of*
+    ``input_tokens`` — a real call showed 13,220 input of which 8,960 was
+    cached — where Claude Code reports its cache fields alongside, not inside,
+    the input count. Summing all four here the way the Claude path does would
+    double-count the cache and inflate every review.
+
+    ``reasoning_output_tokens`` is likewise already inside ``output_tokens``.
+
+    Returns ``None`` rather than 0 when no usage event arrived: unknown and
+    free are different claims, and only one of them is true.
+    """
+    if not usage:
+        return None
+    try:
+        return int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+    except (TypeError, ValueError):
+        return None
+
+
 def get_llm() -> ReviewLLM:
     """Select the review transport. Constructed lazily by callers, never at import."""
     if settings.llm_provider == "openai":
         return OpenAIReviewLLM()
     if settings.llm_provider == "claude_code":
         return ClaudeCodeReviewLLM()
+    if settings.llm_provider == "codex":
+        return CodexReviewLLM()
     return AnthropicReviewLLM()
+
+
+def _accumulate_tokens(total: int | None, reported: int | None) -> int | None:
+    """Add a call's usage to the running total; ``None`` poisons the sum.
+
+    A review can take several attempts, and if any one of them reported no
+    usage the total is genuinely unknown — not "the sum of the ones that did
+    answer", which would look like a complete number while under-reporting.
+    """
+    if total is None or reported is None:
+        return None
+    return total + reported
 
 
 @dataclass
 class ReviewResult:
     output: LLMReviewOutput
     model_used: str
-    tokens_used: int = 0
+    tokens_used: int | None = 0
     dropped_comments: int = 0
     raw_attempts: int = 1
     context_files: list[str] = field(default_factory=list)
@@ -391,14 +798,14 @@ def generate_review(
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> ReviewResult:
     user_prompt = build_review_prompt(pr_title, file_diffs, context_chunks)
-    tokens = 0
+    tokens: int | None = 0
     attempts = 0
     last_error: LLMOutputError | None = None
 
     for attempt in range(max_retries + 1):
         attempts = attempt + 1
         response = llm.complete(SYSTEM_PROMPT, user_prompt)
-        tokens += response.tokens_used
+        tokens = _accumulate_tokens(tokens, response.tokens_used)
         try:
             output = parse_llm_output(response.text)
             break

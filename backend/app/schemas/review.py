@@ -1,8 +1,18 @@
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+
+# The four strings ``reviews.status`` actually holds, spelled once.
+#
+# Written at ``review_service.py:208`` (processing), ``:235`` (completed) and
+# ``:256`` (failed), with ``pending`` the column default in ``models/review.py``.
+# Named here rather than retyped at each filter so a UI label can never quietly
+# become a fifth status that matches no row.
+ReviewStatus = Literal["pending", "processing", "completed", "failed"]
 
 
 class ReviewVerdict(str, Enum):

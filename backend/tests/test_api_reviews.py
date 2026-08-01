@@ -103,6 +103,45 @@ def seeded():
     app.dependency_overrides.clear()
 
 
+@pytest.fixture()
+def filterable(seeded):
+    """``seeded`` plus a second repo, a second PR number and a failed review.
+
+    Layered on top rather than folded into ``seeded`` so the existing list
+    assertions — which count on the caller owning exactly two reviews — keep
+    meaning what they meant. A filter proves nothing against a fixture where
+    every row already matches; this adds the rows a filter has to *exclude*.
+
+    The caller ends up with three reviews across two repos:
+    ``octo/demo`` #7 (old, new — both completed) and ``octo/other`` #203
+    (one failed), newest last.
+    """
+    with seeded["factory"]() as db:
+        repo = Repository(
+            user_id=seeded["user"], github_repo_id=11, full_name="octo/other"
+        )
+        db.add(repo)
+        db.flush()
+        pr = PullRequest(
+            repo_id=repo.id, github_pr_number=203, title="Ship", author="octo",
+            base_branch="main", head_branch="ship", status="open",
+        )
+        db.add(pr)
+        db.flush()
+        failed = Review(
+            pr_id=pr.id, status="failed", summary="other-failed",
+            created_at=T0 + timedelta(hours=2),
+        )
+        db.add(failed)
+        db.commit()
+
+        seeded["other_repo"] = repo.id
+        seeded["other_pr_number"] = 203
+        seeded["failed"] = failed.id
+
+    return seeded
+
+
 # ── Authentication ────────────────────────────────────────────────────────────
 
 
@@ -166,6 +205,125 @@ def test_list_reviews_omits_raw_diff(seeded) -> None:
     # Diffs are large; the list must stay light.
     body = client.get("/reviews", headers=seeded["headers"]).json()
     assert all("raw_diff" not in item for item in body["items"])
+
+
+# ── List: filtering and sorting ───────────────────────────────────────────────
+
+
+def test_list_reviews_filters_by_repo(filterable) -> None:
+    headers = filterable["headers"]
+
+    demo = client.get(
+        f"/reviews?repo_id={filterable['repo']}", headers=headers
+    ).json()
+    assert {r["summary"] for r in demo["items"]} == {"old", "new"}
+    assert demo["total"] == 2
+
+    other = client.get(
+        f"/reviews?repo_id={filterable['other_repo']}", headers=headers
+    ).json()
+    assert [r["summary"] for r in other["items"]] == ["other-failed"]
+    assert other["total"] == 1
+
+
+def test_list_reviews_filters_by_pr_number(filterable) -> None:
+    body = client.get("/reviews?pr_number=203", headers=filterable["headers"]).json()
+
+    assert [r["summary"] for r in body["items"]] == ["other-failed"]
+    assert body["total"] == 1
+
+
+def test_list_reviews_filters_by_status(filterable) -> None:
+    headers = filterable["headers"]
+
+    failed = client.get("/reviews?status=failed", headers=headers).json()
+    assert [r["summary"] for r in failed["items"]] == ["other-failed"]
+    assert failed["total"] == 1
+
+    completed = client.get("/reviews?status=completed", headers=headers).json()
+    assert {r["summary"] for r in completed["items"]} == {"old", "new"}
+
+    # A status nothing is in must read as an empty page, not as no filter.
+    pending = client.get("/reviews?status=pending", headers=headers).json()
+    assert pending["items"] == []
+    assert pending["total"] == 0
+
+
+def test_list_reviews_sort_oldest_first(filterable) -> None:
+    headers = filterable["headers"]
+
+    assert [r["summary"] for r in client.get("/reviews?sort=oldest", headers=headers).json()["items"]] == [
+        "old",
+        "new",
+        "other-failed",
+    ]
+    # The default is unchanged, so existing callers see no difference.
+    assert [r["summary"] for r in client.get("/reviews", headers=headers).json()["items"]] == [
+        "other-failed",
+        "new",
+        "old",
+    ]
+
+
+def test_list_reviews_filters_combine(filterable) -> None:
+    """Two filters narrow; they do not fight."""
+    body = client.get(
+        f"/reviews?repo_id={filterable['repo']}&status=failed",
+        headers=filterable["headers"],
+    ).json()
+
+    # The failed review is in the *other* repo, so the intersection is empty.
+    assert body["items"] == []
+    assert body["total"] == 0
+
+
+def test_list_reviews_total_reflects_filters_not_page_size(filterable) -> None:
+    """The trap: ``total`` is the filtered set — not the page, not the table.
+
+    Three assertions because there are three wrong answers available. 3 would
+    mean the count ignored the filter, 1 would mean it counted the page.
+    """
+    body = client.get(
+        f"/reviews?repo_id={filterable['repo']}&limit=1", headers=filterable["headers"]
+    ).json()
+
+    assert len(body["items"]) == 1
+    assert body["total"] == 2
+    assert client.get("/reviews", headers=filterable["headers"]).json()["total"] == 3
+
+
+def test_list_reviews_repo_filter_cannot_reach_other_users_reviews(filterable) -> None:
+    """A filter narrows an owned set; it can never widen it.
+
+    The stranger's `repo_id` is a real id that resolves to real reviews, so if
+    the filter were applied *instead of* the ownership clause rather than on
+    top of it this returns their data. That is a leak, not a UI bug, which is
+    why it is asserted on both halves of the envelope — a `total` that counts
+    rows the page withholds is the same disclosure, only quieter.
+    """
+    body = client.get(
+        f"/reviews?repo_id={filterable['their_repo']}", headers=filterable["headers"]
+    ).json()
+
+    assert body["items"] == []
+    assert body["total"] == 0
+
+
+def test_list_reviews_rejects_invalid_sort(seeded) -> None:
+    # 422, not a silent fallback to newest: a sort that quietly ignores what it
+    # was asked for is indistinguishable from one that is broken.
+    assert client.get("/reviews?sort=sideways", headers=seeded["headers"]).status_code == 422
+
+
+def test_list_reviews_rejects_unknown_status(seeded) -> None:
+    """`status` is closed over the four strings the worker writes.
+
+    The frontend degrades `?status=banana` to no filter before it ever gets
+    here, so this is the second line rather than the first — but a filter that
+    accepted any string would silently return an empty page for a typo and
+    read as "Liffy lost my reviews".
+    """
+    assert client.get("/reviews?status=banana", headers=seeded["headers"]).status_code == 422
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────

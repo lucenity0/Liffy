@@ -324,16 +324,43 @@ def _writable_codex_home(source: str) -> str:
     return target
 
 
-def _cli_env(name: str, value: str) -> dict[str, str] | None:
-    """The child environment, with the CLI's credential variable set.
+# The API-key providers' credentials, per subscription CLI. These must never
+# reach the CLI's child process — see `_cli_env`.
+_ANTHROPIC_API_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")
+_OPENAI_API_VARS = ("OPENAI_API_KEY", "OPENAI_BASE_URL")
 
-    Returns ``None`` — meaning "inherit ours" — when nothing is configured, so
-    the host path keeps working exactly as before: the CLI finds the credentials
-    in the user's home directory and this provider never touches them.
+
+def _cli_env(conflicting: tuple[str, ...], **credentials: str) -> dict[str, str]:
+    """The child environment for a subscription CLI: our own, minus the API keys.
+
+    Stripping is the load-bearing half, and it is not a precaution.
+
+    Both CLIs prefer an API key over the subscription credential when they see
+    both, silently. `backend/.env` holds `ANTHROPIC_API_KEY` because the
+    `anthropic` provider needs it, `env_file` puts it in the worker's
+    environment, and the old version of this function passed the whole
+    environment through with only the subscription token *added*. Measured
+    against claude-code 2.1.220 by pointing `ANTHROPIC_BASE_URL` at a local
+    listener and reading the headers:
+
+        both set  -> x-api-key: <the API key>, no authorization header
+        key unset -> authorization: Bearer <the OAuth token>
+
+    So every review that looked like it was riding the user's subscription was
+    billed to their Console credits instead, and the token they connected in the
+    settings page was never sent. Nothing surfaced it: the reviews worked.
+
+    The base URLs go too. Liffy sets them to steer its *own* API clients — this
+    install points `OPENAI_BASE_URL` at Google's OpenAI-compatible endpoint —
+    and a subscription CLI inheriting one would be aimed somewhere its
+    credentials mean nothing.
+
+    Always returns a dict, never ``None``. Inheriting our environment wholesale
+    is the bug, so there is no path here that does it.
     """
-    if not value:
-        return None
-    return {**os.environ, name: value}
+    env = {k: v for k, v in os.environ.items() if k not in conflicting}
+    env.update({k: v for k, v in credentials.items() if v})
+    return env
 
 
 class ClaudeCodeReviewLLM:
@@ -432,7 +459,7 @@ class ClaudeCodeReviewLLM:
                     text=True,
                     timeout=self._timeout,
                     cwd=workdir,
-                    env=_cli_env("CLAUDE_CODE_OAUTH_TOKEN", self._token),
+                    env=_cli_env(_ANTHROPIC_API_VARS, CLAUDE_CODE_OAUTH_TOKEN=self._token),
                 )
             except subprocess.TimeoutExpired as exc:
                 raise ClaudeCodeError(
@@ -590,7 +617,7 @@ class CodexReviewLLM:
                 capture_output=True,
                 text=True,
                 timeout=30,
-                env=_cli_env("CODEX_HOME", self._codex_home),
+                env=_cli_env(_OPENAI_API_VARS, CODEX_HOME=self._codex_home),
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             raise CodexError(f"`{self._binary} login status` did not respond") from exc
@@ -643,7 +670,7 @@ class CodexReviewLLM:
                     text=True,
                     timeout=self._timeout,
                     cwd=workdir,
-                    env=_cli_env("CODEX_HOME", self._codex_home),
+                    env=_cli_env(_OPENAI_API_VARS, CODEX_HOME=self._codex_home),
                 )
             except subprocess.TimeoutExpired as exc:
                 raise CodexError(f"Codex timed out after {self._timeout}s") from exc

@@ -591,15 +591,37 @@ def test_oauth_token_is_passed_to_the_subprocess(monkeypatch: pytest.MonkeyPatch
     assert "PATH" in env
 
 
-def test_no_token_inherits_the_ambient_environment(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("token", ["sk-ant-oat01-test", ""])
+def test_the_anthropic_api_key_never_reaches_claude_code(
+    monkeypatch: pytest.MonkeyPatch, token: str
 ) -> None:
-    """The host path must not change: the CLI reads ~/.claude as it always did."""
-    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+    """The billing test.
+
+    `backend/.env` holds ANTHROPIC_API_KEY for the `anthropic` provider, and
+    `env_file` puts it in the worker's environment. Claude Code prefers an API
+    key over the subscription credential when it sees both — verified against
+    claude-code 2.1.220 — so leaving it in the child environment bills the
+    user's Console credits for a review they asked to run on their
+    subscription, with nothing anywhere to show for it.
+
+    Both parameters matter. With a token, the key would win over it. Without
+    one, the CLI is supposed to fall back to ~/.claude on the host, and the
+    inherited key silently overrides that too.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-console-credits")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example/v1")
+    monkeypatch.setattr(settings, "claude_code_oauth_token", token)
+
     llm, calls = _claude_code(monkeypatch)
     llm.complete("sys", "user")
 
-    assert calls["kwargs"]["env"] is None
+    env = calls["kwargs"]["env"]
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert env.get("CLAUDE_CODE_OAUTH_TOKEN", "") == token
+    # Inherited, not replaced — dropping PATH would leave the CLI unable to
+    # find node.
+    assert "PATH" in env
 
 
 def test_rate_limit_is_distinguishable_from_a_parse_failure(
@@ -701,6 +723,27 @@ def _codex(
 def test_codex_parses_the_agent_message(monkeypatch: pytest.MonkeyPatch) -> None:
     llm, _ = _codex(monkeypatch)
     assert llm.complete("sys", "user").text == '{"ok": true}'
+
+
+def test_the_openai_credentials_never_reach_codex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Claude Code billing bug, in its ChatGPT-subscription form.
+
+    Worse here than a wrong bill: this install points OPENAI_BASE_URL at
+    Google's OpenAI-compatible endpoint for the `openai` provider, so an
+    inherited pair would aim the Codex CLI at a host its ChatGPT credentials
+    mean nothing to.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-billed-elsewhere")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    for kwargs in (calls["kwargs"], calls["login_kwargs"]):
+        assert "OPENAI_API_KEY" not in kwargs["env"]
+        assert "OPENAI_BASE_URL" not in kwargs["env"]
 
 
 def test_codex_token_count_does_not_double_count_the_cache(

@@ -19,6 +19,15 @@
 # through env_file in the base file, which is already correct.
 services:
   worker:
+    # A distinct tag, not the default `liffy-worker`.
+    #
+    # Both compose invocations build the same *service*, so without this they
+    # write the same image name and the last build wins. A plain
+    # `docker compose up --build worker` would silently replace the image that
+    # has the CLIs with one that does not, and the next review would die on
+    # `'claude' is not on PATH` with nothing having visibly changed. Observed
+    # doing exactly that.
+    image: liffy-worker-subscription
     build:
       context: ./backend
       dockerfile: Dockerfile.subscription

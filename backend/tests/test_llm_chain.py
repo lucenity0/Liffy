@@ -457,7 +457,10 @@ def test_claude_code_replaces_rather_than_appends_the_system_prompt(
     assert "--system-prompt" in argv
     assert "--append-system-prompt" not in argv
     assert argv[argv.index("--system-prompt") + 1] == "SYSTEM"
-    assert "USER" in argv
+    # The prompt rides stdin, not argv — as an argument it exceeded the
+    # kernel's limit on a real pull request ("Argument list too long").
+    assert "USER" not in argv
+    assert calls["kwargs"]["input"] == "USER"
 
 
 def test_claude_code_passes_the_configured_effort(
@@ -734,9 +737,9 @@ def test_codex_runs_in_a_neutral_sandboxed_cwd(monkeypatch: pytest.MonkeyPatch) 
     assert argv[argv.index("--sandbox") + 1] == "read-only"
     assert "liffy-review-" in kwargs["cwd"]
     assert os.path.abspath(kwargs["cwd"]) != os.path.abspath(os.getcwd())
-    # Without DEVNULL the CLI blocks reading more prompt from stdin and the run
-    # hangs to the timeout instead of answering.
-    assert kwargs["stdin"] == _subprocess.DEVNULL
+    # The prompt is written to stdin, which also closes it — so the CLI stops
+    # reading and answers instead of hanging to the timeout.
+    assert kwargs["input"].startswith("sys")
 
 
 def test_codex_carries_the_system_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -744,7 +747,9 @@ def test_codex_carries_the_system_prompt(monkeypatch: pytest.MonkeyPatch) -> Non
     llm, calls = _codex(monkeypatch)
     llm.complete("SYSTEM-PERSONA", "USER-DIFF")
 
-    prompt = calls["argv"][-1]
+    # `-` tells the CLI to read the prompt from stdin; argv stays small.
+    assert calls["argv"][-1] == "-"
+    prompt = calls["kwargs"]["input"]
     assert prompt.startswith("SYSTEM-PERSONA")
     assert "USER-DIFF" in prompt
 

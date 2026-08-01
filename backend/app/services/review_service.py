@@ -7,8 +7,10 @@ injected, so the pipeline is testable offline.
 """
 
 import logging
+import sys
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -152,7 +154,7 @@ def run_review(
     gh: GitHubClient,
     chroma_client,
     embedder: EmbeddingProvider,
-    llm: ReviewLLM,
+    llm: ReviewLLM | Callable[[], ReviewLLM],
     received_at: datetime | None = None,
 ) -> Review:
     # Validated here, before the clock and before any row is written.
@@ -210,9 +212,22 @@ def run_review(
     db.commit()
 
     try:
+        # Built *here*, inside the try, and not by the caller.
+        #
+        # Constructing the transport is the single likeliest thing to fail
+        # before any work happens — a provider whose CLI is missing, a key that
+        # is not set, a container without the credential. Evaluated as an
+        # argument it raised before the row above existed, so the review left
+        # no trace at all: the queue emptied, the reviews list stayed empty,
+        # and the only evidence was a traceback in the worker log. The UI said
+        # "queued" and then showed nothing, forever.
+        #
+        # Inside the try it lands on the failure path like everything else, and
+        # the operator gets a failed review that names the cause.
+        active_llm = llm() if callable(llm) else llm
         file_diffs = parse_diff(raw_diff)
         context = _gather_context(chroma_client, repo.id, file_diffs, embedder)
-        result = generate_review(llm, meta.title, file_diffs, context)
+        result = generate_review(active_llm, meta.title, file_diffs, context)
 
         # Comments arrive already filtered and clamped to the diff by
         # `_anchor_comments` in the LLM chain, so no anchor check is repeated
@@ -254,6 +269,15 @@ def run_review(
         # A review that took forty seconds to fail is the most useful data
         # point in the table, so the failure path records the clock too.
         review.status = "failed"
+        # Why it failed, where somebody will actually see it.
+        #
+        # There is no dedicated column and adding one is a migration; `summary`
+        # is already rendered for every review, and a failed review has no
+        # summary to displace. "Failed" on its own sends people to the worker
+        # log — which is exactly the trip this is meant to save. Provider and
+        # configuration errors are the common case here and none of them carry
+        # a credential, but the text is truncated regardless.
+        review.summary = f"Review failed: {str(sys.exc_info()[1])[:400]}"
         review.duration_ms = elapsed_ms()
         completed = datetime.now(timezone.utc)
         review.completed_at = completed

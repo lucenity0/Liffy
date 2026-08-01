@@ -97,7 +97,13 @@ def review_pr_task(
                 gh=gh,
                 chroma_client=get_chroma_client(),
                 embedder=get_embedding_provider(),
-                llm=get_llm(),
+                # The factory, not an instance. Called inside `run_review`
+                # after the review row exists, so a provider that cannot be
+                # built — a missing CLI, an unset key — fails a *visible*
+                # review instead of killing the task before anything is
+                # written. That silent case is what made a misconfigured
+                # provider look like the review had simply vanished.
+                llm=get_llm,
                 received_at=_parse_received_at(received_at),
             )
             return {"review_id": str(review.id), "status": review.status}

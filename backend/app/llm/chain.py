@@ -390,11 +390,18 @@ class ClaudeCodeReviewLLM:
                 "-f docker-compose.subscription.yml up`."
             )
 
-    def _argv(self, system: str, user: str) -> list[str]:
+    def _argv(self, system: str) -> list[str]:
+        # The prompt goes on stdin, not in here.
+        #
+        # As an argv element it hit the kernel's limit on a real pull request:
+        # `[Errno 7] Argument list too long`. A review prompt carries the diff
+        # plus every retrieved context chunk, so it is routinely tens of
+        # kilobytes — the size at which this provider is *supposed* to be used.
+        # Passing it as an argument worked only for diffs small enough not to
+        # matter.
         return [
             self._binary,
             "--print",
-            user,
             "--output-format", "json",
             # The same five levels the API takes (low|medium|high|xhigh|max),
             # and the same cost lever: this provider spends rate-limit quota
@@ -419,7 +426,8 @@ class ClaudeCodeReviewLLM:
         with tempfile.TemporaryDirectory(prefix="liffy-review-") as workdir:
             try:
                 proc = subprocess.run(
-                    self._argv(system, user),
+                    self._argv(system),
+                    input=user,
                     capture_output=True,
                     text=True,
                     timeout=self._timeout,
@@ -598,7 +606,7 @@ class CodexReviewLLM:
                 f"on the host. ({combined.strip()[:200]})"
             )
 
-    def _argv(self, prompt: str, workdir: str) -> list[str]:
+    def _argv(self, workdir: str) -> list[str]:
         model_flag = ["--model", self._model] if self._model else []
         return [
             self._binary,
@@ -616,7 +624,10 @@ class CodexReviewLLM:
             "--ephemeral",
             *model_flag,
             "--color", "never",
-            prompt,
+            # `-` is the CLI's own spelling of "read the prompt from stdin".
+            # Same reason as the Claude provider: a review prompt is far too
+            # large to be an argv element.
+            "-",
         ]
 
     def complete(self, system: str, user: str) -> LLMResponse:
@@ -624,15 +635,15 @@ class CodexReviewLLM:
         with tempfile.TemporaryDirectory(prefix="liffy-review-") as workdir:
             try:
                 proc = subprocess.run(
-                    self._argv(prompt, workdir),
+                    self._argv(workdir),
+                    # Closes stdin after writing, so the CLI stops reading and
+                    # answers rather than waiting for more input.
+                    input=prompt,
                     capture_output=True,
                     text=True,
                     timeout=self._timeout,
                     cwd=workdir,
                     env=_cli_env("CODEX_HOME", self._codex_home),
-                    # Without this the CLI waits on stdin for more prompt and
-                    # the run hangs until the timeout rather than answering.
-                    stdin=subprocess.DEVNULL,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise CodexError(f"Codex timed out after {self._timeout}s") from exc

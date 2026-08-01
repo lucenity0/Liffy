@@ -9,6 +9,7 @@ import { FigureTile, MetricTile } from "@/components/analytics/MetricTile";
 import { SeverityCalibration } from "@/components/analytics/SeverityCalibration";
 import { TokenEfficiencyTrend } from "@/components/analytics/TokenEfficiencyTrend";
 import { useAnalyticsSummary } from "@/hooks/useAnalyticsSummary";
+import { totalComments } from "@/lib/categories";
 import { formatCount, formatPercent, formatSeconds } from "@/lib/utils";
 import type { AnalyticsSummaryOut } from "@/types/api";
 
@@ -162,22 +163,45 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
       </div>
 
       {/*
-        Both of these stay in a half-width column, and the chart is why.
+        The chart stays in a half-width column, which is the constraint that
+        drives this row. `CategoryDistribution` is an SVG with a fixed
+        348-unit viewBox scaled by `w-full`, so width, height and type scale
+        together — there is no "wider but the same size". At full measure it
+        renders at roughly 3x.
 
-        `CategoryDistribution` is an SVG with a fixed viewBox scaled by
-        `w-full`, so its height and its type scale with its width — there is
-        no such thing as "wider but the same size". Given the whole measure it
-        renders at roughly 3x, which is a chart you read from across the room.
-        The 348-unit viewBox is drawn for about this column width, which is
-        what the type sizes inside it assume.
-
-        The table keeps its `overflow-x-auto`, which is what handles the
-        narrow end of this column.
+        Its partner is a figure rather than the severity table: the table is
+        shorter than the chart, so pairing them left dead space under its
+        footer, and four columns in half a column is cramped. The table wants
+        the full width, which is where it was.
       */}
       <div className="grid gap-4 sm:grid-cols-2">
         <CategoryDistribution distribution={data.category_distribution} />
-        <SeverityCalibration rows={data.severity_calibration} />
+
+        {/*
+          How much Liffy says per review, beside what it says — the count to
+          the chart's shape, and the one thing the page could report from
+          data already on it but did not.
+
+          No target. §8.1 sets none, and there is no defensible right answer:
+          a low number on clean code is the system working, and the same
+          number on a broken pull request is the system missing things. It is
+          a figure to watch, which is exactly what `FigureTile` is for.
+        */}
+        <FigureTile
+          label="Comments per review"
+          value={
+            data.reviews_completed === 0
+              ? null
+              : totalComments(data.category_distribution) /
+                data.reviews_completed
+          }
+          format={(value) => value.toFixed(1)}
+          unknownHint="Needs at least one completed review."
+          caption={`${formatCount(totalComments(data.category_distribution))} comments across ${formatCount(data.reviews_completed)} completed reviews. Reviews that found nothing count in the denominator — on clean code an empty review is the right answer, not a miss.`}
+        />
       </div>
+
+      <SeverityCalibration rows={data.severity_calibration} />
 
       <FlaggedReviews
         reviews={data.flagged_reviews}

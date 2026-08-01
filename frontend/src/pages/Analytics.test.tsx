@@ -194,6 +194,78 @@ describe("Analytics — populated", () => {
   });
 });
 
+describe("Analytics — comments per review", () => {
+  /** 8 comments across 12 completed reviews. */
+  it("divides the comment total by the completed reviews", async () => {
+    render();
+
+    const tile_ = await tile("Comments per review");
+    expect(within(tile_).getByText("0.7")).toBeInTheDocument();
+    expect(
+      within(tile_).getByText(/8 comments across 12 completed reviews/),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * No target, and deliberately so: a low number on clean code is the system
+   * working, the same number on a broken pull request is the system missing
+   * things. A pass/fail badge here would be a judgement the data cannot make.
+   */
+  it("carries no target and no verdict badge", async () => {
+    render();
+
+    const tile_ = await tile("Comments per review");
+    expect(within(tile_).queryByText(/^Target/)).not.toBeInTheDocument();
+    expect(within(tile_).queryByText("Meets target")).not.toBeInTheDocument();
+    expect(within(tile_).queryByText("Below target")).not.toBeInTheDocument();
+  });
+
+  /**
+   * `reviews_completed` is the denominator, and it is 0 whenever every review
+   * is still running or has failed. `8 / 0` is `Infinity`, which renders as
+   * the string "Infinity" — a number, sitting where a measurement goes.
+   */
+  it("shows an unknown rather than dividing by zero", async () => {
+    withSummary({
+      ...fixtureAnalyticsSummary,
+      reviews_total: 3,
+      reviews_completed: 0,
+      reviews_failed: 3,
+    });
+    render();
+
+    const tile_ = await tile("Comments per review");
+    expect(within(tile_).getByText("—")).toBeInTheDocument();
+    expect(within(tile_).queryByText(/Infinity|NaN/)).not.toBeInTheDocument();
+    expect(
+      within(tile_).getByText(/Needs at least one completed review/),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The `other` bucket counts. Summing only the six known keys would
+   * undercount the numerator, and an average that quietly ignores comments is
+   * worse than no average.
+   */
+  it("counts a non-zero 'other' bucket in the total", async () => {
+    withSummary({
+      ...fixtureAnalyticsSummary,
+      category_distribution: {
+        ...fixtureAnalyticsSummary.category_distribution,
+        other: 4,
+      },
+    });
+    render();
+
+    // 12 comments now, not 8.
+    const tile_ = await tile("Comments per review");
+    expect(within(tile_).getByText("1.0")).toBeInTheDocument();
+    expect(
+      within(tile_).getByText(/12 comments across 12 completed reviews/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("Analytics — charts", () => {
   it("renders the shape metrics alongside the tiles", async () => {
     render();

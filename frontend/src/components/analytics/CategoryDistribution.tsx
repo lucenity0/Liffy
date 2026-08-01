@@ -1,5 +1,5 @@
 import { Sheet } from "@/components/ui/Sheet";
-import { categoryLabel } from "@/lib/categories";
+import { categoryLabel, totalComments } from "@/lib/categories";
 import type { Category } from "@/types/api";
 
 /**
@@ -49,7 +49,9 @@ export function CategoryDistribution({
   distribution: Record<string, number>;
 }) {
   const rows = toRows(distribution);
-  const total = rows.reduce((sum, row) => sum + row.count, 0);
+  // Shared with the comments-per-review tile beside this chart, so the two
+  // cannot disagree about how many comments there have been.
+  const total = totalComments(distribution);
   const max = Math.max(...rows.map((row) => row.count), 0);
   /**
    * Where an even spread would put every bar. `rows.length` rather than a

@@ -22,6 +22,7 @@ from app.services.review_service import (
     resolve_repo_owner,
     run_review,
 )
+from app.services.settings_service import refresh_overrides
 from app.workers.celery_app import celery
 
 
@@ -62,6 +63,21 @@ def review_pr_task(
 ) -> dict:
     db = SessionLocal()
     try:
+        # Settings changed in the UI reach this process here, and only here.
+        #
+        # The worker is a *separate process* from the API, so invalidating the
+        # API's override store on write does nothing for it. A snapshot per
+        # task is the exact answer rather than an approximate one: it is a
+        # single query over at most eight rows, and it means the setting a
+        # user just changed applies to the very next review — which is what
+        # SETTINGS-1's definition of done asks for. A TTL would instead give a
+        # window in which "I changed it and nothing happened", which is the
+        # confusion the whole feature exists to remove.
+        #
+        # Before `get_llm()` below, deliberately: that call reads
+        # `llm_provider`, and `run_review` reads `post_reviews_to_github`.
+        refresh_overrides(db)
+
         # No request context here, so the token comes from the repository's
         # owner. Resolving from the owner rather than whoever triggered the
         # run is also what stops user B's re-review from failing on a private

@@ -7,10 +7,11 @@ import {
   fixtureRepos,
   fixtureReviewDetailById,
   fixtureReviewListItems,
+  fixtureSettings,
   fixtureTokenPair,
   fixtureUser,
 } from "./fixtures";
-import type { ReviewDetailOut } from "@/types/api";
+import type { ReviewDetailOut, SettingsOut } from "@/types/api";
 
 /**
  * Wildcard path matching (a leading "*" instead of a full origin) so the
@@ -46,6 +47,24 @@ const ratings = new Map<string, number>();
  */
 export function resetFeedback() {
   ratings.clear();
+}
+
+/**
+ * The settings document the PATCH handler mutates.
+ *
+ * Stateful for the same reason `ratings` is: `useUpdateSettings` writes the
+ * response into the cache, so a handler replaying the frozen fixture would
+ * answer a save with the old value and the control would snap back a beat
+ * after being changed.
+ *
+ * Cloned from the fixture rather than aliasing it, so a test that saves a
+ * setting cannot edit the shared constant every other test reads.
+ */
+let settingsState: SettingsOut = structuredClone(fixtureSettings);
+
+/** Wired into setupTests' `afterEach`, alongside `resetFeedback`. */
+export function resetSettings() {
+  settingsState = structuredClone(fixtureSettings);
 }
 
 /** The detail fixtures are shared module constants: overlay, never mutate. */
@@ -265,5 +284,65 @@ export const handlers = [
       // no `updated_at` by design. Close enough here: nothing renders it.
       created_at: new Date().toISOString(),
     });
+  }),
+
+  http.get("*/settings", () => HttpResponse.json(settingsState)),
+
+  /**
+   * Stateful, like the ratings handler above and for the same reason: the
+   * mutation writes the response straight into the cache, so a handler
+   * replaying the frozen fixture would answer a save with the *old* value and
+   * the control would snap back a beat after being changed.
+   *
+   * It also enforces the allowlist and the validation, so `dev:mock` cannot
+   * make an impossible write look like it worked.
+   */
+  http.patch("*/settings", async ({ request }) => {
+    const { values } = (await request.json()) as {
+      values: Record<string, string>;
+    };
+
+    const next = structuredClone(settingsState);
+    for (const [key, raw] of Object.entries(values)) {
+      const target = next.editable.find((entry) => entry.key === key);
+      if (!target) {
+        return HttpResponse.json(
+          { detail: `'${key}' is not an editable setting.` },
+          { status: 422 },
+        );
+      }
+      if (target.kind === "choice" && !target.choices.includes(raw)) {
+        return HttpResponse.json(
+          { detail: `Must be one of: ${target.choices.join(", ")}.` },
+          { status: 422 },
+        );
+      }
+      if (target.kind === "int") {
+        const parsed = Number(raw);
+        if (!Number.isInteger(parsed)) {
+          return HttpResponse.json(
+            { detail: `Expected a whole number, got '${raw}'.` },
+            { status: 422 },
+          );
+        }
+        if (target.minimum !== null && parsed < target.minimum) {
+          return HttpResponse.json(
+            { detail: `Must be at least ${target.minimum}.` },
+            { status: 422 },
+          );
+        }
+        target.value = parsed;
+      } else if (target.kind === "bool") {
+        target.value = raw === "true";
+      } else {
+        target.value = raw;
+      }
+      // Back to its default means no override — the same rule the resolver
+      // applies by deleting the row.
+      target.source = target.value === target.default_value ? "default" : "override";
+    }
+
+    settingsState = next;
+    return HttpResponse.json(settingsState);
   }),
 ];

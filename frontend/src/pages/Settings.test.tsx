@@ -1,0 +1,203 @@
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { describe, expect, it } from "vitest";
+import { server } from "@/mocks/server";
+import { fixtureSettings } from "@/mocks/fixtures";
+import { renderWithProviders } from "@/test/renderWithProviders";
+import { Settings } from "./Settings";
+
+const renderPage = () => renderWithProviders(<Settings />, { route: "/settings" });
+
+/** The row a setting's label belongs to, so assertions stay scoped to it. */
+const rowFor = (label: RegExp | string) =>
+  screen.getByText(label).closest("div")!.parentElement!;
+
+describe("Settings", () => {
+  it("renders editable settings as controls, grouped", async () => {
+    renderPage();
+
+    // A choice is a dropdown carrying exactly the options the API allows.
+    const effort = await screen.findByLabelText("Thinking effort");
+    expect(effort.tagName).toBe("SELECT");
+    expect(
+      [...(effort as HTMLSelectElement).options].map((o) => o.value),
+    ).toEqual(["low", "medium", "high", "xhigh", "max"]);
+
+    // A bool is a checkbox, an int is a text box.
+    expect(screen.getByLabelText(/post reviews to github/i)).toHaveAttribute(
+      "type",
+      "checkbox",
+    );
+    expect(screen.getByLabelText("Max tokens")).toHaveValue("24000");
+  });
+
+  it("says where each value came from", async () => {
+    renderPage();
+    await screen.findByLabelText("Thinking effort");
+
+    // The marker that makes this a settings page rather than a form.
+    expect(within(rowFor("Thinking effort")).getByText("Changed here")).toBeInTheDocument();
+    expect(within(rowFor("Max tokens")).getByText("Set in .env")).toBeInTheDocument();
+    expect(within(rowFor("Provider")).getByText("Default")).toBeInTheDocument();
+    // And what it was changed *from*. Matched as the whole "default medium"
+    // phrase, because "medium" on its own is also one of the dropdown's
+    // options — the provenance line is the claim being made here.
+    expect(rowFor("Thinking effort")).toHaveTextContent(/default\s*medium/);
+    // Not shown where the value is already the default: repeating a value
+    // beside itself is noise.
+    expect(rowFor("Provider")).not.toHaveTextContent(/default\s*anthropic/);
+  });
+
+  it("renders read-only settings as disabled, with a reason", async () => {
+    renderPage();
+
+    const control = await screen.findByLabelText("Database URL");
+    expect(control).toBeDisabled();
+    // A greyed-out box with no explanation reads as broken rather than
+    // deliberate, so the reason is part of the contract.
+    expect(
+      screen.getByText(/engine is built at import/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows secrets as configured or not, and never as a value", async () => {
+    renderPage();
+    await screen.findByLabelText("Thinking effort");
+
+    expect(screen.getByText("Configured")).toBeInTheDocument();
+    expect(screen.getByText("Not configured")).toBeInTheDocument();
+
+    // No input for a secret under any label — not even a disabled or masked
+    // one. A mask still discloses the length.
+    expect(screen.queryByLabelText(/api key/i)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/•{3,}|\*{3,}/);
+  });
+
+  it("requires confirmation before enabling GitHub posting", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const toggle = await screen.findByLabelText(/post reviews to github/i);
+    await user.click(toggle);
+
+    const dialog = await screen.findByRole("dialog");
+    // The copy has to state plainly what happens outside Liffy.
+    expect(dialog).toHaveTextContent(/real pull requests/i);
+
+    // Cancelling leaves the setting alone and stages nothing to save.
+    await user.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByLabelText(/post reviews to github/i)).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeDisabled();
+  });
+
+  it("applies the change once the confirmation is accepted", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText(/post reviews to github/i));
+    await user.click(
+      await screen.findByRole("button", { name: /turn it on/i }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText(/post reviews to github/i)).toBeChecked(),
+    );
+  });
+
+  it("does not confirm when turning a dangerous setting back off", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("*/settings", () =>
+        HttpResponse.json({
+          ...fixtureSettings,
+          editable: fixtureSettings.editable.map((s) =>
+            s.key === "post_reviews_to_github"
+              ? { ...s, value: true, source: "override" as const }
+              : s,
+          ),
+        }),
+      ),
+    );
+
+    renderPage();
+    const toggle = await screen.findByLabelText(/post reviews to github/i);
+    await waitFor(() => expect(toggle).toBeChecked());
+
+    await user.click(toggle);
+
+    // Confirming a retreat to the safe state would only train people to
+    // dismiss the dialog, which is what makes it useless when it matters.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(toggle).not.toBeChecked());
+  });
+
+  it("saves only what was touched", async () => {
+    const user = userEvent.setup();
+    let sent: Record<string, string> | null = null;
+    server.use(
+      http.patch("*/settings", async ({ request }) => {
+        sent = ((await request.json()) as { values: Record<string, string> }).values;
+        return HttpResponse.json(fixtureSettings);
+      }),
+    );
+
+    renderPage();
+    await user.selectOptions(
+      await screen.findByLabelText("Thinking effort"),
+      "low",
+    );
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    // Not every editable key — sending untouched settings would overwrite a
+    // value somebody changed in another tab.
+    await waitFor(() => expect(sent).toEqual({ anthropic_effort: "low" }));
+  });
+
+  it("surfaces a validation error on the field, not as a page crash", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.patch("*/settings", () =>
+        HttpResponse.json({ detail: "Must be at least 4000." }, { status: 422 }),
+      ),
+    );
+
+    renderPage();
+    const tokens = await screen.findByLabelText("Max tokens");
+    await user.clear(tokens);
+    await user.type(tokens, "500");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent(/at least 4000/i);
+    // The page is still a page: the other controls survived.
+    expect(screen.getByLabelText("Thinking effort")).toBeInTheDocument();
+    expect(tokens).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("keeps Save disabled until something changes", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const save = await screen.findByRole("button", { name: /save changes/i });
+    expect(save).toBeDisabled();
+
+    await user.selectOptions(screen.getByLabelText("Provider"), "openai");
+
+    expect(save).toBeEnabled();
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed load with a retry", async () => {
+    server.use(
+      http.get("*/settings", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+
+    renderPage();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+  });
+});

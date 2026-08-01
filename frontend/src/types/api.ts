@@ -343,3 +343,49 @@ export interface UserOut {
   email: string | null;
   avatar_url: string | null;
 }
+
+// ── Settings (backend/app/schemas/setting.py) ────────────────────────────────
+
+/** Where a value came from. The reason the page explains rather than just edits. */
+export type SettingSource = "default" | "env" | "override";
+
+export interface EditableSetting {
+  key: string;
+  group: string;
+  label: string;
+  help: string;
+  kind: "str" | "bool" | "int" | "choice";
+  choices: string[];
+  minimum: number | null;
+  maximum: number | null;
+  value: string | number | boolean;
+  default_value: string | number | boolean;
+  source: SettingSource;
+  /** Reaches outside Liffy when enabled, so the UI confirms first. */
+  confirm_on_enable: boolean;
+}
+
+export interface ReadOnlySetting {
+  key: string;
+  group: string;
+  label: string;
+  /** Why it cannot be changed here. Rendered beside the disabled control. */
+  reason: string;
+  value: string | number | boolean;
+}
+
+/**
+ * A secret's existence and nothing else. There is deliberately no `value`
+ * field to render — not even a masked one, which would still leak the length.
+ */
+export interface SecretSetting {
+  key: string;
+  label: string;
+  is_set: boolean;
+}
+
+export interface SettingsOut {
+  editable: EditableSetting[];
+  read_only: ReadOnlySetting[];
+  secrets: SecretSetting[];
+}

@@ -6,6 +6,7 @@ import type {
   ReviewCommentOut,
   ReviewDetailOut,
   ReviewListItem,
+  SettingsOut,
   TokenPair,
   UserOut,
 } from "@/types/api";
@@ -457,4 +458,108 @@ export const fixtureTokenPair: TokenPair = {
   refresh_token: "refreshed-refresh-token",
   token_type: "bearer",
   expires_in: 900,
+};
+
+// ── Settings (SETTINGS-1) ────────────────────────────────────────────────────
+
+/**
+ * A settings document covering all three provenance states and both dangerous
+ * toggles, because those are what the page has to render *differently* —
+ * a fixture where every setting is a plain default would exercise one branch.
+ */
+export const fixtureSettings: SettingsOut = {
+  editable: [
+    {
+      key: "llm_provider",
+      group: "review_model",
+      label: "Provider",
+      help: "Which transport runs the review.",
+      kind: "choice",
+      choices: ["anthropic", "openai", "claude_code"],
+      minimum: null,
+      maximum: null,
+      value: "anthropic",
+      default_value: "anthropic",
+      source: "default",
+      confirm_on_enable: false,
+    },
+    {
+      key: "anthropic_effort",
+      group: "review_model",
+      label: "Thinking effort",
+      help: "The real cost lever on Claude models.",
+      kind: "choice",
+      choices: ["low", "medium", "high", "xhigh", "max"],
+      minimum: null,
+      maximum: null,
+      value: "high",
+      default_value: "medium",
+      // Changed in the app — the marker the page exists to show.
+      source: "override",
+      confirm_on_enable: false,
+    },
+    {
+      key: "llm_max_tokens",
+      group: "review_model",
+      label: "Max tokens",
+      help: "Caps thinking and response text together.",
+      kind: "int",
+      choices: [],
+      minimum: 4000,
+      maximum: 200000,
+      value: 24000,
+      default_value: 24000,
+      // Set in .env — distinct from both "default" and "changed here".
+      source: "env",
+      confirm_on_enable: false,
+    },
+    {
+      key: "post_reviews_to_github",
+      group: "github_posting",
+      label: "Post reviews to GitHub",
+      help: "Turning this on means Liffy writes comments to real pull requests.",
+      kind: "bool",
+      choices: [],
+      minimum: null,
+      maximum: null,
+      value: false,
+      default_value: false,
+      source: "default",
+      confirm_on_enable: true,
+    },
+    {
+      key: "github_review_event_mode",
+      group: "github_posting",
+      label: "Review event mode",
+      help: "`request_changes` blocks a human's merge.",
+      kind: "choice",
+      choices: ["comment_only", "native"],
+      minimum: null,
+      maximum: null,
+      value: "comment_only",
+      default_value: "comment_only",
+      source: "default",
+      confirm_on_enable: true,
+    },
+  ],
+  read_only: [
+    {
+      key: "database_url",
+      group: "infrastructure",
+      label: "Database URL",
+      reason: "The engine is built at import. Changing it needs a restart.",
+      value: "postgresql://localhost/liffy",
+    },
+    {
+      key: "chroma_host",
+      group: "infrastructure",
+      label: "Chroma host",
+      reason: "Points at the vector store holding your index.",
+      value: "chroma",
+    },
+  ],
+  secrets: [
+    { key: "anthropic_api_key", label: "Anthropic api key", is_set: true },
+    { key: "openai_api_key", label: "Openai api key", is_set: false },
+  ],
 };

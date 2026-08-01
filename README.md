@@ -139,10 +139,12 @@ saves you is the dotfile edit and the restart.
 For **`codex`**, there is no equivalent — and that is worth being clear about
 rather than papering over. The Codex CLI has no auth environment variable, and
 `codex login --with-access-token` refuses a ChatGPT subscription token. The only
-thing that authenticates it is a real `auth.json`, so containerised Codex means
-mounting `~/.codex` into the worker. `docker-compose.subscription.yml` has that
-volume commented out, with what you would be granting written next to it. Read it
-before uncommenting. Running the worker on the host avoids the question entirely.
+thing that authenticates it is a real `auth.json`, so containerised Codex needs
+`~/.codex` mounted into the worker. `./liffy.sh` adds
+`docker-compose.codex.yml` automatically when Codex is selected; inspect that
+file before starting if you want to review the credential access. For a manual
+Compose invocation, add it as a third `-f` file. Running the worker on the host
+avoids the mount entirely.
 
 Either way, a missing credential **fails at startup with a message naming the fix**
 — not forty seconds into a queued review.

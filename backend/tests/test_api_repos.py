@@ -287,9 +287,16 @@ def test_trigger_index_endpoint(session_factory, caller, indexed, fake_github) -
     created = _connect(caller)
     indexed.clear()
 
+    with session_factory() as db:
+        repo = db.get(Repository, uuid.UUID(created["id"]))
+        repo.indexed_at = datetime.now(timezone.utc)
+        db.commit()
+
     response = client.post(f"/repos/{created['id']}/index", headers=caller)
     assert response.status_code == 202
     assert indexed == [created["id"]]
+    with session_factory() as db:
+        assert db.get(Repository, uuid.UUID(created["id"])).indexed_at is None
     assert client.post(f"/repos/{uuid.uuid4()}/index", headers=caller).status_code == 404
 
 

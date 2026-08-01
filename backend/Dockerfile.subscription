@@ -22,8 +22,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
-# No credentials are baked in and none are mounted. Both CLIs read their token
-# from the environment (CLAUDE_CODE_OAUTH_TOKEN / CODEX_AUTH_TOKEN), which
-# arrives via backend/.env at run time — see the README. Starting without one
-# fails at startup with a message naming the fix, not mid-review.
+# No credentials are baked in. Claude receives a token at run time; Codex reads
+# a mounted credential directory when liffy.sh selects its Codex overlay. Both
+# paths are checked before a review starts, with an actionable error.
 CMD ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info"]

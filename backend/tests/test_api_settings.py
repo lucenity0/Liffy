@@ -196,6 +196,7 @@ def test_get_reports_the_three_buckets(seeded) -> None:
     read_only = {s["key"] for s in body["read_only"]}
 
     assert "anthropic_effort" in editable
+    assert "codex_effort" in editable
     assert "post_reviews_to_github" in editable
     # The classification's whole point: these are visible but not editable.
     assert "database_url" in read_only
@@ -231,6 +232,15 @@ def test_source_distinguishes_default_from_changed_here(seeded) -> None:
     # Still reports what it would be without the override, so the UI can say
     # what "changed here" was changed *from*.
     assert effort["default_value"] == "medium"
+
+
+def test_codex_effort_is_provider_scoped_and_explicit(seeded) -> None:
+    body = client.get("/settings", headers=seeded["headers"]).json()
+    effort = next(s for s in body["editable"] if s["key"] == "codex_effort")
+
+    assert effort["applies_to"] == ["codex"]
+    assert effort["choices"] == ["low", "medium", "high", "xhigh"]
+    assert effort["value"] == "medium"
 
 
 def test_dangerous_settings_are_flagged_for_confirmation(seeded) -> None:

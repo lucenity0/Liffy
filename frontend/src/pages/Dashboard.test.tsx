@@ -166,14 +166,27 @@ describe("Dashboard — repo actions", () => {
   it("re-indexes on click and confirms the 202 inline", async () => {
     const user = userEvent.setup();
     let indexCalls = 0;
+    let indexing = false;
     server.use(
       http.post("*/repos/:repoId/index", ({ params }) => {
         indexCalls += 1;
+        indexing = true;
         return HttpResponse.json(
           { repo_id: params.repoId, status: "queued" },
           { status: 202 },
         );
       }),
+      http.get("*/repos/:repoId/status", ({ params }) =>
+        params.repoId === fixtureRepoIndexed.id && indexing
+          ? HttpResponse.json({
+              ...fixtureRepoStatusIndexed,
+              status: "not_indexed",
+              indexed_at: null,
+            })
+          : params.repoId === fixtureRepoIndexed.id
+            ? HttpResponse.json(fixtureRepoStatusIndexed)
+            : HttpResponse.json(fixtureRepoStatusNotIndexed),
+      ),
     );
 
     renderWithProviders(<Dashboard />);
@@ -182,6 +195,7 @@ describe("Dashboard — repo actions", () => {
     await user.click(within(card).getByRole("button", { name: "Re-index" }));
 
     expect(await within(card).findByText(/re-index queued/i)).toBeInTheDocument();
+    expect(await within(card).findByText("Indexing")).toBeInTheDocument();
     expect(indexCalls).toBe(1);
     // Mutation state is per card, so nothing else claims to be re-indexing.
     const other = await repoCard(fixtureRepoIndexing.full_name);

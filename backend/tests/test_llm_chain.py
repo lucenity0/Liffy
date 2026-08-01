@@ -6,6 +6,7 @@ from app.config import settings
 from app.llm.chain import generate_review
 from app.llm.output_parser import LLMOutputError
 from app.llm.prompts import SYSTEM_PROMPT, build_review_prompt
+from app.schemas.review import LLMReviewOutput
 from app.services.diff_parser import parse_diff
 from app.services.rag_service import RetrievedChunk
 
@@ -164,6 +165,59 @@ def test_prompt_builder_handles_empty_inputs() -> None:
     prompt = build_review_prompt("Empty PR", [], [])
     assert "(empty diff)" in prompt
     assert "(no similar code found)" in prompt
+
+
+def test_prose_suggestions_are_removed_before_publishing() -> None:
+    from app.llm.chain import _remove_prose_suggestions
+
+    output = LLMReviewOutput.model_validate(
+        {
+            "summary": "One issue.",
+            "verdict": "comment",
+            "comments": [
+                {
+                    "file": "backend/Dockerfile",
+                    "line_start": 10,
+                    "line_end": 10,
+                    "category": "improvement",
+                    "severity": "info",
+                    "comment": "Keep the toolchain version deliberate.",
+                    "suggestion": (
+                        "Pin exact versions, e.g. `npm install -g @openai/codex@0.146.0`, "
+                        "and bump them deliberately alongside the tests."
+                    ),
+                }
+            ],
+        }
+    )
+
+    cleaned = _remove_prose_suggestions(output)
+    assert cleaned.comments[0].suggestion is None
+
+
+def test_code_suggestions_are_preserved() -> None:
+    from app.llm.chain import _remove_prose_suggestions
+
+    output = LLMReviewOutput.model_validate(
+        {
+            "summary": "One issue.",
+            "verdict": "comment",
+            "comments": [
+                {
+                    "file": "app/util.py",
+                    "line_start": 4,
+                    "line_end": 4,
+                    "category": "logic_error",
+                    "severity": "warning",
+                    "comment": "Return the computed value.",
+                    "suggestion": "return value",
+                }
+            ],
+        }
+    )
+
+    cleaned = _remove_prose_suggestions(output)
+    assert cleaned.comments[0].suggestion == "return value"
 
 
 # ── AnthropicReviewLLM (LLM-1) ────────────────────────────────────────────────
@@ -931,6 +985,16 @@ def test_codex_runs_in_a_neutral_sandboxed_cwd(monkeypatch: pytest.MonkeyPatch) 
     # The prompt is written to stdin, which also closes it — so the CLI stops
     # reading and answers instead of hanging to the timeout.
     assert kwargs["input"].startswith("sys")
+
+
+def test_codex_overrides_cli_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The settings value must win over model_reasoning_effort in config.toml."""
+    monkeypatch.setattr(settings, "codex_effort", "low")
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv = calls["argv"]
+    assert argv[argv.index("-c") + 1] == "model_reasoning_effort=low"
 
 
 def test_codex_carries_the_system_prompt(monkeypatch: pytest.MonkeyPatch) -> None:

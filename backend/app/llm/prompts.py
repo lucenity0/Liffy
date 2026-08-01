@@ -58,7 +58,11 @@ Rules:
   empty review; padding one with observations, restatements of what the diff
   already says, or preferences phrased as "consider..." makes the review worse,
   not more thorough.
-- suggestion, when present, is a concrete replacement snippet or fix description.
+- suggestion, when present, is ONLY the exact replacement text for the commented
+  lines. It must be pasteable code or configuration, with no explanation,
+  recommendation, Markdown fence, inline backticks, install command, or prose.
+  If there is no safe, concrete replacement, set suggestion to null. Put the
+  explanation in comment instead.
 - Respond with ONLY a valid JSON object matching this schema — no markdown fences,
   no prose before or after:
 

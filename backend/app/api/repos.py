@@ -126,6 +126,14 @@ def trigger_index(
     user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     repo = _get_repo_or_404(db, repo_id, user)
+    # Mark the repository as in flight before enqueueing. The status endpoint
+    # derives its public state from `indexed_at`; leaving the old timestamp in
+    # place made a re-index look "Indexed" until the worker finished, while
+    # the only visible acknowledgement was the transient "queued" message.
+    # Commit before enqueueing so the worker and the next status poll observe
+    # the same state even when the task starts immediately.
+    repo.indexed_at = None
+    db.commit()
     index_worker.enqueue_index(repo.id)
     return {"repo_id": str(repo.id), "status": "queued"}
 

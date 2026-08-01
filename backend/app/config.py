@@ -72,13 +72,8 @@ class Settings(BaseSettings):
     # varies across OpenAI-compatible endpoints: Ollama and OpenAI implement
     # it, and one that does not will reject the request rather than degrade.
     openai_use_json_schema: bool = Field(default=False)
-    # Thinking is on by default on this model family and bills as output tokens,
-    # so effort — not max_tokens, which is only a ceiling — is the real cost
-    # lever. "medium" is a deliberate cost choice for review specifically: the
-    # model stays accurate at lower effort on bug-finding, and the first live
-    # run at the "high" default cost ~$0.35 for one PR. Raise to "high" or
-    # "xhigh" if reviews start missing things; the levels are low | medium |
-    # high | xhigh | max.
+    # Thinking is on by default on this model family, so effort is the real
+    # cost lever. Medium is the deliberate review default.
     anthropic_effort: str = Field(default="medium")
     # llm_provider="claude_code" drives the locally-installed Claude Code CLI,
     # and "codex" the Codex CLI. Both authenticate with the user's own
@@ -118,6 +113,9 @@ class Settings(BaseSettings):
     # start in a container rather than failing later. docker-compose.subscription.yml
     # has the mount, commented, with the trade-offs written out.
     codex_home: str = Field(default="")
+    # Keep Codex reasoning under Liffy's control instead of inheriting the
+    # user's ~/.codex/config.toml value.
+    codex_effort: str = Field(default="medium")
     # Caps thinking *and* response text together on Claude models, where
     # thinking is on by default — too tight and the review truncates mid-JSON,
     # which reads like a parser bug rather than a budget problem.
@@ -289,15 +287,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "llm_provider": SettingSpec(
         group="review_model",
         label="Provider",
-        help=(
-            "Which transport runs the review. `openai` also covers anything "
-            "speaking the OpenAI wire format — Gemini's compat endpoint, or a "
-            "local Ollama. `claude_code` and `codex` drive those CLIs against "
-            "a subscription you already pay for, so they need no API key. In "
-            "Docker they additionally need an OAuth token in backend/.env and "
-            "the subscription compose overlay; see the README. Both are for "
-            "local, personal use."
-        ),
+        help="Transport used for reviews. Subscription CLIs need no API key.",
         kind="choice",
         choices=("anthropic", "openai", "claude_code", "codex"),
     ),
@@ -311,7 +301,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "anthropic_model": SettingSpec(
         group="review_model",
         label="Model",
-        help="Runs the review through Anthropic's API, billed per token.",
+        help="Model used for Anthropic reviews.",
         kind="str",
         applies_to=("anthropic",),
         # Ordered by what a reviewer should reach for first, not by price.
@@ -328,12 +318,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "claude_code_model": SettingSpec(
         group="review_model",
         label="Model",
-        help=(
-            "Runs the review through the Claude Code CLI on your subscription. "
-            "The CLI also accepts the bare aliases `opus`, `sonnet`, `haiku` "
-            "and `fable`; which models you can actually reach depends on your "
-            "plan."
-        ),
+        help="Model used by the Claude Code CLI.",
         kind="str",
         applies_to=("claude_code",),
         suggestions=(
@@ -346,15 +331,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "codex_model": SettingSpec(
         group="review_model",
         label="Model",
-        help=(
-            "Listed from your signed-in Codex account, because the slugs are "
-            "specific to the CLI version and the plan — an outdated one fails "
-            "the run outright with 'Model metadata not found'. Empty means "
-            "whatever ~/.codex/config.toml already says. An empty list means "
-            "Liffy cannot reach your Codex credentials — in Docker that is "
-            "usually the ~/.codex mount, which docker-compose.subscription.yml "
-            "needs uncommented for the API service too, not a sign-in problem."
-        ),
+        help="Codex model; leave blank to use the CLI configuration.",
         kind="str",
         applies_to=("codex",),
         allow_empty=True,
@@ -362,13 +339,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "openai_base_url": SettingSpec(
         group="review_model",
         label="Endpoint",
-        help=(
-            "Where the `openai` provider sends the review. Empty is OpenAI "
-            "itself; a localhost URL is Ollama, which runs the model on your "
-            "own hardware and means your code never leaves the machine. "
-            "Read `// where your code goes` in the README before pointing this "
-            "somewhere new — it decides who sees the code being reviewed."
-        ),
+        help="Endpoint used by the OpenAI-compatible provider.",
         kind="str",
         applies_to=("openai",),
         allow_empty=True,
@@ -380,11 +351,7 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "openai_model": SettingSpec(
         group="review_model",
         label="Model",
-        help=(
-            "`openai` is the wire format, not the vendor — the same field "
-            "drives OpenAI, Gemini's compatibility endpoint, and a local "
-            "Ollama. Type any model name your endpoint serves."
-        ),
+        help="Model name served by the selected endpoint.",
         kind="str",
         applies_to=("openai",),
         # One per documented endpoint in .env.example rather than a catalogue:
@@ -395,30 +362,23 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "anthropic_effort": SettingSpec(
         group="review_model",
         label="Thinking effort",
-        help=(
-            "The real cost lever on Claude models, where thinking is on by "
-            "default and bills as output tokens. `medium` is a deliberate "
-            "choice for review; raise it if reviews start missing things. On "
-            "`claude_code` it spends rate-limit quota rather than money, but "
-            "it is the same lever."
-        ),
+        help="Controls reasoning depth for Anthropic and Claude Code.",
         kind="choice",
         choices=("low", "medium", "high", "xhigh", "max"),
-        # Both Claude transports: the API takes it as a request parameter and
-        # the CLI as `--effort`, with the same five levels. Not `openai`, which
-        # has no equivalent, and not `codex`, which reads its own
-        # `model_reasoning_effort` from ~/.codex/config.toml for the same
-        # reason its model does.
         applies_to=("anthropic", "claude_code"),
+    ),
+    "codex_effort": SettingSpec(
+        group="review_model",
+        label="Thinking effort",
+        help="Controls reasoning depth for Codex reviews.",
+        kind="choice",
+        choices=("low", "medium", "high", "xhigh"),
+        applies_to=("codex",),
     ),
     "llm_max_tokens": SettingSpec(
         group="review_model",
         label="Max tokens",
-        help=(
-            "Caps thinking and response text together. Too tight and the "
-            "review truncates mid-JSON, which reads as a parser bug rather "
-            "than a budget problem — hence the floor."
-        ),
+        help="Maximum combined reasoning and response tokens.",
         kind="int",
         minimum=4000,
         maximum=200000,
@@ -426,32 +386,20 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     "openai_use_json_schema": SettingSpec(
         group="review_model",
         label="Constrain output to the review schema",
-        help=(
-            "Needed for small local models, which otherwise return "
-            "well-formed documents of their own invention. Opt-in because "
-            "support varies: an endpoint without it rejects the request "
-            "rather than degrading."
-        ),
+        help="Require responses to match Liffy's review schema.",
         kind="bool",
         applies_to=("openai",),
     ),
     "post_reviews_to_github": SettingSpec(
         group="github_posting",
         label="Post reviews to GitHub",
-        help=(
-            "Off by default, deliberately. Turning this on means Liffy writes "
-            "comments to real pull requests."
-        ),
+        help="Allow Liffy to write reviews to GitHub.",
         kind="bool",
     ),
     "github_review_event_mode": SettingSpec(
         group="github_posting",
         label="Review event mode",
-        help=(
-            "`comment_only` posts every review as a comment. `native` sends "
-            "approve and request_changes as real GitHub review events — and "
-            "`request_changes` blocks a human's merge."
-        ),
+        help="Choose comments only or native review events.",
         kind="choice",
         choices=("comment_only", "native"),
     ),

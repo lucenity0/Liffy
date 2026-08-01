@@ -391,6 +391,15 @@ a { color: inherit; }
 }
 .nav-a:hover { color: var(--ink); }
 @media (max-width: 32rem) { .nav-a.opt { display: none; } }
+/* Even with the two optional links dropped, the wordmark plus HOW IT
+   WORKS plus GRAPHITE measured 338px of content in a 320px viewport —
+   a horizontal scrollbar on the smallest phones still in use. Tracking
+   and padding are what give it back; nothing has to be hidden. */
+@media (max-width: 24rem) {
+  .nav-in { gap: 0.5rem; }
+  .nav-a { font-size: 0.6rem; letter-spacing: 0.06em; padding: 0.4rem 0.3rem; }
+  .nav-mark { font-size: 0.82rem; }
+}
 
 /* ==================================================================== *
  * Hero
@@ -409,9 +418,12 @@ a { color: inherit; }
 @media (max-width: 58rem) {
   .hero-grid { grid-template-columns: minmax(0, 1fr); }
   /* Stacked, not hidden — it is a feature, not decoration, and a phone
-     is where a lot of a shared link gets opened. Capped so it cannot
-     push the buttons off a small screen. */
-  .hero-art { max-width: 20rem; }
+     is where a lot of a shared link gets opened. Capped and centred so a
+     square box cannot eat a whole phone screen on its own. */
+  .hero-art { max-width: 20rem; width: 100%; margin: 0 auto; }
+}
+@media (max-width: 30rem) {
+  .hero-art { max-width: 14rem; }
 }
 .hero-copy { min-width: 0; }
 
@@ -544,11 +556,40 @@ a { color: inherit; }
 .scrolly { position: relative; }
 .scrolly-track { height: 360vh; }
 @media (max-width: 48rem) { .scrolly-track { height: 300vh; } }
+/* A landscape phone leaves roughly 320px of pane once the nav is taken
+   out, which is less than the frame wants. Trim the parts that explain
+   rather than the parts that show: the rail keeps its numbers but drops
+   its words, the chunk-boundary illustration goes, and the track gets
+   shorter so the sequence does not drag on for five screens of a very
+   short viewport. */
+@media (max-height: 34rem) {
+  .scrolly-track { height: 260vh; }
+  .rail-i { font-size: 0.52rem; padding: 0.35rem 0.3rem; }
+  .rail-i .rail-w { display: none; }
+  .ix-open { display: none; }
+  .frame-bar, .stamp { padding-top: 0.35rem; padding-bottom: 0.35rem; }
+  .ix-query { padding: 0.35rem 0.5rem; font-size: 0.78rem; }
+  /* Measured: at 667x375 the review frame wanted ~259px in a 241px slot.
+     Leading and padding give back more than enough without dropping
+     anything the sequence needs. */
+  .diff { line-height: 1.6; padding: 0.4rem 0; }
+  .pin { margin-top: 0.35rem; margin-bottom: 0.35rem; padding: 0.45rem 0.55rem; }
+  .pin-b { font-size: 0.74rem; line-height: 1.45; }
+  .ctx { padding: 0.35rem 0.5rem; }
+}
 
 .stick {
   position: sticky;
   top: 3.25rem; /* the nav */
+  /* svh, not vh. On mobile Safari and Chrome the collapsible URL bar is
+     *inside* 100vh, so a 100vh sticky pane is taller than what you can
+     actually see and its bottom edge — here, the verdict bar the whole
+     sequence builds to — sits below the fold until you scroll, at which
+     point the bar collapses and everything shifts. svh is the height
+     with the browser chrome expanded, so the frame always fits.
+     The vh line stays first as the fallback for anything without svh. */
   height: calc(100vh - 3.25rem);
+  height: calc(100svh - 3.25rem);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -587,6 +628,7 @@ a { color: inherit; }
   min-height: 0;
   flex: 1 1 auto;
   max-height: 34rem;
+  overflow: hidden;
 }
 .frame-bar {
   display: flex;
@@ -608,9 +650,32 @@ a { color: inherit; }
   min-height: 0;
   flex: 1 1 auto;
 }
+/* Narrow: the retrieval panel moves under the diff instead of being
+   dropped. It was `display: none` here, which removed the one thing the
+   sequence exists to show — that Liffy went and fetched other files —
+   and left a phone visitor watching a comment appear for no visible
+   reason.
+
+   As a row it costs about one line of height: the code preview inside
+   each chunk goes, since there is no width for it and the review comment
+   below already quotes what the macOS script does, but the filenames and
+   their similarity scores stay, and so does the one-at-a-time arrival. */
 @media (max-width: 52rem) {
   .frame-in { grid-template-columns: minmax(0, 1fr); }
-  .ctx { display: none; }
+  .ctx {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.35rem;
+    border-left: none;
+    border-top: 1px solid var(--rule);
+    padding: 0.5rem 0.6rem;
+  }
+  .ctx-hd { flex: 1 0 100%; margin-bottom: 0.1rem; }
+  .chunk { flex: 1 1 8rem; min-width: 0; padding: 0.35rem 0.4rem; }
+  .chunk-c { display: none; }
+  .chunk-f { margin-bottom: 0; font-size: 0.6rem; }
 }
 
 /* --- the diff ----------------------------------------------------- */
@@ -639,6 +704,14 @@ a { color: inherit; }
    are what the sequence is for. */
 @media (max-height: 44rem), (max-width: 34rem) {
   .dl.trim { display: none; }
+}
+
+/* Narrow: let the code wrap instead of ellipsising. `set "L=%L:JWT_SEC…"`
+   is the exact line the comment is about, and a phone was cutting it off
+   right where the bug is. Two wrapped lines beat a truncated one. */
+@media (max-width: 40rem) {
+  .dl { white-space: pre-wrap; }
+  .dl-c { overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 }
 
 /* the review comment, pinned under the flagged line */
@@ -731,9 +804,21 @@ a { color: inherit; }
  * at setup-macos.sh?
  * ==================================================================== */
 .ix { grid-template-columns: minmax(0, 1fr) minmax(0, 17rem); }
+/* Same fix, same reason: the store was hidden here, so on a phone the
+   indexing sequence counted files and then nothing visibly happened.
+   Underneath the file list it has the full width, so the 120 cells go
+   from a 12-column block to a 24-column strip about five rows deep. */
 @media (max-width: 52rem) {
   .ix { grid-template-columns: minmax(0, 1fr); }
-  .ix-store { display: none; }
+  .ix-store {
+    flex: 0 0 auto;
+    border-left: none;
+    border-top: 1px solid var(--rule);
+    padding: 0.5rem 0.6rem;
+    gap: 0.45rem;
+  }
+  .cells { grid-template-columns: repeat(24, minmax(0, 1fr)); }
+  .ix-hit { margin-top: 0; }
 }
 
 .ix-files { padding: 0.7rem 0; min-width: 0; overflow: hidden; }
@@ -1223,10 +1308,10 @@ a { color: inherit; }
       <div class="stick pg">
 
         <div class="rail" data-rail="review">
-          <div class="rail-i" data-stage="0">01 &middot; pull request</div>
-          <div class="rail-i" data-stage="1">02 &middot; retrieve</div>
-          <div class="rail-i" data-stage="2">03 &middot; review</div>
-          <div class="rail-i" data-stage="3">04 &middot; verdict</div>
+          <div class="rail-i" data-stage="0">01<span class="rail-w"> &middot; pull request</span></div>
+          <div class="rail-i" data-stage="1">02<span class="rail-w"> &middot; retrieve</span></div>
+          <div class="rail-i" data-stage="2">03<span class="rail-w"> &middot; review</span></div>
+          <div class="rail-i" data-stage="3">04<span class="rail-w"> &middot; verdict</span></div>
         </div>
 
         <figure class="frame" id="figure">
@@ -1300,10 +1385,10 @@ a { color: inherit; }
       <div class="stick pg">
 
         <div class="rail" data-rail="index">
-          <div class="rail-i">01 &middot; your repo</div>
-          <div class="rail-i">02 &middot; split</div>
-          <div class="rail-i">03 &middot; embed</div>
-          <div class="rail-i">04 &middot; recall</div>
+          <div class="rail-i">01<span class="rail-w"> &middot; your repo</span></div>
+          <div class="rail-i">02<span class="rail-w"> &middot; split</span></div>
+          <div class="rail-i">03<span class="rail-w"> &middot; embed</span></div>
+          <div class="rail-i">04<span class="rail-w"> &middot; recall</span></div>
         </div>
 
         <figure class="frame">

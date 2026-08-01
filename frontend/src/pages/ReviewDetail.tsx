@@ -9,6 +9,7 @@ import { CommentGroup } from "@/components/review/CommentGroup";
 import { DiffViewer } from "@/components/review/diff/DiffViewer";
 import { ReviewHeader } from "@/components/review/ReviewHeader";
 import { ReviewFailed, ReviewInFlight } from "@/components/review/ReviewStates";
+import { ReviewScores } from "@/components/review/ReviewScores";
 import { ReviewSummary } from "@/components/review/ReviewSummary";
 import { useReview } from "@/hooks/useReview";
 import { useRereview } from "@/hooks/useReviewMutations";
@@ -88,6 +89,12 @@ export function ReviewDetail() {
       {data.status === "completed" && (
         <>
           <ReviewSummary review={data} />
+
+          {/* Mounted only in the completed branch, which is the gate: a
+              pending or processing review has no comments to rate, so the
+              request would be a guaranteed empty answer fired alongside
+              useReview's 3s poll. */}
+          <ReviewScores reviewId={data.id} />
 
           {data.raw_diff && (
             <DiffViewer

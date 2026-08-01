@@ -135,6 +135,48 @@ export interface FeedbackOut {
   created_at: string;
 }
 
+/**
+ * `GET /reviews/{review_id}/eval`. Real as of #191 — the stub that returned
+ * hardcoded `0.0` for both rates is gone.
+ *
+ * Computed live from `comment_feedback` on every request. It deliberately does
+ * *not* read the `eval_scores` table, which is #192's weekly snapshot, so a
+ * thumbs-up from ten seconds ago is already in these numbers.
+ */
+export interface EvalScoresOut {
+  review_id: string;
+  /** Every comment on the review, rated or not. */
+  total_comments: number;
+  /**
+   * The denominator, and the reason it is in the response at all: a good
+   * review with one rating scores 100%, not 12.5%. A bare percentage over a
+   * sample of six invites a conclusion the data cannot support, so anything
+   * rendering the rate has to render this next to it.
+   */
+  rated_comments: number;
+  /**
+   * `null` means **nobody has rated yet**. `0` means every rating was
+   * negative. Those are different facts and the backend went out of its way
+   * to keep them apart — `approval_rate ?? 0` puts back exactly the bug #191
+   * existed to remove, and tells a user their review was rejected when in
+   * truth it was never read. Branch on `=== null`.
+   *
+   * Unrounded. Round once, at render.
+   */
+  approval_rate: number | null;
+  /**
+   * Arithmetic on `approval_rate`, not a second signal. `comment_feedback`
+   * has nowhere to record *why* a thumbs-down was given, so this is exactly
+   * `1 - approval_rate` — see `docs/decisions/004-approval-vs-false-positive.md`.
+   *
+   * Present because the column exists and #194 aggregates it. Rendering it
+   * beside the approval rate would put a contradiction on screen: §8.1 wants
+   * >70% approval *and* <20% false positives, which no single set of ratings
+   * can satisfy.
+   */
+  false_positive_rate: number | null;
+}
+
 export interface ReviewDetailOut extends ReviewOut {
   /**
    * The same join the list does. Without these a review fetched by id cannot

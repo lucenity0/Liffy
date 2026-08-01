@@ -48,3 +48,4 @@ front_end_issues.sh
 create_issues.sh
 
 #local cache
+.liffy-frontend.pid

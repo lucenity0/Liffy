@@ -3,7 +3,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Sheet } from "@/components/ui/Sheet";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { CategoryDistribution } from "@/components/analytics/CategoryDistribution";
+import { FlaggedReviews } from "@/components/analytics/FlaggedReviews";
 import { FigureTile, MetricTile } from "@/components/analytics/MetricTile";
+import { SeverityCalibration } from "@/components/analytics/SeverityCalibration";
+import { TokenEfficiencyTrend } from "@/components/analytics/TokenEfficiencyTrend";
 import { useAnalyticsSummary } from "@/hooks/useAnalyticsSummary";
 import { formatCount, formatPercent, formatSeconds } from "@/lib/utils";
 import type { AnalyticsSummaryOut } from "@/types/api";
@@ -136,9 +140,29 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
           value={data.token_efficiency}
           format={(value) => value.toFixed(3)}
           unknownHint="Needs a review with both a token count and at least one rating."
-          caption="Mean approval rate per 1,000 tokens. §8.1 tracks this as a trend rather than against a threshold."
+          caption="Mean approval rate per 1,000 tokens. §8.1 tracks this as a trend rather than against a threshold — the shape is below."
         />
       </div>
+
+      {/*
+        The two §8.1 metrics that are claims about a *shape* rather than a
+        number: "even spread" and "tracked as trend". Neither fits a tile,
+        which is why they are here rather than above.
+      */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <CategoryDistribution distribution={data.category_distribution} />
+        <TokenEfficiencyTrend
+          points={data.token_efficiency_series}
+          reviewsCompleted={data.reviews_completed}
+        />
+      </div>
+
+      <SeverityCalibration rows={data.severity_calibration} />
+
+      <FlaggedReviews
+        reviews={data.flagged_reviews}
+        total={data.flagged_reviews_total}
+      />
     </div>
   );
 }

@@ -24,7 +24,10 @@ function defined(params: ListReviewsParams): ListReviewsParams {
  * `keepPreviousData: true`. It keeps the current page rendered while the
  * next one loads, so paging does not flash an empty table.
  */
-export function useReviews(params: ListReviewsParams = {}) {
+export function useReviews(
+  params: ListReviewsParams = {},
+  options?: { enabled?: boolean },
+) {
   const limit = params.limit ?? REVIEWS_PAGE_SIZE;
   const offset = params.offset ?? 0;
 
@@ -36,6 +39,7 @@ export function useReviews(params: ListReviewsParams = {}) {
   const result = useQuery({
     queryKey: keys.reviews.list(query),
     queryFn: () => listReviews(query),
+    enabled: options?.enabled ?? true,
     placeholderData: keepPreviousData,
   });
 

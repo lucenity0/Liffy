@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorNote } from "@/components/ui/ErrorNote";
@@ -34,16 +34,19 @@ export function RepoDetail() {
   const disconnect = useDisconnectRepo();
   const [confirming, setConfirming] = useState(false);
 
-  const reviews = useReviews({ limit: 20 });
   /**
-   * Filtered client-side, because GET /reviews takes no repo parameter. That
-   * makes this the newest 20 reviews *overall* that happen to be this repo's,
-   * not its newest 20 — which is why the footer says so rather than implying
-   * a complete list.
+   * This repository's newest reviews, asked for as such.
+   *
+   * Until `GET /reviews` took a repo parameter this filtered the global list
+   * client-side, which meant a repo whose last review was 25 reviews ago
+   * showed an empty list on its own detail page — the rows existed, they were
+   * just never on the page that got fetched.
+   *
+   * `enabled` waits for the repo to resolve out of the list rather than firing
+   * a request for a `repoId` that may not be one of the caller's.
    */
-  const repoReviews = repo
-    ? reviews.items.filter((review) => review.repo_full_name === repo.full_name)
-    : [];
+  const reviews = useReviews({ limit: 20, repoId }, { enabled: Boolean(repo) });
+  const repoReviews = reviews.items;
 
   if (repos.isPending) return <RepoSkeleton />;
 
@@ -111,7 +114,12 @@ export function RepoDetail() {
       </header>
 
       <Sheet aria-label="Reviews">
-        <Sheet.Header title="Reviews" count={repoReviews.length} />
+        {/* The repo's real total now, not the length of whatever happened to
+            be on the shared page. */}
+        <Sheet.Header
+          title="Reviews"
+          count={reviews.data ? reviews.total : undefined}
+        />
 
         {reviews.isPending && <SkeletonRows rows={3} />}
 
@@ -136,12 +144,17 @@ export function RepoDetail() {
                 <ReviewRow key={review.id} review={review} detailed />
               ))}
             </Sheet.List>
-            <Sheet.Footer>
-              <p className="text-sm text-ink-dim">
-                Drawn from the most recent reviews across every repository — see
-                all reviews for the full history.
-              </p>
-            </Sheet.Footer>
+            {reviews.total > repoReviews.length && (
+              <Sheet.Footer>
+                <p className="text-sm text-ink-dim">
+                  The {repoReviews.length} most recent of {reviews.total}. See{" "}
+                  <Link to={`/reviews?repo=${repo.id}`} className="underline">
+                    all reviews for this repository
+                  </Link>
+                  .
+                </p>
+              </Sheet.Footer>
+            )}
           </>
         )}
       </Sheet>

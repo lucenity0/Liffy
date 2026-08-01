@@ -171,6 +171,40 @@ describe("TokenEfficiencyTrend", () => {
     expect(container.querySelectorAll("circle")).toHaveLength(1);
   });
 
+  /**
+   * Being non-NaN is not the same as being visible. A dot placed outside the
+   * viewBox is clipped and renders as nothing at all — the same silent
+   * failure, one step further along, and exactly how the "Architecture" label
+   * on the bar chart went missing at `LABEL_W = 96` with every test green.
+   *
+   * The single-point case is the one at risk and the one the page is actually
+   * in: both of its coordinates come from the degenerate-span guards
+   * (`span === 0`, `points.length === 1`) rather than from the data, so
+   * nothing about the fixture would reveal them being wrong.
+   */
+  it("places the single point inside the viewBox, fully within its radius", () => {
+    const { container } = renderWithProviders(
+      <TokenEfficiencyTrend points={[point(0.033, 1)]} reviewsCompleted={12} />,
+    );
+
+    const [, , width, height] = container
+      .querySelector("svg")!
+      .getAttribute("viewBox")!
+      .split(" ")
+      .map(Number);
+    const dot = container.querySelector("circle")!;
+    const cx = Number(dot.getAttribute("cx"));
+    const cy = Number(dot.getAttribute("cy"));
+    const r = Number(dot.getAttribute("r"));
+
+    expect(Number.isFinite(cx)).toBe(true);
+    expect(Number.isFinite(cy)).toBe(true);
+    expect(cx).toBeGreaterThanOrEqual(r);
+    expect(cx).toBeLessThanOrEqual(width - r);
+    expect(cy).toBeGreaterThanOrEqual(r);
+    expect(cy).toBeLessThanOrEqual(height - r);
+  });
+
   it("still refuses a line at two points", () => {
     const { container } = renderWithProviders(
       <TokenEfficiencyTrend

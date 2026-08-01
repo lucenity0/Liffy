@@ -150,7 +150,7 @@ describe("Analytics — populated", () => {
     // Smaller than reviews_completed, because total_ms is NULL on manual
     // triggers and re-reviews.
     expect(
-      within(await tile("Time to review")).getByText(/9 reviews with a receipt/),
+      within(await tile("Time to review")).getByText(/9 webhook-triggered reviews/),
     ).toBeInTheDocument();
   });
 

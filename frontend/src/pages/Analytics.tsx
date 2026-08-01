@@ -108,7 +108,7 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
           label="Time to review"
           metric={data.time_to_review_ms}
           format={formatSeconds}
-          unit="reviews with a receipt"
+          unit="webhook-triggered reviews"
           unknownHint="Measured from webhook receipt, so only webhook-triggered reviews carry it."
           caption={
             /**

@@ -13,7 +13,21 @@ from app.services.rag_service import get_chroma_client
 from app.workers.celery_app import celery
 
 
-@celery.task(name="liffy.index_repo")
+# `acks_late` here and deliberately *not* on the review task. Both settings
+# mean "redeliver this message if the worker dies holding it", and that is only
+# safe for work that can be repeated for free. Indexing can: it is idempotent
+# by content hash, so a re-run re-embeds only what changed and a half-finished
+# run has written nothing (the stale-cleanup and `indexed_at` are its last two
+# steps). A review cannot — a redelivered one re-bills tokens and writes a
+# second row, which is why `review_worker` documents no autoretry.
+#
+# Without this, an OOM-killed index was acknowledged on delivery and gone:
+# the queue emptied, no row changed, and the UI kept saying "queued" forever.
+@celery.task(
+    name="liffy.index_repo",
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def index_repo_task(repo_id: str) -> dict:
     db = SessionLocal()
     try:

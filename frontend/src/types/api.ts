@@ -356,6 +356,10 @@ export interface EditableSetting {
   help: string;
   kind: "str" | "bool" | "int" | "choice";
   choices: string[];
+  /** Offered as a dropdown, but the field stays open — unlike `choices`. */
+  suggestions: string[];
+  /** `llm_provider` values this setting matters for; empty means always. */
+  applies_to: string[];
   minimum: number | null;
   maximum: number | null;
   value: string | number | boolean;
@@ -381,7 +385,21 @@ export interface ReadOnlySetting {
 export interface SecretSetting {
   key: string;
   label: string;
+  /** What an unset value means for this one — needed, or genuinely optional. */
+  requirement: string;
+  /** `llm_provider` values this credential matters for; empty means always. */
+  applies_to: string[];
+  /** True when the page may set this one, rather than only report on it. */
+  connectable: boolean;
+  /** The command that produces the value, shown in the connect dialog. */
+  connect_command: string;
   is_set: boolean;
+  /**
+   * Where the value came from. `is_set` cannot answer "can I disconnect this?"
+   * — a `.env` token and a connected one both read as set — so only `override`
+   * gets a Disconnect button; the rest get Replace.
+   */
+  source: SettingSource;
 }
 
 export interface SettingsOut {

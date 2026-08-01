@@ -62,9 +62,25 @@ export function resetFeedback() {
  */
 let settingsState: SettingsOut = structuredClone(fixtureSettings);
 
+/**
+ * Secrets this mock pretends `backend/.env` also sets.
+ *
+ * Disconnect deletes Liffy's stored copy and the dotfile's value takes over —
+ * which is the case the UI got wrong: it read as "still connected", so the
+ * button appeared to do nothing. Modelling the file here is what lets a test
+ * tell the two apart.
+ */
+const dotenvSecrets = new Set<string>();
+
+/** Put a secret in the mock's `.env`. Cleared by `resetSettings`. */
+export function setDotenvSecret(key: string) {
+  dotenvSecrets.add(key);
+}
+
 /** Wired into setupTests' `afterEach`, alongside `resetFeedback`. */
 export function resetSettings() {
   settingsState = structuredClone(fixtureSettings);
+  dotenvSecrets.clear();
 }
 
 /** The detail fixtures are shared module constants: overlay, never mutate. */
@@ -342,6 +358,56 @@ export const handlers = [
       target.source = target.value === target.default_value ? "default" : "override";
     }
 
+    settingsState = next;
+    return HttpResponse.json(settingsState);
+  }),
+
+  /**
+   * Connecting a credential from the page.
+   *
+   * Enforces the two rules that matter, so `dev:mock` cannot make a forbidden
+   * write look like it worked: only `connectable` keys are accepted, and the
+   * value is never echoed back into the document.
+   */
+  http.post("*/settings/secrets/:key", async ({ params, request }) => {
+    const { value } = (await request.json()) as { value: string };
+    const next = structuredClone(settingsState);
+    const target = next.secrets.find((entry) => entry.key === params.key);
+
+    if (!target?.connectable) {
+      return HttpResponse.json(
+        { detail: `'${params.key}' cannot be connected from the settings page.` },
+        { status: 422 },
+      );
+    }
+    if (value.trim().length < 20 || /\s/.test(value.trim())) {
+      return HttpResponse.json(
+        { detail: "That does not look like a token." },
+        { status: 422 },
+      );
+    }
+
+    target.is_set = true;
+    target.source = "override";
+    settingsState = next;
+    return HttpResponse.json(settingsState);
+  }),
+
+  http.delete("*/settings/secrets/:key", ({ params }) => {
+    const next = structuredClone(settingsState);
+    const target = next.secrets.find((entry) => entry.key === params.key);
+    if (!target?.connectable) {
+      return HttpResponse.json(
+        { detail: `'${params.key}' is not a connected credential.` },
+        { status: 422 },
+      );
+    }
+    // Disconnect drops Liffy's copy; whatever `.env` holds takes over again.
+    // `dotenvSecrets` is what the real backend re-reads from settings — here it
+    // stands in for the file, so the fallback is exercised rather than assumed.
+    const fromDotenv = dotenvSecrets.has(String(params.key));
+    target.is_set = fromDotenv;
+    target.source = fromDotenv ? "env" : "default";
     settingsState = next;
     return HttpResponse.json(settingsState);
   }),

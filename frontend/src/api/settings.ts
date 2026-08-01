@@ -23,3 +23,30 @@ export async function updateSettings(
   const { data } = await apiClient.patch<SettingsOut>("/settings", { values });
   return data;
 }
+
+/**
+ * Connect a credential from the page rather than from `backend/.env`.
+ *
+ * Its own endpoint, not part of the PATCH above: that one refuses every
+ * secret and should keep refusing them. The value goes up and is never echoed
+ * back — the response is the same settings document as always, reporting
+ * `is_set` and nothing more.
+ */
+export async function connectSecret(
+  key: string,
+  value: string,
+): Promise<SettingsOut> {
+  const { data } = await apiClient.post<SettingsOut>(
+    `/settings/secrets/${key}`,
+    { value },
+  );
+  return data;
+}
+
+/** Forget a connected credential, falling back to whatever `.env` says. */
+export async function disconnectSecret(key: string): Promise<SettingsOut> {
+  const { data } = await apiClient.delete<SettingsOut>(
+    `/settings/secrets/${key}`,
+  );
+  return data;
+}

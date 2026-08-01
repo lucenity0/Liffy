@@ -292,6 +292,98 @@ have the memory, a 32B coder model is a better starting point.
 > OpenAI-compatible endpoints. Ollama and OpenAI implement it; an endpoint that
 > does not will reject the request outright rather than silently degrade.
 
+---
+
+## Running on a subscription instead of an API key
+
+If you already pay for Claude or ChatGPT, Liffy can review through the CLI you
+have already signed into — no API key and no metered billing. This is the other
+way to avoid the ~$0.35-per-PR cost of the API path, and unlike Ollama it does
+not need a large model on your own hardware.
+
+```bash
+# Claude
+npm install -g @anthropic-ai/claude-code && claude   # sign in
+# ChatGPT
+npm install -g @openai/codex && codex login
+```
+
+Then in `backend/.env`, one of:
+
+```bash
+LLM_PROVIDER=claude_code
+LLM_PROVIDER=codex
+```
+
+That is the whole setup **when you run the backend and worker directly on your
+machine** — the CLI reads its own credentials from your home directory.
+
+### In Docker
+
+`./liffy.sh` runs the worker in a container, which has no home directory holding
+those credentials. Two things change.
+
+**1. The worker image that has the CLIs installed.** `./liffy.sh` picks it up
+automatically from `LLM_PROVIDER`; by hand it is
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
+```
+
+**2. Credentials the container can reach**, and this differs per provider.
+
+*Claude Code* takes a token. Mint it on the host:
+
+```bash
+claude setup-token          # → CLAUDE_CODE_OAUTH_TOKEN=...
+```
+
+Paste it into **Settings → Secrets → Connect** and you are done — it is checked
+with Anthropic, stored in Liffy's database, and picked up by the worker on the
+next review with no restart. Putting it in `backend/.env` as
+`CLAUDE_CODE_OAUTH_TOKEN` still works and takes precedence in the sense that it
+is what a disconnect falls back to; use it if you would rather every credential
+lived in one file.
+
+*Codex* has no token login. Measured against codex-cli 0.146: there is no auth
+environment variable, and `codex login --with-access-token` rejects a ChatGPT
+subscription token because it expects an agent-identity JWT. The only thing that
+authenticates the CLI is a real `auth.json`, so the container needs the
+credential *directory*:
+
+```yaml
+# docker-compose.subscription.yml — uncomment
+volumes:
+  - ${HOME}/.codex:/codex-auth:ro
+```
+```bash
+# backend/.env
+CODEX_HOME=/codex-auth
+```
+
+That mount lets anything in the worker container read your ChatGPT access,
+refresh, and ID tokens, and `:ro` means the CLI cannot refresh them in place — so
+when the token expires you re-run `codex login` on the host. If that trade is not
+one you want, `claude_code` reaches the same place with a revocable token, and
+running the worker on the host needs none of it.
+
+Miss any of this and the worker **refuses to start**, with a message naming the
+fix. That is deliberate: the previous behaviour was a setting that looked
+supported and failed mid-review with a subprocess error.
+
+### Things to know
+
+- **Local, personal use.** One person, their own subscription. Automating a
+  subscription for a shared or multi-user deployment falls under different terms
+  — read your Anthropic or OpenAI agreement first.
+- **No rate-limit contract.** Exhausting the subscription mid-review fails that
+  review. Liffy reports it as a limit rather than as a parse error, but it cannot
+  prevent it.
+- **Not usable in CI.** No Liffy test depends on a signed-in CLI.
+- **On an API key, use the API.** Claude Code adds ~17k tokens of its own system
+  prompt per call. On a subscription that costs quota; on a key it costs money
+  for nothing.
+
 ## Environment Variables
 
 All variables go in `backend/.env`. Never commit this file.
@@ -308,6 +400,8 @@ All variables go in `backend/.env`. Never commit this file.
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Yes | Leave as `15` |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Yes | Leave as `30` |
 | `OPENAI_API_KEY` | For LLM features | From platform.openai.com |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude_code` in Docker | From `claude setup-token` on the host |
+| `CODEX_HOME` | `codex` in Docker | Path the mounted `~/.codex` appears at, e.g. `/codex-auth` |
 | `DEBUG` | Yes | `True` for local dev |
 
 ### Getting GitHub OAuth credentials

@@ -25,9 +25,114 @@ FRONTEND_LOG_FILE="$LIFFY_ROOT/.liffy-frontend.log"
 # actually execute reviews (worker) and the weekly scheduler (beat).
 ALL_SERVICES=(postgres redis chromadb backend worker beat)
 
+# Which compose files are in play. The subscription overlay gets appended when
+# backend/.env selects a CLI provider — see select_compose_files.
+COMPOSE_FILES=(-f docker-compose.yml)
+
+compose() { docker compose "${COMPOSE_FILES[@]}" "$@"; }
+
 require_docker() {
     command -v docker &>/dev/null || error "Docker not found. Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
     docker info &>/dev/null || error "Docker isn't running. Start Docker Desktop and try again."
+}
+
+# Read one key out of backend/.env, or nothing if it is not there.
+#
+# Deliberately not `source`: that file holds secrets with characters bash would
+# try to interpret, and it is not a script.
+#
+# The `|| line=""` is load-bearing. A key that is simply absent — which is the
+# normal case, since none of these are in .env.example uncommented — makes grep
+# exit 1, `set -o pipefail` propagates it, and `set -e` then kills the whole
+# launcher on the assignment at the call site. That shipped once: ./liffy.sh
+# printed the .env line and exited silently before starting a single container.
+env_setting() {
+    local line=""
+    [ -f backend/.env ] || return 0
+    line=$(grep -E "^${1}=" backend/.env 2>/dev/null | tail -1) || line=""
+    [ -n "$line" ] || return 0
+    printf '%s' "${line#*=}" | tr -d "\"'" | sed 's/[[:space:]]*$//'
+}
+
+# Read a setting the settings page has overridden, if the database is up.
+#
+# `.env` is no longer the only place these live. The page writes overrides to
+# the `settings` table and the worker applies them at the start of every task,
+# so a launcher that consults only the dotfile is reading a stale answer for
+# anybody who used the UI — which is the entire point of the UI.
+#
+# Empty when the database is not running yet, which is the honest answer at
+# that moment: the caller falls back to `.env`.
+db_setting() {
+    docker compose ps postgres 2>/dev/null | grep -q "Up\|running" || return 0
+    docker compose exec -T postgres psql -U liffy -d liffy -tAc \
+        "select value from settings where key='$1';" 2>/dev/null \
+        | tr -d ' \r' | head -1 || true
+}
+
+# What the *next review* will actually use: the page's choice if there is one,
+# otherwise the dotfile's.
+resolved_setting() {
+    local value=""
+    value=$(db_setting "$1") || value=""
+    [ -n "$value" ] || value=$(env_setting "$2")
+    printf '%s' "$value"
+}
+
+# Pick the worker image and warn about the one thing that will otherwise fail.
+#
+# The subscription providers authenticate against credentials in the user's
+# home directory, which the container does not have. Selecting `claude_code` in
+# the settings page and then running a plain `docker compose up` gives a worker
+# with no CLI and no credentials, and the review dies on `'claude' is not on
+# PATH` — which is exactly what happened when the provider was set in the page
+# and this function only ever looked at `.env`.
+select_compose_files() {
+    local provider credential
+    provider=$(resolved_setting llm_provider LLM_PROVIDER)
+    case "$provider" in
+        # The two providers need different things, because the two CLIs offer
+        # different things: Claude Code reads a token from the environment,
+        # Codex only reads a credential directory.
+        claude_code) credential=$(resolved_setting claude_code_oauth_token CLAUDE_CODE_OAUTH_TOKEN) ;;
+        codex)       credential=$(resolved_setting codex_home CODEX_HOME) ;;
+        *)           return 0 ;;
+    esac
+
+    COMPOSE_FILES+=(-f docker-compose.subscription.yml)
+    log "LLM_PROVIDER=$provider — building the worker with the CLIs installed"
+
+    if [ -z "$credential" ]; then
+        if [ "$provider" = "claude_code" ]; then
+            warn "CLAUDE_CODE_OAUTH_TOKEN is empty in backend/.env. Run 'claude setup-token' on this machine and paste the result there — the worker will refuse to start without it."
+        else
+            warn "CODEX_HOME is empty in backend/.env. The Codex CLI has no token login, so the container needs ~/.codex mounted: uncomment the volume in docker-compose.subscription.yml (read what it grants first) and set CODEX_HOME to match — the worker will refuse to start without it."
+        fi
+    fi
+}
+
+# Discoverability: a subscription provider removes the cost barrier entirely,
+# and until now the only place it was written down was a commented-out line in
+# .env.example.
+suggest_subscription_providers() {
+    # Plain strings rather than an array: macOS still ships bash 3.2, where
+    # ${#arr[@]} on an empty array trips `set -u`.
+    local provider="" found=""
+    # Resolved, not `env_setting`: the settings page writes the provider to the
+    # database, so reading only the dotfile suggests switching to a provider the
+    # user already switched to.
+    provider=$(resolved_setting llm_provider LLM_PROVIDER)
+    case "$provider" in claude_code|codex) return 0 ;; esac
+
+    command -v claude &>/dev/null && found="$found    • LLM_PROVIDER=claude_code — the 'claude' CLI is installed\n"
+    command -v codex  &>/dev/null && found="$found    • LLM_PROVIDER=codex — the 'codex' CLI is installed\n"
+    [ -z "$found" ] && return 0
+
+    echo ""
+    echo "  Reviews can run on a subscription you already pay for, with no API key:"
+    printf "%b" "$found"
+    echo "    In Docker each also needs a token in backend/.env — see the README."
+    echo ""
 }
 
 ensure_env_file() {
@@ -85,14 +190,15 @@ stop_frontend() {
 cmd_up() {
     require_docker
     ensure_env_file
+    select_compose_files
 
     log "Starting docker services: ${ALL_SERVICES[*]}"
-    docker compose up -d --build "${ALL_SERVICES[@]}"
+    compose up -d --build "${ALL_SERVICES[@]}"
 
     wait_for_backend
 
     log "Running database migrations..."
-    docker compose exec -T backend alembic upgrade head && success "Migrations applied" || warn "Migrations failed — check: docker compose logs backend"
+    compose exec -T backend alembic upgrade head && success "Migrations applied" || warn "Migrations failed — check: docker compose logs backend"
 
     start_frontend
 
@@ -105,6 +211,7 @@ cmd_up() {
     echo "  Swagger   →  http://localhost:8000/docs"
     echo ""
     warn "Real reviews will call your configured LLM and (if POST_REVIEWS_TO_GITHUB=true) post to GitHub — check backend/.env before connecting a real repo."
+    suggest_subscription_providers
     echo "  Stop:            ./liffy.sh down"
     echo "  Check data:      ./liffy.sh check"
     echo ""
@@ -112,26 +219,29 @@ cmd_up() {
 
 cmd_down() {
     stop_frontend
-    docker compose stop "${ALL_SERVICES[@]}" 2>/dev/null || true
+    select_compose_files >/dev/null 2>&1
+    compose stop "${ALL_SERVICES[@]}" 2>/dev/null || true
     success "All services stopped (data volumes kept — nothing was deleted)"
 }
 
 cmd_logs() {
-    docker compose logs -f "${ALL_SERVICES[@]}"
+    select_compose_files >/dev/null 2>&1
+    compose logs -f "${ALL_SERVICES[@]}"
 }
 
 cmd_check() {
     require_docker
+    select_compose_files >/dev/null 2>&1
     log "Checking whether repo data survived (Postgres + ChromaDB)..."
 
-    if ! docker compose ps postgres 2>/dev/null | grep -q "Up\|running"; then
+    if ! compose ps postgres 2>/dev/null | grep -q "Up\|running"; then
         error "Postgres isn't running. Run ./liffy.sh first."
     fi
 
-    REPOS=$(docker compose exec -T postgres psql -U liffy -d liffy -tAc "SELECT count(*) FROM repositories;" 2>/dev/null || echo "?")
-    PRS=$(docker compose exec -T postgres psql -U liffy -d liffy -tAc "SELECT count(*) FROM pull_requests;" 2>/dev/null || echo "?")
-    REVIEWS=$(docker compose exec -T postgres psql -U liffy -d liffy -tAc "SELECT count(*) FROM reviews;" 2>/dev/null || echo "?")
-    EMBEDDINGS=$(docker compose exec -T postgres psql -U liffy -d liffy -tAc "SELECT count(*) FROM repo_embeddings;" 2>/dev/null || echo "?")
+    REPOS=$(compose exec -T postgres psql -U liffy -d liffy -tAc "SELECT count(*) FROM repositories;" 2>/dev/null || echo "?")
+    PRS=$(compose exec -T postgres psql -U liffy -d liffy -tAc "SELECT count(*) FROM pull_requests;" 2>/dev/null || echo "?")
+    REVIEWS=$(compose exec -T postgres psql -U liffy -d liffy -tAc "SELECT count(*) FROM reviews;" 2>/dev/null || echo "?")
+    EMBEDDINGS=$(compose exec -T postgres psql -U liffy -d liffy -tAc "SELECT count(*) FROM repo_embeddings;" 2>/dev/null || echo "?")
 
     echo ""
     echo "  Postgres (survives docker compose down / rebuild via the pgdata volume):"

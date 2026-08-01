@@ -20,6 +20,13 @@ class EditableSettingOut(BaseModel):
     help: str
     kind: str
     choices: list[str]
+    # Offered in the UI without closing the field — unlike `choices`, a value
+    # outside this list is still valid. See `SettingSpec.suggestions`.
+    suggestions: list[str]
+    # The `llm_provider` values this setting matters for; empty means always.
+    # Lets the page show one model field instead of four, three of which do
+    # nothing for the provider that is actually selected.
+    applies_to: list[str]
     minimum: int | None
     maximum: int | None
     value: Any
@@ -57,7 +64,37 @@ class SecretSettingOut(BaseModel):
 
     key: str
     label: str
+    # What "not configured" means for this one. Without it the page reports a
+    # key nobody needs and a key the review depends on in identical words.
+    requirement: str
+    # The `llm_provider` values this credential matters for; empty means always.
+    applies_to: list[str]
+    # True when the page can set this one, rather than only report on it.
+    connectable: bool
+    # The command that produces the value, shown in the connect dialog.
+    connect_command: str
     is_set: bool
+    # Where the value comes from — the same three states the editable settings
+    # report, and for the same reason.
+    #
+    # `is_set` alone cannot answer "can I disconnect this?". A credential set in
+    # `backend/.env` and one connected from this page both read as set, so the
+    # page offered Disconnect for a `.env` value, the request deleted a row that
+    # was not there, and the badge came back unchanged — a button that looked
+    # broken while doing exactly what it was asked. Worse, a `.env` token could
+    # not be replaced from the page at all, because Connect only appeared when
+    # nothing was set.
+    source: Source
+
+
+class SecretConnect(BaseModel):
+    """A credential submitted from the settings page.
+
+    Write-only in both directions: it arrives here and is never echoed back —
+    the settings document reports `is_set` and nothing else, before and after.
+    """
+
+    value: str
 
 
 class SettingsOut(BaseModel):

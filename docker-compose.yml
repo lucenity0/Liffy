@@ -106,7 +106,17 @@ services:
     # Only the worker posts; the `api` service never calls the publisher. That
     # is a property of the code, not of this block, so `api` also reading these
     # via its own env_file is harmless.
-    command: celery -A app.workers.celery_app worker --loglevel=info
+    # ⚠ --concurrency is load-bearing, not tuning. Celery's prefork pool
+    # defaults to one process per CPU, and every one of them loads its own copy
+    # of the local embedding model (BAAI/bge-small-en-v1.5, plus onnxruntime).
+    # On an 8-core host that is 8 models in memory: indexing a mid-sized
+    # repository OOM-killed this container repeatedly, and because a killed
+    # worker takes its in-flight task with it, the review or index that was
+    # running simply vanished — no row, no error, nothing in the UI.
+    #
+    # Two is enough to keep a review moving while an index runs. Raise it only
+    # alongside a memory limit you have actually measured.
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
 
   # The scheduler for the weekly eval_scores job (report §8.2). It only decides
   # *when* to enqueue; the `worker` above is what actually runs the task.

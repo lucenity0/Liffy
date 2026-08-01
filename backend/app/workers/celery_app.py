@@ -41,6 +41,11 @@ celery.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # One message in hand at a time. The default lets a worker reserve several
+    # up front, which does nothing for throughput on tasks that take minutes
+    # and costs everything when the process dies: a worker killed while holding
+    # four reserved messages loses all four, not just the one it was running.
+    worker_prefetch_multiplier=1,
     beat_schedule={
         # Report §8.2: "a weekly Celery beat job computes eval_scores for all
         # completed reviews."

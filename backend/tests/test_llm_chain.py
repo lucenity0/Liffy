@@ -463,10 +463,11 @@ def test_claude_code_ignores_thinking_that_talks_about_json(
             _json.dumps({"type": "result", **_cc_payload(result="done")}),
         ]
     )
-    payload, turns = chain._claude_code_stream(transcript)
+    payload, turns, tools = chain._claude_code_stream(transcript)
 
     assert payload is not None
     assert turns == [review]
+    assert tools == []
 
 
 def test_claude_code_survives_a_junk_line_in_the_transcript(
@@ -534,13 +535,63 @@ def test_claude_code_runs_in_a_neutral_cwd(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_claude_code_disables_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty allow-list, not a deny-list naming the tools we know about.
+
+    The deny-list this replaces named thirteen tools and still missed
+    `ReportFindings`, which the CLI reaches for exactly when the prompt looks
+    like a code review. On PR #246 the model filed its findings through it and
+    wrote prose about having done so, so the transcript held no JSON at all and
+    the review failed as `No JSON object found in model output`.
+    """
     llm, calls = _claude_code(monkeypatch)
     llm.complete("sys", "user")
 
     argv = calls["argv"]
-    disabled = argv[argv.index("--disallowed-tools") + 1]
-    for tool in ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task"):
-        assert tool in disabled
+    assert argv[argv.index("--tools") + 1] == ""
+    # A deny-list only has to be out of date once.
+    assert "--disallowed-tools" not in argv
+
+
+def test_claude_code_names_the_tool_it_answered_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a tool ever gets through again, the failure must say which one.
+
+    `No JSON object found in model output` was true and useless — it blamed the
+    output parser, and finding the real cause meant reading the CLI's own
+    session transcript inside the worker container.
+    """
+    from app.llm import chain
+
+    transcript = "\n".join(
+        [
+            _json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "name": "ReportFindings", "input": {}}
+                        ]
+                    },
+                }
+            ),
+            _json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Review complete. 2 findings reported above."}
+                        ]
+                    },
+                }
+            ),
+            _json.dumps({"type": "result", **_cc_payload(result="Review complete.")}),
+        ]
+    )
+    llm, _ = _claude_code(monkeypatch, stdout=transcript)
+
+    with pytest.raises(chain.ClaudeCodeError, match="ReportFindings"):
+        llm.complete("sys", "user")
 
 
 def test_claude_code_replaces_rather_than_appends_the_system_prompt(

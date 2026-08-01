@@ -380,10 +380,17 @@ class ClaudeCodeReviewLLM:
     # Claude Code is an agent; we want a completion. Nothing here should touch
     # the filesystem or the network on our behalf — Liffy already did its own
     # retrieval and hands over the finished prompt.
-    _DISABLED_TOOLS = (
-        "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Task,"
-        "NotebookEdit,TodoWrite,BashOutput,KillShell"
-    )
+    #
+    # An empty allow-list, not a deny-list. The deny-list this replaces named
+    # thirteen tools and still missed `ReportFindings`, which the CLI reaches
+    # for precisely when the prompt looks like a code review — so on a real pull
+    # request the model filed its findings through the tool and wrote prose
+    # about it, leaving no JSON anywhere in the transcript. Observed on PR #246:
+    # `tool_use ReportFindings` -> `2 findings reported.` -> a summary paragraph.
+    #
+    # Enumerating every built-in was never going to hold; the list only has to
+    # be out of date once. `--tools ""` is the CLI's own "disable all tools".
+    _NO_TOOLS = ""
 
     def __init__(
         self,
@@ -454,7 +461,7 @@ class ClaudeCodeReviewLLM:
             # it. Appending would stack Liffy's reviewer persona on top of the
             # coding-agent persona and pay for both.
             "--system-prompt", system,
-            "--disallowed-tools", self._DISABLED_TOOLS,
+            "--tools", self._NO_TOOLS,
             "--model", self.model_name,
         ]
 
@@ -491,7 +498,7 @@ class ClaudeCodeReviewLLM:
                 ClaudeCodeError,
             ) from None
 
-        payload, turns = _claude_code_stream(proc.stdout)
+        payload, turns, tools = _claude_code_stream(proc.stdout)
         if payload is None:
             # Never let a raw JSONDecodeError escape — it reads as a bug in the
             # output parser rather than a CLI that printed something unexpected.
@@ -522,15 +529,32 @@ class ClaudeCodeReviewLLM:
                 f"Claude Code returned no result (stop_reason={payload.get('stop_reason')})"
             )
 
+        # A tool call means the review went somewhere we cannot read, and the
+        # text is a summary of it. Say which tool, in the failure the user
+        # sees. `No JSON object found in model output` was true and useless: it
+        # blamed the parser, and finding `ReportFindings` took reading the CLI's
+        # own session transcript inside the container.
+        if tools and "{" not in text:
+            raise ClaudeCodeError(
+                f"Claude Code answered by calling {', '.join(sorted(set(tools)))} "
+                f"instead of returning the review. Tools are supposed to be off "
+                f"for this provider. It said: {text.strip()[:200]!r}"
+            )
+
         return LLMResponse(text=text, tokens_used=_claude_code_tokens(payload))
 
 
-def _claude_code_stream(stdout: str) -> tuple[dict | None, list[str]]:
-    """Split a `--output-format stream-json` transcript into result and turns.
+def _claude_code_stream(stdout: str) -> tuple[dict | None, list[str], list[str]]:
+    """Split a `--output-format stream-json` transcript into result, turns, tools.
 
-    Returns the terminating ``result`` event and every assistant text block in
-    order. ``None`` for the result means the CLI printed something that was not
-    a transcript at all, which the caller reports as such.
+    Returns the terminating ``result`` event, every assistant text block in
+    order, and the name of every tool the model called. ``None`` for the result
+    means the CLI printed something that was not a transcript at all, which the
+    caller reports as such.
+
+    The tool names exist for the error message. A model that answers by calling
+    a tool leaves no JSON behind, and without the names the failure is
+    indistinguishable from a model that simply wrote prose.
 
     Thinking blocks are skipped deliberately: with `--effort high` the model
     reasons about the schema before emitting it, and reasoning that *discusses*
@@ -542,6 +566,7 @@ def _claude_code_stream(stdout: str) -> tuple[dict | None, list[str]]:
     """
     result: dict | None = None
     turns: list[str] = []
+    tools: list[str] = []
     for line in stdout.splitlines():
         line = line.strip()
         if not line:
@@ -556,9 +581,13 @@ def _claude_code_stream(stdout: str) -> tuple[dict | None, list[str]]:
             result = event
         elif event.get("type") == "assistant":
             for block in (event.get("message") or {}).get("content") or []:
-                if isinstance(block, dict) and block.get("type") == "text":
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
                     turns.append(block.get("text") or "")
-    return result, turns
+                elif block.get("type") == "tool_use":
+                    tools.append(str(block.get("name") or "?"))
+    return result, turns, tools
 
 
 def _claude_code_tokens(payload: dict) -> int:

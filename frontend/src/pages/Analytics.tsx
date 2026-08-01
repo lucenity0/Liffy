@@ -32,7 +32,7 @@ export function Analytics() {
       <header className="flex flex-col gap-1">
         <h1 className="font-hand text-2xl leading-tight text-ink">Analytics</h1>
         <p className="text-base text-ink-dim">
-          How Liffy is performing against the quality targets it was built to.
+          How Liffy is performing against the quality targets it was built to meet.
         </p>
       </header>
 

@@ -54,21 +54,48 @@ env_setting() {
     printf '%s' "${line#*=}" | tr -d "\"'" | sed 's/[[:space:]]*$//'
 }
 
+# Read a setting the settings page has overridden, if the database is up.
+#
+# `.env` is no longer the only place these live. The page writes overrides to
+# the `settings` table and the worker applies them at the start of every task,
+# so a launcher that consults only the dotfile is reading a stale answer for
+# anybody who used the UI — which is the entire point of the UI.
+#
+# Empty when the database is not running yet, which is the honest answer at
+# that moment: the caller falls back to `.env`.
+db_setting() {
+    docker compose ps postgres 2>/dev/null | grep -q "Up\|running" || return 0
+    docker compose exec -T postgres psql -U liffy -d liffy -tAc \
+        "select value from settings where key='$1';" 2>/dev/null \
+        | tr -d ' \r' | head -1 || true
+}
+
+# What the *next review* will actually use: the page's choice if there is one,
+# otherwise the dotfile's.
+resolved_setting() {
+    local value=""
+    value=$(db_setting "$1") || value=""
+    [ -n "$value" ] || value=$(env_setting "$2")
+    printf '%s' "$value"
+}
+
 # Pick the worker image and warn about the one thing that will otherwise fail.
 #
 # The subscription providers authenticate against credentials in the user's
 # home directory, which the container does not have. Selecting `claude_code` in
-# the settings page and then running a plain `docker compose up` used to give a
-# worker with no CLI and no credentials, failing mid-review.
+# the settings page and then running a plain `docker compose up` gives a worker
+# with no CLI and no credentials, and the review dies on `'claude' is not on
+# PATH` — which is exactly what happened when the provider was set in the page
+# and this function only ever looked at `.env`.
 select_compose_files() {
     local provider credential
-    provider=$(env_setting LLM_PROVIDER)
+    provider=$(resolved_setting llm_provider LLM_PROVIDER)
     case "$provider" in
         # The two providers need different things, because the two CLIs offer
         # different things: Claude Code reads a token from the environment,
         # Codex only reads a credential directory.
-        claude_code) credential=$(env_setting CLAUDE_CODE_OAUTH_TOKEN) ;;
-        codex)       credential=$(env_setting CODEX_HOME) ;;
+        claude_code) credential=$(resolved_setting claude_code_oauth_token CLAUDE_CODE_OAUTH_TOKEN) ;;
+        codex)       credential=$(resolved_setting codex_home CODEX_HOME) ;;
         *)           return 0 ;;
     esac
 

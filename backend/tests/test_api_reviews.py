@@ -128,29 +128,44 @@ def test_unauthenticated_request_returns_401(seeded, method: str, path: str) -> 
 
 def test_list_reviews_newest_first_with_join_fields(seeded) -> None:
     body = client.get("/reviews", headers=seeded["headers"]).json()
-    assert [r["summary"] for r in body] == ["new", "old"]
-    assert body[0]["pr_number"] == 7
-    assert body[0]["repo_full_name"] == "octo/demo"
+    assert [r["summary"] for r in body["items"]] == ["new", "old"]
+    assert body["items"][0]["pr_number"] == 7
+    assert body["items"][0]["repo_full_name"] == "octo/demo"
 
 
 def test_list_reviews_excludes_other_users_reviews(seeded) -> None:
     body = client.get("/reviews", headers=seeded["headers"]).json()
 
-    assert {r["summary"] for r in body} == {"new", "old"}
-    assert all(r["repo_full_name"] == "octo/demo" for r in body)
+    assert {r["summary"] for r in body["items"]} == {"new", "old"}
+    assert all(r["repo_full_name"] == "octo/demo" for r in body["items"])
+    # The stranger's two reviews must not be counted either. A total that sees
+    # rows the page cannot is the same leak, just quieter.
+    assert body["total"] == 2
 
 
 def test_list_reviews_pagination(seeded) -> None:
     headers = seeded["headers"]
-    assert len(client.get("/reviews?limit=1", headers=headers).json()) == 1
-    assert client.get("/reviews?limit=1&offset=1", headers=headers).json()[0]["summary"] == "old"
+    assert len(client.get("/reviews?limit=1", headers=headers).json()["items"]) == 1
+    page_two = client.get("/reviews?limit=1&offset=1", headers=headers).json()
+    assert page_two["items"][0]["summary"] == "old"
     assert client.get("/reviews?limit=0", headers=headers).status_code == 422
+
+
+def test_list_reviews_total_ignores_the_page_window(seeded) -> None:
+    """``total`` describes the whole set, not the slice ``limit`` asked for.
+
+    This is the point of the envelope: without it a caller cannot tell a full
+    page that is the last one from a full page with more behind it.
+    """
+    body = client.get("/reviews?limit=1", headers=seeded["headers"]).json()
+    assert len(body["items"]) == 1
+    assert body["total"] == 2
 
 
 def test_list_reviews_omits_raw_diff(seeded) -> None:
     # Diffs are large; the list must stay light.
     body = client.get("/reviews", headers=seeded["headers"]).json()
-    assert all("raw_diff" not in item for item in body)
+    assert all("raw_diff" not in item for item in body["items"])
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────
@@ -313,7 +328,7 @@ def test_review_list_exposes_tokens_used(seeded) -> None:
     """On the list too, so a future analytics page can aggregate without an
     N+1 back to the detail endpoint."""
     body = client.get("/reviews", headers=seeded["headers"]).json()
-    newest = body[0]
+    newest = body["items"][0]
 
     assert newest["tokens_used"] == 20
     assert newest["duration_ms"] == 1234
@@ -342,7 +357,7 @@ def test_legacy_review_without_metrics_serializes(seeded) -> None:
 
 def test_legacy_review_without_metrics_serializes_in_the_list(seeded) -> None:
     body = client.get("/reviews", headers=seeded["headers"]).json()
-    oldest = body[1]
+    oldest = body["items"][1]
 
     assert oldest["summary"] == "old"
     assert oldest["duration_ms"] is None

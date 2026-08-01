@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -12,7 +12,13 @@ from app.models.pull_request import PullRequest
 from app.models.repository import Repository
 from app.models.review import Review
 from app.models.user import User
-from app.schemas.review import ReviewCommentOut, ReviewDetailOut, ReviewListItem, ReviewOut
+from app.schemas.review import (
+    ReviewCommentOut,
+    ReviewDetailOut,
+    ReviewListItem,
+    ReviewListPage,
+    ReviewOut,
+)
 from app.services.review_service import get_review_with_comments
 from app.workers import review_worker
 
@@ -59,32 +65,44 @@ def trigger_review_manual(
     }
 
 
-@router.get("/reviews", response_model=list[ReviewListItem])
+@router.get("/reviews", response_model=ReviewListPage)
 def list_reviews(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[ReviewListItem]:
+) -> ReviewListPage:
     # The ownership filter rides the join this query already performed rather
     # than costing a second round trip per row.
-    rows = db.execute(
+    owned = (
         select(Review, PullRequest.github_pr_number, Repository.full_name)
         .join(PullRequest, Review.pr_id == PullRequest.id)
         .join(Repository, PullRequest.repo_id == Repository.id)
         .where(Repository.user_id == user.id)
-        .order_by(Review.created_at.desc())
-        .limit(limit)
-        .offset(offset)
+    )
+
+    rows = db.execute(
+        owned.order_by(Review.created_at.desc()).limit(limit).offset(offset)
     ).all()
-    return [
-        ReviewListItem(
-            **ReviewOut.model_validate(review).model_dump(),
-            pr_number=pr_number,
-            repo_full_name=full_name,
-        )
-        for review, pr_number, full_name in rows
-    ]
+
+    # Counted over the same selectable, minus the ordering and the window, so
+    # the total can never describe a different set than the page does. A second
+    # hand-written query would be free to drift away from the first.
+    total = db.scalar(
+        select(func.count()).select_from(owned.order_by(None).subquery())
+    )
+
+    return ReviewListPage(
+        items=[
+            ReviewListItem(
+                **ReviewOut.model_validate(review).model_dump(),
+                pr_number=pr_number,
+                repo_full_name=full_name,
+            )
+            for review, pr_number, full_name in rows
+        ],
+        total=total or 0,
+    )
 
 
 def _detail(db: Session, review_id: uuid.UUID, user: User) -> ReviewDetailOut:

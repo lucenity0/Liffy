@@ -107,6 +107,29 @@ class ReviewListItem(ReviewOut):
     repo_full_name: str
 
 
+class ReviewListPage(BaseModel):
+    """One page of reviews, plus how many there are in total.
+
+    An envelope rather than a bare list because a caller cannot paginate
+    honestly without a count: a page that happens to be exactly ``limit`` long
+    is indistinguishable from one with more behind it, so the frontend's
+    "a full page implies there may be more" heuristic offers a Next that leads
+    to an empty page. Filters make that worse, not better — a filtered set
+    lands on a page boundary far more often than the unfiltered table does.
+
+    ``total`` counts the *filtered* set, ignoring limit and offset. Not the
+    rows on this page, and not the whole table.
+
+    Considered and rejected: returning the count in an ``X-Total-Count``
+    header. Less invasive, but it puts half the payload outside the typed
+    schema, and the frontend's MSW handlers would then have to remember to set
+    a header to stay honest.
+    """
+
+    items: list[ReviewListItem]
+    total: int
+
+
 class ReviewDetailOut(ReviewOut):
     # Same join the list does. Without these a review fetched by id cannot say
     # which PR it belongs to, and the detail page is most often reached by a

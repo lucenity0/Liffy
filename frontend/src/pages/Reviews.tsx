@@ -90,8 +90,13 @@ export function Reviews() {
       <header className="flex flex-wrap items-start gap-3">
         <div className="flex flex-col gap-1">
           <h1 className="font-hand text-2xl leading-tight text-ink">Reviews</h1>
+          {/* The standing description claims two things a filtered view
+              breaks — "everything", and the order. Both are visible on
+              screen, so saying them wrongly is worse than not saying them. */}
           <p className="text-base text-ink-dim">
-            Everything Liffy has read, newest first.
+            {filtered
+              ? "A filtered view. Clear the filters to see everything."
+              : "Everything Liffy has read, newest first."}
           </p>
         </div>
         <Button

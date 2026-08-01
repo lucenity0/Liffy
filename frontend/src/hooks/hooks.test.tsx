@@ -18,6 +18,7 @@ import { useCommentFeedback } from "./useCommentFeedback";
 import { useConnectRepo, useDisconnectRepo } from "./useRepoMutations";
 import { useTriggerReview } from "./useReviewMutations";
 import { THEME_KEY, useTheme } from "./useTheme";
+import { useDebouncedValue } from "./useDebouncedValue";
 import type { QueryClient } from "@tanstack/react-query";
 import type { ReviewDetailOut } from "@/types/api";
 
@@ -93,6 +94,51 @@ describe("useReviews", () => {
     expect(failed.result.current.items).toHaveLength(1);
     expect(completed.result.current.items).toHaveLength(2);
     expect(failed.result.current.items[0].status).toBe("failed");
+  });
+});
+
+describe("useDebouncedValue", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("collapses a burst of changes into the last one", () => {
+    const { result, rerender } = renderHook(
+      ({ value }) => useDebouncedValue(value, 300),
+      { initialProps: { value: "2" } },
+    );
+
+    // Typing "203": three renders inside the window. Only the last survives,
+    // which is what keeps the reviews list from asking about PR 2 and PR 20
+    // on the way to 203.
+    expect(result.current).toBe("2");
+    rerender({ value: "20" });
+    act(() => void vi.advanceTimersByTime(100));
+    rerender({ value: "203" });
+    act(() => void vi.advanceTimersByTime(100));
+    // Still the initial value — nothing has been still for long enough yet.
+    expect(result.current).toBe("2");
+
+    act(() => void vi.advanceTimersByTime(300));
+    expect(result.current).toBe("203");
+  });
+
+  it("does not settle a value the caller has already left behind", () => {
+    const { result, unmount, rerender } = renderHook(
+      ({ value }) => useDebouncedValue(value, 300),
+      { initialProps: { value: "a" } },
+    );
+
+    rerender({ value: "b" });
+    unmount();
+    // The pending timer is cleared on unmount rather than firing into a
+    // component that is gone.
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(result.current).toBe("a");
   });
 });
 

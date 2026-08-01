@@ -100,6 +100,52 @@ Embeddings are local by default and never need a key, whichever LLM you pick.
 
 <img src="./assets/divider.svg" width="100%" alt="" />
 
+### `// where your code goes`
+
+Liffy is self-hosted, so there is no Liffy server and no account: **the maintainers
+never receive your code, and neither does any Liffy-operated service, because none
+exists.** Everything runs on infrastructure you control.
+
+Whether your code leaves your machine at all is decided by one setting —
+`LLM_PROVIDER`.
+
+| `LLM_PROVIDER` | Does your code leave your machine? |
+|---|---|
+| **Ollama** (local, via `openai` + a localhost `OPENAI_BASE_URL`) | **No.** The model runs on your hardware. Liffy makes no outbound request carrying your code. Works with no network at all. |
+| **Gemini** (`openai` + Gemini's compat URL) | **Yes** — to Google, under [their terms](https://ai.google.dev/gemini-api/terms). Note that free-tier Gemini may be used to improve their models. |
+| **Anthropic** (`anthropic`) | **Yes** — to Anthropic, under [their terms](https://www.anthropic.com/legal/commercial-terms). |
+| **Claude Code** (`claude_code`) | **Yes** — the CLI runs locally but still calls Anthropic, under your existing subscription's terms. Running locally is not the same as staying local. |
+
+**Embeddings are always local.** The `local` embedding provider is the default and
+runs on your machine, so indexing your codebase never sends anything anywhere,
+whichever review model you choose.
+
+<details>
+<summary><sub>what exactly gets sent, when you use a hosted provider</sub></summary>
+
+<br />
+
+Per review, once, at review time:
+
+- the pull request title
+- the **diff** — the actual added and removed lines of the changed files
+- the **retrieved context** — a handful of chunks of your existing source code
+  that the index matched as relevant, which by design are files *not* in the
+  diff (that is the entire point of the retrieval step)
+
+Not sent: your GitHub token, your other repositories, your `.env`, or any part of
+the codebase the retrieval step did not select.
+
+Your repositories are indexed into a vector store on your own disk
+(`chroma/`, gitignored). That index never leaves the machine.
+
+</details>
+
+If you are reviewing proprietary code and cannot send it to a third party, use
+Ollama. That path is free, needs no account, and is the reason it is supported.
+
+<img src="./assets/divider.svg" width="100%" alt="" />
+
 ### `// contributing`
 
 PR-based workflow — no direct pushes to `main`.
@@ -110,6 +156,10 @@ commits   feat: add github webhook endpoint
 rules     1 approval min · CI green · small PRs · say what/why/how-to-test
 ```
 
+Full guide, including the exact commands CI runs: **[CONTRIBUTING.md](CONTRIBUTING.md)**
+
+Found a security problem? Please don't open a public issue — see **[SECURITY.md](SECURITY.md)**.
+
 <img src="./assets/divider.svg" width="100%" alt="" />
 
 ### `// docs`
@@ -118,4 +168,8 @@ rules     1 approval min · CI green · small PRs · say what/why/how-to-test
 
 <br />
 
-<div align="center"><sub>built by <a href="https://github.com/lucenity0">@lucenity0</a> · your code never leaves your machine — that's the whole point</sub></div>
+<div align="center"><sub><a href="LICENSE">MIT licensed</a> &nbsp;·&nbsp; <a href="CONTRIBUTING.md">contributing</a> &nbsp;·&nbsp; <a href="SECURITY.md">security policy</a></sub></div>
+
+<br />
+
+<div align="center"><sub>built by <a href="https://github.com/lucenity0">@lucenity0</a> · self-hosted · run it against a local model and your code never leaves your machine</sub></div>

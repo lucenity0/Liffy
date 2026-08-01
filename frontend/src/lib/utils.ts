@@ -110,6 +110,18 @@ export function formatPercent(rate: number): string {
   return `${Math.round(rate * 100)}%`;
 }
 
+/**
+ * `72400` → `"72.4s"`, `90000` → `"90s"`.
+ *
+ * Seconds because report §1's target is written in seconds, and a reader
+ * comparing 72,400 against 90,000 is doing arithmetic the page should have
+ * done. One decimal, dropped when it is `.0`, so a round target does not
+ * render as "90.0s" beside a measured "72.4s" and imply false precision.
+ */
+export function formatSeconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1).replace(/\.0$/, "")}s`;
+}
+
 /** Elapsed time between two API timestamps, e.g. "42s" or "3m 12s". */
 export function formatDuration(fromIso: string, toIso: string): string {
   const ms = ensureUtc(toIso).getTime() - ensureUtc(fromIso).getTime();

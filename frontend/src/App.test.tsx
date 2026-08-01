@@ -27,7 +27,7 @@ function renderAt(path: string, auth?: Partial<AuthContextValue>) {
 }
 
 describe("app shell", () => {
-  it("renders the wordmark and both primary tabs", () => {
+  it("renders the wordmark and all three primary tabs", () => {
     renderAt("/");
 
     expect(screen.getByRole("link", { name: /liffy — home/i })).toBeInTheDocument();
@@ -36,6 +36,23 @@ describe("app shell", () => {
     expect(nav).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Reviews" })).toBeInTheDocument();
+    // Third since #200. Still a tab strip, still no sidebar.
+    expect(screen.getByRole("link", { name: "Analytics" })).toBeInTheDocument();
+  });
+
+  it("reaches analytics from the nav, and marks it current", () => {
+    renderAt("/analytics");
+
+    expect(screen.getByRole("link", { name: "Analytics" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("heading", { name: "Analytics" })).toBeInTheDocument();
+  });
+
+  it("titles the analytics route from its handle", () => {
+    renderAt("/analytics");
+    expect(document.title).toBe("Analytics · Liffy");
   });
 
   it("marks the active tab with aria-current", () => {
@@ -93,6 +110,21 @@ describe("route protection", () => {
     expect(
       await screen.findByRole("link", { name: "Continue with GitHub" }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
+  });
+
+  /**
+   * The page shows aggregate data about private repositories, so it belongs
+   * inside the guard. Asserted through the real route tree because the thing
+   * that goes wrong is which subtree a route was added to, not the guard.
+   */
+  it("sends an anonymous visitor away from /analytics", async () => {
+    renderAt("/analytics", { status: "anonymous", user: null });
+
+    expect(
+      await screen.findByRole("link", { name: "Continue with GitHub" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Analytics" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
   });
 

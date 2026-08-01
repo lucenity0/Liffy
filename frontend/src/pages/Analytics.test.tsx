@@ -1,0 +1,234 @@
+import { screen, within } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { describe, expect, it } from "vitest";
+import { server } from "@/mocks/server";
+import {
+  fixtureAnalyticsEmpty,
+  fixtureAnalyticsPartial,
+  fixtureAnalyticsSummary,
+} from "@/mocks/fixtures";
+import { renderWithProviders } from "@/test/renderWithProviders";
+import type { AnalyticsSummaryOut } from "@/types/api";
+import { Analytics } from "./Analytics";
+
+function withSummary(summary: AnalyticsSummaryOut) {
+  server.use(
+    http.get("*/analytics/summary", () => HttpResponse.json(summary)),
+  );
+}
+
+function render() {
+  return renderWithProviders(<Analytics />);
+}
+
+const tile = (name: string) => screen.findByRole("region", { name });
+
+describe("Analytics — populated", () => {
+  it("renders a tile for every metric §8.1 sets a target for", async () => {
+    render();
+
+    expect(await tile("Approval rate")).toBeInTheDocument();
+    expect(await tile("Time to review")).toBeInTheDocument();
+    expect(await tile("Token efficiency")).toBeInTheDocument();
+  });
+
+  it("shows the run counts", async () => {
+    render();
+
+    const counts = await tile("Reviews run");
+    expect(within(counts).getByText("14")).toBeInTheDocument();
+    expect(within(counts).getByText("12")).toBeInTheDocument();
+    expect(within(counts).getByText("2")).toBeInTheDocument();
+  });
+
+  it("marks approval rate as met when it is above target", async () => {
+    render();
+
+    const approval = await tile("Approval rate");
+    expect(within(approval).getByText("83%")).toBeInTheDocument();
+    expect(within(approval).getByText("Meets target")).toBeInTheDocument();
+  });
+
+  it("marks approval rate as missed when it is below target", async () => {
+    withSummary({
+      ...fixtureAnalyticsSummary,
+      approval_rate: {
+        ...fixtureAnalyticsSummary.approval_rate,
+        value: 0.4,
+        met: false,
+      },
+    });
+    render();
+
+    const approval = await tile("Approval rate");
+    expect(within(approval).getByText("40%")).toBeInTheDocument();
+    expect(within(approval).getByText("Below target")).toBeInTheDocument();
+  });
+
+  /**
+   * The headline test. `met` is `null` exactly when `value` is, and treating
+   * that as `false` tells someone they are failing a target nobody has
+   * measured — the same `null`-versus-zero distinction #191 and #199 preserve,
+   * carried one layer further out.
+   */
+  it("marks a null rate as unknown, not as missed", async () => {
+    withSummary(fixtureAnalyticsPartial);
+    render();
+
+    const approval = await tile("Approval rate");
+    expect(within(approval).getByText("Not measured yet")).toBeInTheDocument();
+    expect(within(approval).queryByText("Below target")).not.toBeInTheDocument();
+    expect(within(approval).queryByText("Meets target")).not.toBeInTheDocument();
+  });
+
+  /**
+   * `?? 0` on any rate renders a plausible-looking `0%` and would pass every
+   * other assertion in this file, so the absence of that string across the
+   * whole page is the thing being checked.
+   */
+  it("renders no 0% anywhere when the rates are null", async () => {
+    withSummary(fixtureAnalyticsPartial);
+    render();
+
+    await tile("Approval rate");
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^0%$/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The state the page spends most of its life in: durations land the moment
+   * a review finishes, ratings only when somebody clicks. Per-tile unknowns,
+   * not a whole-page empty state — building it the other way round is how a
+   * real duration ends up hidden behind "no data".
+   */
+  it("renders the partial state: a real duration beside an unknown approval", async () => {
+    withSummary(fixtureAnalyticsPartial);
+    render();
+
+    const duration = await tile("Time to review");
+    expect(within(duration).getByText("72.4s")).toBeInTheDocument();
+    expect(within(duration).getByText("Meets target")).toBeInTheDocument();
+
+    const approval = await tile("Approval rate");
+    expect(within(approval).getByText("Not measured yet")).toBeInTheDocument();
+    // The page is emphatically not empty.
+    expect(screen.queryByText(/nothing to measure yet/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The contract exists so §8.1 can move without a frontend release. A
+   * hardcoded `0.7` passes every other test in this file, because every other
+   * fixture happens to use the real target.
+   */
+  it("reads targets from the response rather than hardcoding them", async () => {
+    withSummary({
+      ...fixtureAnalyticsSummary,
+      approval_rate: {
+        ...fixtureAnalyticsSummary.approval_rate,
+        // A target §8.1 does not set, met by a value that would fail the real
+        // one — so a hardcoded 0.7 renders the wrong badge as well as the
+        // wrong number.
+        value: 0.45,
+        target: 0.4,
+        met: true,
+      },
+    });
+    render();
+
+    const approval = await tile("Approval rate");
+    expect(within(approval).getByText(/Target > 40%/)).toBeInTheDocument();
+    expect(within(approval).getByText("Meets target")).toBeInTheDocument();
+    expect(within(approval).queryByText(/70%/)).not.toBeInTheDocument();
+  });
+
+  it("shows each metric's sample size next to it", async () => {
+    render();
+
+    expect(
+      within(await tile("Approval rate")).getByText(/6 rated comments/),
+    ).toBeInTheDocument();
+    // Smaller than reviews_completed, because total_ms is NULL on manual
+    // triggers and re-reviews.
+    expect(
+      within(await tile("Time to review")).getByText(/9 reviews with a receipt/),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * §8.1 asks for both, but they are one number: a thumbs-down records no
+   * reason, so false positives are exactly `1 - approval` (ADR 004). The
+   * figure is on the page; the pass/fail judgement is made once, on approval,
+   * so the 70–80% band cannot show a pass and a fail for the same clicks.
+   */
+  it("shows the false-positive rate as the complement, not as a second verdict", async () => {
+    render();
+
+    const approval = await tile("Approval rate");
+    expect(within(approval).getByText(/17%/)).toBeInTheDocument();
+    expect(within(approval).getByText(/inverse of the approval rate/i)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "False positive rate" })).toBeNull();
+    // One verdict on the page for these two figures, not two.
+    expect(screen.getAllByText("Meets target")).toHaveLength(2); // approval + time
+  });
+
+  /**
+   * `duration_ms` measures run_review's internals and cannot see time spent
+   * queued. Presenting it as time-to-review would put a number in the report
+   * the code does not measure.
+   */
+  it("names the pipeline figure separately and says the difference is queue wait", async () => {
+    render();
+
+    const duration = await tile("Time to review");
+    expect(within(duration).getByText("41.2s")).toBeInTheDocument();
+    expect(within(duration).getByText(/queue wait/i)).toBeInTheDocument();
+  });
+
+  it("renders token efficiency without a target, since §8.1 sets none", async () => {
+    render();
+
+    const efficiency = await tile("Token efficiency");
+    expect(within(efficiency).getByText("0.033")).toBeInTheDocument();
+    expect(within(efficiency).queryByText(/target/i)).not.toBeInTheDocument();
+    expect(within(efficiency).queryByText("Meets target")).not.toBeInTheDocument();
+  });
+});
+
+describe("Analytics — the other three states", () => {
+  it("renders an empty state for an account with no reviews", async () => {
+    withSummary(fixtureAnalyticsEmpty);
+    render();
+
+    expect(
+      await screen.findByText("Nothing to measure yet."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /connect a repository/i }),
+    ).toHaveAttribute("href", "/");
+    // No tiles full of dashes behind it — that reads as broken, not as new.
+    expect(screen.queryByRole("region", { name: "Approval rate" })).toBeNull();
+  });
+
+  it("renders skeletons in the tile layout while loading", () => {
+    render();
+
+    // Synchronously, before the request resolves: the tile count is known
+    // ahead of time, so the page holds its shape instead of jumping.
+    expect(screen.queryByRole("region", { name: "Approval rate" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Analytics" })).toBeInTheDocument();
+  });
+
+  it("shows an error note without taking the page heading with it", async () => {
+    server.use(
+      http.get("*/analytics/summary", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    render();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("boom");
+    expect(within(alert).getByRole("button", { name: /try again/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Analytics" })).toBeInTheDocument();
+  });
+});

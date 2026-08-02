@@ -1,11 +1,19 @@
-# Overlay for the subscription-backed providers (LLM_PROVIDER=claude_code or
-# codex). Use it alongside the base file, never on its own:
+# Overlay giving the worker the subscription CLIs. Use it alongside the base
+# file, never on its own:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
 #
 # What it changes: the worker — the only service that calls a model — is built
 # from an image that has the `claude` and `codex` CLIs installed. Everything
 # else is inherited.
+#
+# `./liffy.sh` applies this unconditionally, not only for LLM_PROVIDER=claude_code
+# or codex. One worker that can serve every provider is what lets the settings
+# page switch provider without a rebuild: the review task already re-reads
+# `llm_provider` from the database at the start of every run, so with all the
+# CLIs present there is nothing left for a restart to change. `LIFFY_SLIM_WORKER=1`
+# opts out, for someone who knows they will only ever use an API key and would
+# rather not carry ~1.6GB of Node.
 #
 # Why this exists at all: `liffy.sh` runs the worker in Docker, and the CLIs
 # authenticate against credentials in the user's *home directory*, which does
@@ -32,10 +40,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile.subscription
 
-    # ── LLM_PROVIDER=codex only ───────────────────────────────────────────────
-    # liffy.sh adds docker-compose.codex.yml automatically for Codex. It is a
-    # separate overlay because the worker can read the host's ChatGPT access,
-    # refresh, and ID tokens; Claude users should not expose ~/.codex.
+    # ── Codex credentials ─────────────────────────────────────────────────────
+    # Not here: docker-compose.codex.yml carries the ~/.codex mount, and
+    # liffy.sh adds it whenever that directory exists on the host. It stays a
+    # separate file for two reasons — the mount source has to exist before
+    # Compose sees it (Compose would otherwise create it root-owned, and it
+    # cannot express the condition itself), and LIFFY_NO_CODEX_MOUNT=1 needs
+    # something to switch off for anyone who does not want the worker holding
+    # ChatGPT access, refresh, and ID tokens on non-Codex runs.
     # For a manual Docker invocation, add that file as a third -f argument.
 
   # The Codex overlay also mounts the credential directory into `backend`,

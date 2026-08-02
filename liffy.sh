@@ -25,8 +25,7 @@ FRONTEND_LOG_FILE="$LIFFY_ROOT/.liffy-frontend.log"
 # actually execute reviews (worker) and the weekly scheduler (beat).
 ALL_SERVICES=(postgres redis chromadb backend worker beat)
 
-# Which compose files are in play. The subscription overlay gets appended when
-# backend/.env selects a CLI provider — see select_compose_files.
+# Which compose files are in play — see select_compose_files.
 COMPOSE_FILES=(-f docker-compose.yml)
 
 compose() { docker compose "${COMPOSE_FILES[@]}" "$@"; }
@@ -79,15 +78,62 @@ resolved_setting() {
     printf '%s' "$value"
 }
 
-# Pick the worker image and warn about the one thing that will otherwise fail.
+# Build the compose file list. Deliberately independent of which provider is
+# selected — that is the whole point.
 #
-# The subscription providers authenticate against credentials in the user's
-# home directory, which the container does not have. Selecting `claude_code` in
-# the settings page and then running a plain `docker compose up` gives a worker
-# with no CLI and no credentials, and the review dies on `'claude' is not on
-# PATH` — which is exactly what happened when the provider was set in the page
-# and this function only ever looked at `.env`.
+# It used to key off the resolved provider: subscription overlay only for
+# `claude_code`/`codex`, Codex overlay only for `codex`. That made the *worker
+# container* single-provider, so switching provider in the settings page meant
+# re-running the launcher to get a container that could serve the new choice —
+# and switching between the API-key and subscription families swapped a 949MB
+# image for a 2.5GB one. Meanwhile the code underneath was already fully
+# runtime-dispatched: `review_pr_task` calls `refresh_overrides()` before
+# `get_llm()`, so the provider is re-read from the database at the top of every
+# single task. Only the container was pinned.
+#
+# So build one worker that can serve every provider and let that existing
+# dispatch decide. A provider change in the page now applies to the next review
+# with no restart at all.
+#
+# Idempotent: rebuilds the array rather than appending to it, so the repeated
+# calls across the subcommands below cannot stack duplicate -f flags.
 select_compose_files() {
+    COMPOSE_FILES=(-f docker-compose.yml)
+
+    # The CLIs cost ~1.6GB of Node and two npm packages on top of the plain
+    # worker. Worth it as the default, because the alternative is a rebuild
+    # every time somebody touches the provider dropdown — but somebody who
+    # knows they will only ever use an API key can decline.
+    if [ "${LIFFY_SLIM_WORKER:-}" = "1" ]; then
+        warn "LIFFY_SLIM_WORKER=1 — worker built without the claude/codex CLIs. Selecting a subscription provider will fail until you unset it."
+    else
+        COMPOSE_FILES+=(-f docker-compose.subscription.yml)
+    fi
+
+    # Mounted whenever the host has a Codex store, not only when Codex is the
+    # selected provider, so that selecting it later needs no restart.
+    #
+    # Guarded on existence because Compose creates a missing bind-mount source
+    # as a root-owned directory — an unrequested ~/.codex on a machine that
+    # never installed the CLI. Compose cannot express the condition itself,
+    # which is why it lives here rather than in the overlay.
+    if [ "${LIFFY_NO_CODEX_MOUNT:-}" = "1" ]; then
+        :
+    elif [ -d "$HOME/.codex" ]; then
+        COMPOSE_FILES+=(-f docker-compose.codex.yml)
+    fi
+}
+
+# Warn about the one thing that will otherwise fail: a subscription provider
+# selected with no credential to authenticate it.
+#
+# Called *after* the stack is up, unlike the compose-file selection it used to
+# be fused with. That fusion forced this check to run before `docker compose
+# up`, where on a cold start Postgres is not yet running and `resolved_setting`
+# can only see backend/.env — so a provider chosen in the settings page read as
+# absent. Nothing about the compose files depends on the provider any more, so
+# the check is free to run at the point where the database can actually answer.
+check_provider_credentials() {
     local provider credential
     provider=$(resolved_setting llm_provider LLM_PROVIDER)
     case "$provider" in
@@ -95,28 +141,23 @@ select_compose_files() {
         # different things: Claude Code reads a token from the environment,
         # Codex only reads a credential directory.
         claude_code) credential=$(resolved_setting claude_code_oauth_token CLAUDE_CODE_OAUTH_TOKEN) ;;
-        codex)
-            credential=$(resolved_setting codex_home CODEX_HOME)
-            # Codex has no token environment variable. The dedicated overlay
-            # mounts the host's signed-in credential directory and sets
-            # CODEX_HOME inside both containers. Keep it separate from the
-            # Claude overlay so Claude users do not expose ~/.codex.
-            COMPOSE_FILES+=(-f docker-compose.codex.yml)
-            ;;
+        codex)       credential=$(resolved_setting codex_home CODEX_HOME) ;;
         *)           return 0 ;;
     esac
 
-    COMPOSE_FILES+=(-f docker-compose.subscription.yml)
-    log "LLM_PROVIDER=$provider — building the worker with the CLIs installed"
+    if [ "${LIFFY_SLIM_WORKER:-}" = "1" ]; then
+        warn "LLM_PROVIDER=$provider needs the CLIs, but LIFFY_SLIM_WORKER=1 built the worker without them. Unset it and rerun ./liffy.sh."
+        return 0
+    fi
 
-    if [ -z "$credential" ]; then
-        if [ "$provider" = "claude_code" ]; then
-            warn "CLAUDE_CODE_OAUTH_TOKEN is empty in backend/.env. Run 'claude setup-token' on this machine and paste the result there — the worker will refuse to start without it."
-        else
-            # liffy.sh supplies CODEX_HOME and the bind mount through the
-            # Codex overlay. Only warn when the host has no credential store.
-            [ -f "$HOME/.codex/auth.json" ] || warn "No ~/.codex/auth.json found. Run 'codex login' on this machine before starting the Codex worker."
-        fi
+    [ -n "$credential" ] && return 0
+
+    if [ "$provider" = "claude_code" ]; then
+        warn "CLAUDE_CODE_OAUTH_TOKEN is empty in backend/.env. Run 'claude setup-token' on this machine and paste the result there — the worker will refuse to start without it."
+    elif [ ! -d "$HOME/.codex" ]; then
+        warn "No ~/.codex on this machine, so the worker has no Codex credentials mounted. Run 'codex login' here, then rerun ./liffy.sh."
+    elif [ ! -f "$HOME/.codex/auth.json" ]; then
+        warn "No ~/.codex/auth.json found. Run 'codex login' on this machine before starting the Codex worker."
     fi
 }
 
@@ -220,6 +261,9 @@ cmd_up() {
     echo "  Swagger   →  http://localhost:8000/docs"
     echo ""
     warn "Real reviews will call your configured LLM and (if POST_REVIEWS_TO_GITHUB=true) post to GitHub — check backend/.env before connecting a real repo."
+    # After the stack is up, so the settings page's choice is readable — see
+    # the note on the function.
+    check_provider_credentials
     suggest_subscription_providers
     echo "  Stop:            ./liffy.sh down"
     echo "  Check data:      ./liffy.sh check"

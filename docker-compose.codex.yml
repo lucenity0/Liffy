@@ -1,7 +1,20 @@
-# Docker-only Codex support. liffy.sh adds this overlay automatically when
-# LLM_PROVIDER=codex is selected. Keep it separate from the general
-# subscription overlay so Claude users do not grant the worker access to the
-# host's Codex credential store.
+# Docker-only Codex support. liffy.sh adds this overlay whenever ~/.codex
+# exists on the host — not only when LLM_PROVIDER=codex is selected, so that
+# selecting Codex in the settings page needs no restart.
+#
+# The consequence, stated plainly: on a machine with a Codex login the worker
+# holds a read-only view of the host's ChatGPT access, refresh, and ID tokens
+# for the whole session, including runs that never invoke Codex. Nothing reads
+# it outside the Codex provider — `_writable_codex_home` only copies the store
+# out when a Codex review actually starts — but the access is there.
+# LIFFY_NO_CODEX_MOUNT=1 declines it, at the cost of a restart when switching
+# to Codex.
+#
+# Kept as its own file rather than folded into the subscription overlay so that
+# opt-out has something to switch off, and because the mount source must exist
+# first: Compose creates a missing bind-mount source as a root-owned directory,
+# which on a machine that never installed the CLI would conjure an unrequested
+# ~/.codex. liffy.sh does the existence check Compose cannot.
 services:
   worker:
     environment:

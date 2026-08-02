@@ -271,6 +271,29 @@
     border-radius: 1px;
   }
 
+  /* Text fields answer focus in their own border instead of with a ring
+     hovering 2px off it.
+
+     Buttons and links only match :focus-visible when the keyboard put focus
+     there, but a text box matches it on a plain click too — browsers assume
+     anyone about to type wants to see where they are typing. So the offset
+     ring fired every single time someone clicked into a field, and on a page
+     built out of hairlines a detached double line reads as damage rather
+     than as focus.
+
+     `--ink`, not `--rule-strong`: hover already goes there, and a focus state
+     that a hovered field is wearing anyway is not a focus state. The ladder
+     is rule → rule-strong (hover) → ink (focus), each step visibly darker
+     than the last, so focus stays plainly visible without floating.
+
+     Checkboxes and radios keep the ring. The UA paints those itself and
+     there is no border of ours to darken, so taking it away would leave them
+     with no focus indicator at all. */
+  :where(input:not([type="checkbox"], [type="radio"]), textarea, select):focus-visible {
+    outline: none;
+    border-color: var(--ink);
+  }
+
   /* Tabular figures everywhere numbers are compared in a column. */
   table,
   time,

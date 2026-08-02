@@ -218,7 +218,7 @@ export function ReportProblem({ query }: { query: string }) {
                   maxLength={120}
                   placeholder={copy!.titlePlaceholder}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full rounded border border-rule bg-card px-3 py-2 text-sm text-ink outline-none placeholder:text-ink-sub focus-visible:border-rule-strong"
+                  className="w-full rounded border border-rule bg-card px-3 py-2 text-sm text-ink placeholder:text-ink-sub"
                 />
               )}
             </Field>
@@ -231,7 +231,7 @@ export function ReportProblem({ query }: { query: string }) {
                   value={body}
                   maxLength={8000}
                   onChange={(e) => setBody(e.target.value)}
-                  className="w-full rounded border border-rule bg-card px-3 py-2 text-sm text-ink outline-none focus-visible:border-rule-strong"
+                  className="w-full rounded border border-rule bg-card px-3 py-2 text-sm text-ink"
                 />
               )}
             </Field>

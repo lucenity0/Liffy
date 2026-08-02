@@ -9,10 +9,12 @@ const TABS: Tab[] = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/reviews", label: "Reviews" },
   { to: "/analytics", label: "Analytics" },
-  // Last, and deliberately so: the first three are *what Liffy has done*,
-  // this one is how it is configured. A settings tab that sat between
-  // Reviews and Analytics would read as another report.
+  // Last two, and deliberately in this order. The first three are *what Liffy
+  // has done*; Settings is how it is configured; Help is about neither — it is
+  // the manual. Each is its own category, which is why they queue at the end
+  // rather than interleaving with the reports.
   { to: "/settings", label: "Settings" },
+  { to: "/help", label: "Help" },
 ];
 
 /**

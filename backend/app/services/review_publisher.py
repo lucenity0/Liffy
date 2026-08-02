@@ -144,24 +144,74 @@ def partition_comments(
     return postable, unanchorable
 
 
+def _overview(
+    summary: str | None,
+    changes: list[str],
+    files: list[tuple[str, str]],
+    comment_count: int,
+) -> str:
+    """The part a reader meets before any finding.
+
+    Shaped as a briefing rather than a paragraph: what this pull request does,
+    then what changed where, then how much Liffy had to say about it. A wall of
+    prose is skimmed; a heading, a short list and a table are read.
+
+    Every section is optional. A model that returned only the prose summary —
+    the older output shape, or a small local model that ignored half the schema
+    — still produces a sensible body here rather than a page of empty headings.
+    """
+    parts = [
+        "## Pull request overview",
+        summary or "_Liffy produced no summary for this review._",
+    ]
+
+    if changes:
+        parts.append("**Changes:**\n" + "\n".join(f"- {c}" for c in changes))
+
+    if files:
+        # Pipes inside a cell would break the table; a path or a sentence
+        # containing one is unusual but not impossible.
+        def cell(text: str) -> str:
+            return text.replace("|", r"\|")
+
+        rows = "\n".join(f"| `{cell(path)}` | {cell(note)} |" for path, note in files)
+        parts.append(
+            "### Reviewed changes\n\n"
+            f"Liffy read {len(files)} changed file{'' if len(files) == 1 else 's'} "
+            f"and left {comment_count} comment{'' if comment_count == 1 else 's'}.\n\n"
+            "| File | Description |\n| --- | --- |\n" + rows
+        )
+    elif comment_count:
+        parts.append(
+            f"Liffy left {comment_count} comment{'' if comment_count == 1 else 's'}."
+        )
+
+    return "\n\n".join(parts)
+
+
 def build_review_body(
     summary: str | None,
     *,
     event: ReviewEvent,
     unanchorable: list[ReviewComment],
     supersedes_url: str | None = None,
+    changes: list[str] | None = None,
+    files: list[tuple[str, str]] | None = None,
+    comment_count: int = 0,
 ) -> str:
     """The review's top-level body.
 
     Carries three things the inline comments cannot:
 
-    - the summary
+    - the overview — what the pull request does, what changed where
     - why the event is not the verdict, when it is not
     - **the findings that could not be anchored**, as a plain-text appendix.
       Dropping them silently loses real findings; a comment on a line GitHub
       will not accept is still a comment worth reading.
     """
-    parts: list[str] = [summary or "_Liffy produced no summary for this review._"]
+    parts: list[str] = [
+        _overview(summary, changes or [], files or [], comment_count)
+    ]
 
     if event.downgrade_note:
         parts.append(event.downgrade_note)

@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
 import { formatRelative } from "@/lib/utils";
@@ -68,9 +69,21 @@ export function ReviewFailed({ review }: { review: ReviewDetailOut }) {
           This review did not finish.
         </p>
         {reason ? (
-          <p className="max-w-prose whitespace-pre-wrap break-words text-base text-ink">
-            {reason}
-          </p>
+          <>
+            <p className="max-w-prose whitespace-pre-wrap break-words text-base text-ink">
+              {reason}
+            </p>
+            {/* The reason is the best search anyone could type, and they are
+                already holding it. Sending the text straight to /help turns a
+                dead end into one click — this is the payoff for /help being a
+                page with a URL rather than a modal. */}
+            <Link
+              to={`/help?q=${encodeURIComponent(reason.slice(0, 120))}`}
+              className="w-fit text-sm text-ink-dim underline decoration-rule underline-offset-4 hover:text-ink"
+            >
+              What does this mean? →
+            </Link>
+          </>
         ) : null}
         <p className="max-w-prose text-base text-ink-dim">
           The worker gave up

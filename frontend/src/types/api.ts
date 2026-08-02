@@ -49,11 +49,27 @@ export interface RepoStatusOut {
   last_indexed_files_seen: number | null;
 }
 
+/** The structured half of a review's overview. Null when the model wrote only prose. */
+export interface SummaryDetail {
+  changes?: string[];
+  files?: { path: string; description: string }[];
+}
+
 export interface ReviewOut {
   id: string;
   pr_id: string;
   status: ReviewStatus;
   summary: string | null;
+  /**
+   * What the pull request does, and what changed where — everything the
+   * overview renders *around* `summary`.
+   *
+   * Null on every review written before this landed, and on any model that
+   * answered with the older three-field output. Treat it as absent, never as
+   * empty: "the model was not asked" and "the model found nothing to say" are
+   * different facts.
+   */
+  summary_detail: SummaryDetail | null;
   verdict: Verdict | null;
   model_used: string | null;
   tokens_used: number | null;
@@ -406,4 +422,54 @@ export interface SettingsOut {
   editable: EditableSetting[];
   read_only: ReadOnlySetting[];
   secrets: SecretSetting[];
+}
+
+// ── Help (backend/app/schemas/help.py) ───────────────────────────────────────
+
+export interface HelpLink {
+  slug: string;
+  title: string;
+}
+
+export interface HelpPassage {
+  slug: string;
+  title: string;
+  /** The opening of the page — what the list pane shows. */
+  snippet: string;
+  /** The whole page, as markdown. The reading pane renders all of it. */
+  body: string;
+  related: HelpLink[];
+  /**
+   * Names a diagram the client draws above the text, or "" for none. A *name*,
+   * never markup — the corpus says which illustration belongs to a page and
+   * `Figure` owns the drawing, so a document can never inject markup.
+   */
+  figure: string;
+  score: number;
+}
+
+export interface HelpSearchOut {
+  query: string;
+  /**
+   * Empty means *nothing matched*, which is an answer rather than an error.
+   * Render it as "Liffy's docs don't cover that" — never as a failure, and
+   * never by falling back to the closest miss.
+   */
+  results: HelpPassage[];
+}
+
+export interface HelpTopic {
+  slug: string;
+  title: string;
+}
+
+export interface HelpIndexOut {
+  common: HelpTopic[];
+  all_topics: HelpTopic[];
+}
+
+/** `POST /help/report` — where the filed issue landed. */
+export interface ReportOut {
+  number: number;
+  url: string;
 }

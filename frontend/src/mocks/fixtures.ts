@@ -1,6 +1,8 @@
 import type {
   AnalyticsSummaryOut,
   EvalScoresOut,
+  HelpIndexOut,
+  HelpPassage,
   RepoOut,
   RepoStatusOut,
   ReviewCommentOut,
@@ -113,6 +115,16 @@ export const fixtureReviewCompleted: ReviewDetailOut = {
   pr_number: 58,
   repo_full_name: "lucenity0/Liffy",
   status: "completed",
+  summary_detail: {
+    changes: [
+      "Adds a token bucket in front of the review trigger.",
+      "Moves the retry budget into settings.",
+    ],
+    files: [
+      { path: "backend/app/api/reviews.py", description: "Applies the new limiter to the trigger route." },
+      { path: "backend/app/config.py", description: "Adds the bucket size and refill rate." },
+    ],
+  },
   summary:
     "One thing worth fixing before this merges: the diff-hunk parser assumes an explicit line count on every hunk header, but the format allows omitting it. Everything else — the setup script, the retry logic — reads cleanly.",
   verdict: "request_changes",
@@ -156,6 +168,7 @@ export const fixtureReviewApproved: ReviewDetailOut = {
   pr_number: 59,
   repo_full_name: "lucenity0/portfolio",
   status: "completed",
+  summary_detail: null,
   summary: "Clean change. No issues found.",
   verdict: "approve",
   model_used: "gpt-4o",
@@ -175,6 +188,7 @@ export const fixtureReviewPending: ReviewDetailOut = {
   pr_number: 62,
   repo_full_name: "lucenity0/Liffy",
   status: "pending",
+  summary_detail: null,
   summary: null,
   verdict: null,
   model_used: null,
@@ -204,6 +218,7 @@ export const fixtureReviewFailed: ReviewDetailOut = {
   pr_number: 61,
   repo_full_name: "lucenity0/Liffy",
   status: "failed",
+  summary_detail: null,
   summary: null,
   verdict: null,
   model_used: "gpt-4o",
@@ -233,6 +248,7 @@ const detailToListItem = (review: ReviewDetailOut): ReviewListItem => ({
   pr_id: review.pr_id,
   pr_number: review.pr_number,
   repo_full_name: review.repo_full_name,
+  summary_detail: review.summary_detail,
   status: review.status,
   summary: review.summary,
   verdict: review.verdict,
@@ -708,3 +724,54 @@ export const fixtureSettings: SettingsOut = {
     },
   ],
 };
+
+// ── Help (#237) ──────────────────────────────────────────────────────────────
+
+/**
+ * A miniature corpus, not a copy of the real one.
+ *
+ * The frontend's job is rendering and routing; ranking is the backend's, and
+ * `backend/tests/test_help_service.py` owns it. Mirroring fifteen real pages
+ * here would make every corpus edit break frontend tests that never cared
+ * about the wording.
+ */
+export const fixtureHelpTopics: HelpIndexOut = {
+  common: [
+    { slug: "review-states", title: "Queued vs processing" },
+    { slug: "review-failed", title: "Why a review failed" },
+    { slug: "reindex-after-merge", title: "Should I reindex after every merge?" },
+  ],
+  all_topics: [
+    { slug: "review-states", title: "Queued vs processing" },
+    { slug: "review-failed", title: "Why a review failed" },
+    { slug: "reindex-after-merge", title: "Should I reindex after every merge?" },
+    { slug: "where-your-code-goes", title: "Where your code goes" },
+  ],
+};
+
+export const fixtureHelpPassages: HelpPassage[] = [
+  {
+    slug: "review-states",
+    title: "Queued vs processing",
+    snippet:
+      "A review sits in queued until a worker picks it up, then moves to processing while it runs.",
+    body:
+      "A review sits in **queued** until a worker picks it up, then moves to\n" +
+      "**processing** while it runs.\n\nBoth are normal; neither means anything is wrong.",
+    related: [{ slug: "review-failed", title: "Why a review failed" }],
+    figure: "",
+    score: 13.9,
+  },
+  {
+    slug: "review-failed",
+    title: "Why a review failed",
+    snippet: "The reason is recorded on the review itself and shown on the failed panel.",
+    body:
+      "The reason is recorded on the review itself.\n\n" +
+      "- `'claude' is not on PATH` — the worker has no CLI\n" +
+      "- Rate limit — the account is out of allowance",
+    related: [],
+    figure: "",
+    score: 4.6,
+  },
+];

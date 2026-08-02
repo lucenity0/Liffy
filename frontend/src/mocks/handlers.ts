@@ -1,6 +1,8 @@
 import { http, HttpResponse } from "msw";
 import {
   fixtureAnalyticsSummary,
+  fixtureHelpPassages,
+  fixtureHelpTopics,
   fixtureRepoIndexed,
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
@@ -410,5 +412,54 @@ export const handlers = [
     target.source = fromDotenv ? "env" : "default";
     settingsState = next;
     return HttpResponse.json(settingsState);
+  }),
+
+  // ── Help (#237) ────────────────────────────────────────────────────────────
+  //
+  // Ranking is the backend's, and is tested there. This mock does the one
+  // thing the UI actually branches on: a query either matches something or it
+  // matches nothing, and "nothing" must be a 200 with an empty list rather
+  // than an error.
+  http.get("*/help/topics", () => HttpResponse.json(fixtureHelpTopics)),
+
+  // Liffy files the issue itself now, so the mock owns the receipt the form
+  // renders. 422 for a short title mirrors the backend's own validation.
+  http.post("*/help/report", async ({ request }) => {
+    const body = (await request.json()) as {
+      title?: string;
+      body?: string;
+      kind?: string;
+    };
+    if (body.kind === "security") {
+      return HttpResponse.json(
+        { detail: "security reports do not go in public issues" },
+        { status: 422 },
+      );
+    }
+    if ((body.title ?? "").trim().length < 3 || (body.body ?? "").trim().length < 10) {
+      return HttpResponse.json({ detail: "too short" }, { status: 422 });
+    }
+    return HttpResponse.json(
+      { number: 251, url: "https://github.com/lucenity0/Liffy/issues/251" },
+      { status: 201 },
+    );
+  }),
+
+  http.get("*/help/:slug", ({ params }) => {
+    const page = fixtureHelpPassages.find((p) => p.slug === params.slug);
+    return HttpResponse.json(page ?? null);
+  }),
+
+  http.get("*/help", ({ request }) => {
+    const q = (new URL(request.url).searchParams.get("q") ?? "").toLowerCase();
+    const results = q.trim()
+      ? fixtureHelpPassages.filter(
+          (p) =>
+            p.title.toLowerCase().includes(q) ||
+            p.snippet.toLowerCase().includes(q) ||
+            q.split(/\s+/).some((t) => t.length > 3 && p.body.toLowerCase().includes(t)),
+        )
+      : [];
+    return HttpResponse.json({ query: q, results });
   }),
 ];

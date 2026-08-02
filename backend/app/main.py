@@ -4,7 +4,16 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analytics, auth, feedback, repos, reviews, settings as settings_api, webhook
+from app.api import (
+    analytics,
+    auth,
+    feedback,
+    help as help_api,
+    repos,
+    reviews,
+    settings as settings_api,
+    webhook,
+)
 from app.config import settings
 from app.database import SessionLocal
 from app.services.settings_service import refresh_overrides
@@ -52,6 +61,9 @@ app.include_router(webhook.router, prefix="/webhook", tags=["webhook"])
 app.include_router(feedback.router, tags=["feedback"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(settings_api.router, tags=["settings"])
+# Unauthenticated by design — see the module docstring. It serves static
+# markdown that ships in the image and is public in the repository.
+app.include_router(help_api.router, tags=["help"])
 
 
 @app.get("/health")

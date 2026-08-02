@@ -8,6 +8,7 @@ import {
   fixtureRepoIndexed,
   fixtureRepoStatusIndexed,
   fixtureReviewListItems,
+  reviewPage,
 } from "@/mocks/fixtures";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { RepoDetail } from "./RepoDetail";
@@ -54,6 +55,42 @@ describe("RepoDetail", () => {
     expect(within(list).getAllByRole("listitem")).toHaveLength(expected.length);
     // The portfolio review is in the same fixture page and must not appear.
     expect(within(list).queryByText(/portfolio/)).toBeNull();
+  });
+
+  it("asks the API for this repo rather than filtering a shared page", async () => {
+    let askedFor: string | null = null;
+    server.use(
+      http.get("*/reviews", ({ request }) => {
+        askedFor = new URL(request.url).searchParams.get("repo_id");
+        return HttpResponse.json(reviewPage([]));
+      }),
+    );
+
+    renderDetail(fixtureRepoIndexed.id);
+    await screen.findByRole("heading", { level: 1 });
+
+    // The distinction that matters: filtering the global page client-side
+    // showed nothing here once this repo's newest review fell off it, which
+    // is a repo that looks unreviewed while its reviews sit in the database.
+    await waitFor(() => expect(askedFor).toBe(fixtureRepoIndexed.id));
+  });
+
+  it("points at the full filtered list when it is showing a partial one", async () => {
+    server.use(
+      http.get("*/reviews", () =>
+        // One row on the page, 30 in the repo.
+        HttpResponse.json(reviewPage([fixtureReviewListItems[0]], 30)),
+      ),
+    );
+
+    renderDetail(fixtureRepoIndexed.id);
+
+    const link = await screen.findByRole("link", {
+      name: /all reviews for this repository/i,
+    });
+    // Pre-filtered, so the link lands on this repo's reviews rather than
+    // dropping the user into the unfiltered stream to find them again.
+    expect(link).toHaveAttribute("href", `/reviews?repo=${fixtureRepoIndexed.id}`);
   });
 
   it("says the repo is not there rather than rendering an empty shell", async () => {

@@ -18,6 +18,7 @@ import { useCommentFeedback } from "./useCommentFeedback";
 import { useConnectRepo, useDisconnectRepo } from "./useRepoMutations";
 import { useTriggerReview } from "./useReviewMutations";
 import { THEME_KEY, useTheme } from "./useTheme";
+import { useDebouncedValue } from "./useDebouncedValue";
 import type { QueryClient } from "@tanstack/react-query";
 import type { ReviewDetailOut } from "@/types/api";
 
@@ -33,29 +34,111 @@ describe("useRepos", () => {
 });
 
 describe("useReviews", () => {
-  it("infers hasNextPage from a full page and hasPreviousPage from the offset", async () => {
+  it("offers a next page only while the total says there is one", async () => {
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useReviews({ limit: 2, offset: 0 }), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // 4 fixtures, page one of two.
+    expect(result.current.items).toHaveLength(2);
+    expect(result.current.total).toBe(4);
+    expect(result.current.hasNextPage).toBe(true);
+    expect(result.current.hasPreviousPage).toBe(false);
+  });
+
+  it("does not offer a Next that leads nowhere on an exact page boundary", async () => {
     const { Wrapper } = createWrapper();
     const { result } = renderHook(() => useReviews({ limit: 2, offset: 2 }), {
       wrapper: Wrapper,
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    // 4 fixtures, limit 2, offset 2 -> a full page, so there *may* be more.
-    expect(result.current.data).toHaveLength(2);
-    expect(result.current.hasNextPage).toBe(true);
+    // The regression this envelope exists for. 4 fixtures, limit 2, offset 2:
+    // a *full* page that is also the last one. The old heuristic — "a full
+    // page implies there may be more" — read this as another page and offered
+    // a Next onto an empty screen.
+    expect(result.current.items).toHaveLength(2);
+    expect(result.current.hasNextPage).toBe(false);
     expect(result.current.hasPreviousPage).toBe(true);
   });
 
-  it("reports no next page when the API returns a short page", async () => {
+  it("reports no next page on a short page", async () => {
     const { Wrapper } = createWrapper();
     const { result } = renderHook(() => useReviews({ limit: 20, offset: 0 }), {
       wrapper: Wrapper,
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toHaveLength(4);
+    expect(result.current.items).toHaveLength(4);
     expect(result.current.hasNextPage).toBe(false);
     expect(result.current.hasPreviousPage).toBe(false);
+  });
+
+  it("gives two different filters two different cache entries", async () => {
+    const { Wrapper } = createWrapper();
+
+    const failed = renderHook(() => useReviews({ status: "failed" }), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(failed.result.current.isSuccess).toBe(true));
+
+    const completed = renderHook(() => useReviews({ status: "completed" }), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(completed.result.current.isSuccess).toBe(true));
+
+    // Sharing a key would have the second filter served the first's rows —
+    // the failure mode is silent, and it looks like the filter did nothing.
+    expect(failed.result.current.items).toHaveLength(1);
+    expect(completed.result.current.items).toHaveLength(2);
+    expect(failed.result.current.items[0].status).toBe("failed");
+  });
+});
+
+describe("useDebouncedValue", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("collapses a burst of changes into the last one", () => {
+    const { result, rerender } = renderHook(
+      ({ value }) => useDebouncedValue(value, 300),
+      { initialProps: { value: "2" } },
+    );
+
+    // Typing "203": three renders inside the window. Only the last survives,
+    // which is what keeps the reviews list from asking about PR 2 and PR 20
+    // on the way to 203.
+    expect(result.current).toBe("2");
+    rerender({ value: "20" });
+    act(() => void vi.advanceTimersByTime(100));
+    rerender({ value: "203" });
+    act(() => void vi.advanceTimersByTime(100));
+    // Still the initial value — nothing has been still for long enough yet.
+    expect(result.current).toBe("2");
+
+    act(() => void vi.advanceTimersByTime(300));
+    expect(result.current).toBe("203");
+  });
+
+  it("does not settle a value the caller has already left behind", () => {
+    const { result, unmount, rerender } = renderHook(
+      ({ value }) => useDebouncedValue(value, 300),
+      { initialProps: { value: "a" } },
+    );
+
+    rerender({ value: "b" });
+    unmount();
+    // The pending timer is cleared on unmount rather than firing into a
+    // component that is gone.
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(result.current).toBe("a");
   });
 });
 

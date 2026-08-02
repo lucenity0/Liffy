@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { Modal } from "@/components/ui/Modal";
-import { Field, Input } from "@/components/ui/Field";
+import { Field, Input, Select } from "@/components/ui/Field";
 import { contrastRatio, resolveColor } from "@/lib/colors";
 import { useTheme, type Theme } from "@/hooks/useTheme";
 import type {
@@ -556,6 +556,15 @@ export function StyleGuide() {
               </Field>
               <Field label="Disabled">
                 {(props) => <Input {...props} disabled defaultValue="locked" />}
+              </Field>
+              <Field label="Status" hint="Native select — Input's dropdown twin">
+                {(props) => (
+                  <Select {...props} defaultValue="">
+                    <option value="">Any status</option>
+                    <option value="completed">Completed</option>
+                    <option value="failed">Failed</option>
+                  </Select>
+                )}
               </Field>
             </Sheet.Body>
           </Sheet>

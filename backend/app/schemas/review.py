@@ -1,8 +1,18 @@
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+
+# The four strings ``reviews.status`` actually holds, spelled once.
+#
+# Written at ``review_service.py:208`` (processing), ``:235`` (completed) and
+# ``:256`` (failed), with ``pending`` the column default in ``models/review.py``.
+# Named here rather than retyped at each filter so a UI label can never quietly
+# become a fifth status that matches no row.
+ReviewStatus = Literal["pending", "processing", "completed", "failed"]
 
 
 class ReviewVerdict(str, Enum):
@@ -136,6 +146,29 @@ class ReviewOut(BaseModel):
 class ReviewListItem(ReviewOut):
     pr_number: int
     repo_full_name: str
+
+
+class ReviewListPage(BaseModel):
+    """One page of reviews, plus how many there are in total.
+
+    An envelope rather than a bare list because a caller cannot paginate
+    honestly without a count: a page that happens to be exactly ``limit`` long
+    is indistinguishable from one with more behind it, so the frontend's
+    "a full page implies there may be more" heuristic offers a Next that leads
+    to an empty page. Filters make that worse, not better — a filtered set
+    lands on a page boundary far more often than the unfiltered table does.
+
+    ``total`` counts the *filtered* set, ignoring limit and offset. Not the
+    rows on this page, and not the whole table.
+
+    Considered and rejected: returning the count in an ``X-Total-Count``
+    header. Less invasive, but it puts half the payload outside the typed
+    schema, and the frontend's MSW handlers would then have to remember to set
+    a header to stay honest.
+    """
+
+    items: list[ReviewListItem]
+    total: int
 
 
 class ReviewDetailOut(ReviewOut):

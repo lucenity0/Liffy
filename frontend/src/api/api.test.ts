@@ -6,6 +6,7 @@ import {
   fixtureEvalUnrated,
   fixtureRepoIndexed,
   fixtureReviewCompleted,
+  reviewPage,
 } from "@/mocks/fixtures";
 import { getReviewEval } from "./analytics";
 import { connectRepo, disconnectRepo, listRepos } from "./repos";
@@ -85,9 +86,51 @@ describe("repos", () => {
 });
 
 describe("reviews", () => {
-  it("listReviews resolves typed items", async () => {
-    const reviews = await listReviews({ limit: 2 });
-    expect(reviews).toHaveLength(2);
+  it("listReviews resolves a page of typed items alongside the full total", async () => {
+    const page = await listReviews({ limit: 2 });
+
+    expect(page.items).toHaveLength(2);
+    // The count is of the whole set, not the window — that gap is the reason
+    // the endpoint returns an envelope at all.
+    expect(page.total).toBe(4);
+  });
+
+  it("listReviews leaves unset filters out of the query string", async () => {
+    let sent: string | null = null;
+    server.use(
+      http.get("*/reviews", ({ request }) => {
+        sent = new URL(request.url).search;
+        return HttpResponse.json(reviewPage([]));
+      }),
+    );
+
+    await listReviews({ limit: 5 });
+
+    // Not `repo_id=undefined` or `status=`: FastAPI answers 422 to the first
+    // and a list page that 422s is a blank screen with nothing to correct.
+    expect(sent).toBe("?limit=5&offset=0");
+  });
+
+  it("listReviews sends the filters it is given", async () => {
+    let sent: URLSearchParams | null = null;
+    server.use(
+      http.get("*/reviews", ({ request }) => {
+        sent = new URL(request.url).searchParams;
+        return HttpResponse.json(reviewPage([]));
+      }),
+    );
+
+    await listReviews({
+      repoId: fixtureRepoIndexed.id,
+      prNumber: 58,
+      status: "failed",
+      sort: "oldest",
+    });
+
+    expect(sent!.get("repo_id")).toBe(fixtureRepoIndexed.id);
+    expect(sent!.get("pr_number")).toBe("58");
+    expect(sent!.get("status")).toBe("failed");
+    expect(sent!.get("sort")).toBe("oldest");
   });
 
   it("getReview maps a full detail fixture including comments", async () => {

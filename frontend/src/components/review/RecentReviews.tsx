@@ -13,8 +13,9 @@ export const RECENT_REVIEWS_LIMIT = 5;
  * rows of one list rather than separate leaves, so they belong inside a single
  * bordered box with hairlines between them.
  *
- * No count chip in the header: GET /reviews has no total, so the only honest
- * number here would be "5 of ?".
+ * The header now carries a real count, because the endpoint returns one. It
+ * is the total across every repository, not the five on screen — which is the
+ * number that says whether "All reviews" is worth a click.
  */
 export function RecentReviews() {
   const reviews = useReviews({ limit: RECENT_REVIEWS_LIMIT });
@@ -23,6 +24,9 @@ export function RecentReviews() {
     <Sheet>
       <Sheet.Header
         title="Recent reviews"
+        // Omitted until the first page lands, so the chip does not flash a 0
+        // on the way to a real number.
+        count={reviews.data ? reviews.total : undefined}
         actions={
           <ButtonLink to="/reviews" variant="ghost">
             All reviews
@@ -38,16 +42,16 @@ export function RecentReviews() {
         </Sheet.Body>
       )}
 
-      {reviews.data?.length === 0 && (
+      {reviews.data && reviews.items.length === 0 && (
         <EmptyState
           title="Nothing reviewed yet."
           description="Open a pull request on a connected repository, or trigger a review by hand, and it will show up here."
         />
       )}
 
-      {reviews.data && reviews.data.length > 0 && (
+      {reviews.items.length > 0 && (
         <Sheet.List as="ul" aria-label="Recent reviews">
-          {reviews.data.map((review) => (
+          {reviews.items.map((review) => (
             <ReviewRow key={review.id} review={review} />
           ))}
         </Sheet.List>

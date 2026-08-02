@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { delay, http, HttpResponse } from "msw";
 import { server } from "@/mocks/server";
-import { fixtureRepos, fixtureTokenPair, fixtureUser } from "@/mocks/fixtures";
+import {
+  fixtureRepos,
+  fixtureTokenPair,
+  fixtureUser,
+  reviewPage,
+} from "@/mocks/fixtures";
 import {
   clearTokens,
   getAccessToken,
@@ -126,7 +131,7 @@ describe("refresh on 401", () => {
 
     server.use(
       http.get("*/repos", () => guard() ?? HttpResponse.json(fixtureRepos)),
-      http.get("*/reviews", () => guard() ?? HttpResponse.json([])),
+      http.get("*/reviews", () => guard() ?? HttpResponse.json(reviewPage([]))),
       http.get(
         "*/repos/:repoId/status",
         () =>
@@ -159,7 +164,7 @@ describe("refresh on 401", () => {
     expect(refreshCalls).toBe(1);
     // All three original requests still resolve — none was sacrificed.
     expect(repos).toHaveLength(2);
-    expect(reviews).toEqual([]);
+    expect(reviews.items).toEqual([]);
     expect(status.chunk_count).toBe(176);
   });
 

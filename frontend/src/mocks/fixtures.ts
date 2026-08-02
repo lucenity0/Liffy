@@ -1,6 +1,8 @@
 import type {
   AnalyticsSummaryOut,
   EvalScoresOut,
+  HelpIndexOut,
+  HelpPassage,
   RepoOut,
   RepoStatusOut,
   ReviewCommentOut,
@@ -708,3 +710,52 @@ export const fixtureSettings: SettingsOut = {
     },
   ],
 };
+
+// ── Help (#237) ──────────────────────────────────────────────────────────────
+
+/**
+ * A miniature corpus, not a copy of the real one.
+ *
+ * The frontend's job is rendering and routing; ranking is the backend's, and
+ * `backend/tests/test_help_service.py` owns it. Mirroring fifteen real pages
+ * here would make every corpus edit break frontend tests that never cared
+ * about the wording.
+ */
+export const fixtureHelpTopics: HelpIndexOut = {
+  common: [
+    { slug: "review-states", title: "Queued vs processing" },
+    { slug: "review-failed", title: "Why a review failed" },
+    { slug: "reindex-after-merge", title: "Should I reindex after every merge?" },
+  ],
+  all_topics: [
+    { slug: "review-states", title: "Queued vs processing" },
+    { slug: "review-failed", title: "Why a review failed" },
+    { slug: "reindex-after-merge", title: "Should I reindex after every merge?" },
+    { slug: "where-your-code-goes", title: "Where your code goes" },
+  ],
+};
+
+export const fixtureHelpPassages: HelpPassage[] = [
+  {
+    slug: "review-states",
+    title: "Queued vs processing",
+    snippet:
+      "A review sits in queued until a worker picks it up, then moves to processing while it runs.",
+    body:
+      "A review sits in **queued** until a worker picks it up, then moves to\n" +
+      "**processing** while it runs.\n\nBoth are normal; neither means anything is wrong.",
+    related: [{ slug: "review-failed", title: "Why a review failed" }],
+    score: 13.9,
+  },
+  {
+    slug: "review-failed",
+    title: "Why a review failed",
+    snippet: "The reason is recorded on the review itself and shown on the failed panel.",
+    body:
+      "The reason is recorded on the review itself.\n\n" +
+      "- `'claude' is not on PATH` — the worker has no CLI\n" +
+      "- Rate limit — the account is out of allowance",
+    related: [],
+    score: 4.6,
+  },
+];

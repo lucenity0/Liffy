@@ -5,6 +5,7 @@ import { Analytics } from "@/pages/Analytics";
 import { Dashboard } from "@/pages/Dashboard";
 import { Reviews } from "@/pages/Reviews";
 import { Settings } from "@/pages/Settings";
+import { Help } from "@/pages/Help";
 import { ReviewDetail } from "@/pages/ReviewDetail";
 import { RepoDetail } from "@/pages/RepoDetail";
 import { NotFound } from "@/pages/NotFound";
@@ -86,6 +87,7 @@ export const routes: RouteObject[] = [
           element: <Settings />,
           handle: { title: "Settings" },
         },
+        { path: "/help", element: <Help />, handle: { title: "Help" } },
         {
           path: "/reviews/:reviewId",
           element: <ReviewDetail />,

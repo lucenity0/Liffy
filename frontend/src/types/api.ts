@@ -407,3 +407,41 @@ export interface SettingsOut {
   read_only: ReadOnlySetting[];
   secrets: SecretSetting[];
 }
+
+// ── Help (backend/app/schemas/help.py) ───────────────────────────────────────
+
+export interface HelpLink {
+  slug: string;
+  title: string;
+}
+
+export interface HelpPassage {
+  slug: string;
+  title: string;
+  /** The opening of the page — what the list pane shows. */
+  snippet: string;
+  /** The whole page, as markdown. The reading pane renders all of it. */
+  body: string;
+  related: HelpLink[];
+  score: number;
+}
+
+export interface HelpSearchOut {
+  query: string;
+  /**
+   * Empty means *nothing matched*, which is an answer rather than an error.
+   * Render it as "Liffy's docs don't cover that" — never as a failure, and
+   * never by falling back to the closest miss.
+   */
+  results: HelpPassage[];
+}
+
+export interface HelpTopic {
+  slug: string;
+  title: string;
+}
+
+export interface HelpIndexOut {
+  common: HelpTopic[];
+  all_topics: HelpTopic[];
+}

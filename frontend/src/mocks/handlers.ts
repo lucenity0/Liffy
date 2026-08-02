@@ -1,6 +1,8 @@
 import { http, HttpResponse } from "msw";
 import {
   fixtureAnalyticsSummary,
+  fixtureHelpPassages,
+  fixtureHelpTopics,
   fixtureRepoIndexed,
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
@@ -410,5 +412,31 @@ export const handlers = [
     target.source = fromDotenv ? "env" : "default";
     settingsState = next;
     return HttpResponse.json(settingsState);
+  }),
+
+  // ── Help (#237) ────────────────────────────────────────────────────────────
+  //
+  // Ranking is the backend's, and is tested there. This mock does the one
+  // thing the UI actually branches on: a query either matches something or it
+  // matches nothing, and "nothing" must be a 200 with an empty list rather
+  // than an error.
+  http.get("*/help/topics", () => HttpResponse.json(fixtureHelpTopics)),
+
+  http.get("*/help/:slug", ({ params }) => {
+    const page = fixtureHelpPassages.find((p) => p.slug === params.slug);
+    return HttpResponse.json(page ?? null);
+  }),
+
+  http.get("*/help", ({ request }) => {
+    const q = (new URL(request.url).searchParams.get("q") ?? "").toLowerCase();
+    const results = q.trim()
+      ? fixtureHelpPassages.filter(
+          (p) =>
+            p.title.toLowerCase().includes(q) ||
+            p.snippet.toLowerCase().includes(q) ||
+            q.split(/\s+/).some((t) => t.length > 3 && p.body.toLowerCase().includes(t)),
+        )
+      : [];
+    return HttpResponse.json({ query: q, results });
   }),
 ];

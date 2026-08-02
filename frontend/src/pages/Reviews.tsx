@@ -6,7 +6,10 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Sheet } from "@/components/ui/Sheet";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/review/Pagination";
-import { ReviewFilterBar } from "@/components/review/ReviewFilterBar";
+import {
+  FilterToggle,
+  ReviewFilterBar,
+} from "@/components/review/ReviewFilterBar";
 import { ReviewRow } from "@/components/review/ReviewRow";
 import { TriggerReviewForm } from "@/components/review/TriggerReviewForm";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -14,6 +17,7 @@ import { REVIEWS_PAGE_SIZE, useReviews } from "@/hooks/useReviews";
 import { isValidPrNumber } from "@/lib/validators";
 import {
   hasActiveFilters,
+  isNonDefaultView,
   parseOffset,
   parseReviewFilters,
   type ReviewFilters,
@@ -38,6 +42,15 @@ export function Reviews() {
     sort: filters.sort,
   });
   const rows = reviews.items;
+
+  /**
+   * The filter strip is folded away by default — most visits are "show me
+   * what Liffy has read", not a search — but a URL that already carries a
+   * filter arrives with it open, so a pasted link lands on controls that
+   * agree with what is on screen. Initial state only: closing it afterwards
+   * is allowed to stick, and the funnel keeps a dot while anything is set.
+   */
+  const [filtersOpen, setFiltersOpen] = useState(() => isNonDefaultView(filters));
 
   const [triggering, setTriggering] = useState(false);
   const [queued, setQueued] = useState<{
@@ -192,26 +205,42 @@ export function Reviews() {
         </p>
       )}
 
-      <ReviewFilterBar
-        filters={filters}
-        prDraft={prDraft}
-        onPrDraftChange={setPrDraft}
-        onChange={changeFilters}
-        onClear={clearFilters}
-      />
-
       <Sheet>
         <Sheet.Header
           title={filtered ? "Filtered reviews" : "All reviews"}
           count={reviews.data ? reviews.total : undefined}
+          // The strip below carries the header's own fill, so the rule between
+          // them would cut one block in half. It moves to the strip's bottom
+          // edge, which is where the block actually ends.
+          className={filtersOpen ? "border-b-0" : undefined}
           actions={
-            // Paging keeps the previous page on screen (keepPreviousData), so
-            // without this the only sign anything is happening is the URL.
-            reviews.isFetching && !reviews.isPending ? (
-              <span className="label">Loading…</span>
-            ) : undefined
+            <>
+              {/* Paging keeps the previous page on screen (keepPreviousData),
+                  so without this the only sign anything is happening is the
+                  URL. */}
+              {reviews.isFetching && !reviews.isPending && (
+                <span className="label">Loading…</span>
+              )}
+              <FilterToggle
+                open={filtersOpen}
+                active={isNonDefaultView(filters)}
+                onToggle={() => setFiltersOpen((wasOpen) => !wasOpen)}
+              />
+            </>
           }
         />
+
+        {/* Inside the sheet, directly under the funnel that opens it — the
+            controls belong to this list rather than floating above it. */}
+        {filtersOpen && (
+          <ReviewFilterBar
+            filters={filters}
+            prDraft={prDraft}
+            onPrDraftChange={setPrDraft}
+            onChange={changeFilters}
+            onClear={clearFilters}
+          />
+        )}
 
         {reviews.isPending && <SkeletonRows rows={6} />}
 

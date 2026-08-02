@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { useLocation } from "react-router-dom";
 import { describe, expect, it } from "vitest";
@@ -68,6 +68,32 @@ function renderPage(route = "/reviews") {
     </>,
     { route },
   );
+}
+
+/**
+ * The filter strip is folded away behind the funnel unless the URL arrived
+ * carrying a filter, so every test that touches a control has to go through
+ * here. Idempotent on purpose: a filtered route opens it for us, and pressing
+ * the funnel again would put it away.
+ */
+async function showFilters(user: UserEvent) {
+  const funnel = screen.getByRole("button", { name: "Filters" });
+  if (funnel.getAttribute("aria-expanded") !== "true") await user.click(funnel);
+}
+
+/** Open one of the strip's dropdowns and take a row out of it. */
+async function pick(user: UserEvent, field: RegExp, option: string) {
+  await user.click(screen.getByRole("combobox", { name: field }));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+
+/** The PR number box, expanding the magnifier that hides it if need be. */
+async function prBox(user: UserEvent) {
+  await showFilters(user);
+  const open = screen.queryByRole("textbox", { name: /pr number/i });
+  if (open) return open;
+  await user.click(screen.getByRole("button", { name: /search by pr number/i }));
+  return screen.getByRole("textbox", { name: /pr number/i });
 }
 
 describe("URL filter parsing", () => {
@@ -322,10 +348,8 @@ describe("Reviews", () => {
     renderPage();
     await screen.findByRole("list", { name: "Reviews" });
 
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: /repository/i }),
-      fixtureRepoIndexed.id,
-    );
+    await showFilters(user);
+    await pick(user, /repository/i, fixtureRepoIndexed.full_name);
 
     await waitFor(() => expect(searchString()).toBe(`?repo=${fixtureRepoIndexed.id}`));
     await waitFor(() => expect(asked).toContain(fixtureRepoIndexed.id));
@@ -338,10 +362,8 @@ describe("Reviews", () => {
     renderPage("/reviews?offset=40");
     await screen.findByRole("list", { name: "Reviews" });
 
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: /repository/i }),
-      fixtureRepoIndexing.id,
-    );
+    await showFilters(user);
+    await pick(user, /repository/i, fixtureRepoIndexing.full_name);
 
     // The trap: staying on offset 40 while switching to a repo with three
     // reviews renders "You have paged past the end", which is reached by an
@@ -349,6 +371,56 @@ describe("Reviews", () => {
     await waitFor(() =>
       expect(searchString()).toBe(`?repo=${fixtureRepoIndexing.id}`),
     );
+  });
+
+  it("keeps the strip folded away until the funnel is pressed", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByRole("list", { name: "Reviews" });
+
+    // Nothing but the funnel: the list is what the page is for, and most
+    // visits never filter.
+    expect(screen.queryByRole("combobox")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    expect(
+      screen.getByRole("combobox", { name: /repository/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /status/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("arrives open when the URL is already filtered", async () => {
+    renderPage("/reviews?status=failed");
+    await screen.findByRole("list", { name: "Reviews" });
+
+    // A pasted link lands on controls that agree with what is on screen,
+    // rather than on a list that is quietly narrowed.
+    expect(screen.getByRole("button", { name: "Filters" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: /status: failed/i })).toBeInTheDocument();
+  });
+
+  it("offers the statuses as the badges the rows are marked with", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByRole("list", { name: "Reviews" });
+    await showFilters(user);
+
+    await user.click(screen.getByRole("combobox", { name: /status/i }));
+
+    const list = screen.getByRole("listbox", { name: "Status" });
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["All statuses", "Pending", "Processing", "Completed", "Failed"]);
   });
 
   it("keeps the sort in the URL and asks for it", async () => {
@@ -364,10 +436,10 @@ describe("Reviews", () => {
     renderPage();
     await screen.findByRole("list", { name: "Reviews" });
 
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: /order/i }),
-      "oldest",
-    );
+    await showFilters(user);
+    // One button holding one bit, named for the order in force rather than
+    // for what pressing it does.
+    await user.click(screen.getByRole("button", { name: /sort: newest first/i }));
 
     await waitFor(() => expect(searchString()).toBe("?sort=oldest"));
     await waitFor(() => expect(asked).toContain("oldest"));
@@ -428,7 +500,7 @@ describe("Reviews", () => {
     renderPage();
     await screen.findByRole("list", { name: "Reviews" });
 
-    await user.type(screen.getByRole("textbox", { name: /pr number/i }), "203");
+    await user.type(await prBox(user), "203");
 
     await waitFor(() => expect(searchString()).toBe("?pr=203"));
     // Asserts where it lands, not how many requests it took to get there:
@@ -445,7 +517,7 @@ describe("Reviews", () => {
     renderPage();
     await screen.findByRole("list", { name: "Reviews" });
 
-    await user.type(screen.getByRole("textbox", { name: /pr number/i }), "abc");
+    await user.type(await prBox(user), "abc");
 
     expect(await screen.findByText(/digits only/i)).toBeInTheDocument();
     // The URL stays clean, so a refresh does not resurrect the bad value.
@@ -481,9 +553,9 @@ describe("Reviews", () => {
     await user.click(screen.getByRole("button", { name: /clear filters/i }));
 
     await waitFor(() => expect(searchString()).toBe(""));
-    expect(screen.getByRole("combobox", { name: /order/i })).toHaveValue(
-      "newest",
-    );
+    expect(
+      screen.getByRole("button", { name: /sort: newest first/i }),
+    ).toBeInTheDocument();
   });
 
   it("keeps a half-typed PR number when another filter changes mid-type", async () => {
@@ -492,14 +564,11 @@ describe("Reviews", () => {
     renderPage();
     await screen.findByRole("list", { name: "Reviews" });
 
-    await user.type(screen.getByRole("textbox", { name: /pr number/i }), "20");
+    await user.type(await prBox(user), "20");
     // Changing a dropdown mid-type reaches the URL through the same path a
     // clear does. Here the draft *should* survive and land: the box still
     // says 20, so dropping it would be the box clearing itself.
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: /status/i }),
-      "failed",
-    );
+    await pick(user, /status/i, "Failed");
 
     await waitFor(() => expect(searchString()).toBe("?pr=20&status=failed"));
     expect(screen.getByRole("textbox", { name: /pr number/i })).toHaveValue(
@@ -514,7 +583,7 @@ describe("Reviews", () => {
     renderPage("/reviews?status=failed");
     await screen.findByRole("list", { name: "Reviews" });
 
-    const pr = screen.getByRole("textbox", { name: /pr number/i });
+    const pr = await prBox(user);
     await user.type(pr, "20");
 
     // Clear while the draft is still in flight. The URL loses `status`, but

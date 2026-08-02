@@ -1,4 +1,9 @@
-import { useId, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import {
+  useId,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -69,10 +74,21 @@ export function Field({
   );
 }
 
-/** The paper text input. Inset rather than raised — a ruled box on the page. */
-export function Input({ className, ...rest }: ComponentPropsWithoutRef<"input">) {
+/**
+ * The paper text input. Inset rather than raised — a ruled box on the page.
+ *
+ * `ref` is spelled out because React 19 hands it over as an ordinary prop and
+ * `ComponentPropsWithoutRef` leaves it out — the reviews filter focuses this
+ * the moment its magnifier expands. Same shape as Button's.
+ */
+export function Input({
+  className,
+  ref,
+  ...rest
+}: ComponentPropsWithoutRef<"input"> & { ref?: Ref<HTMLInputElement> }) {
   return (
     <input
+      ref={ref}
       className={cn(
         "rounded-chip border border-rule bg-paper px-2.5 py-1.5",
         "font-code text-base text-ink placeholder:text-ink-sub",

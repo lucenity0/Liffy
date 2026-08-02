@@ -452,6 +452,85 @@ describe("Reviews", () => {
     await waitFor(() => expect(searchString()).toBe(""));
   });
 
+  it("does not call a re-sorted empty list filtered", async () => {
+    server.use(http.get("*/reviews", () => HttpResponse.json(reviewPage([]))));
+
+    renderPage("/reviews?sort=oldest");
+
+    // A sort never excludes a row, so this account is empty rather than
+    // narrowed. "No reviews match these filters." would be blaming a filter
+    // for hiding reviews that do not exist.
+    expect(await screen.findByText(/nothing reviewed yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no reviews match these filters/i)).toBeNull();
+    // And the header does not claim to be withholding anything either.
+    expect(screen.getByText("All reviews")).toBeInTheDocument();
+    expect(screen.queryByText(/a filtered view/i)).toBeNull();
+  });
+
+  it("still offers Clear filters for a non-default order, and resets it", async () => {
+    const user = userEvent.setup();
+
+    // Clearing resets the order too, so the button has to be reachable when
+    // the order is the only thing that is non-default — otherwise it is a
+    // setting with no way back.
+    renderPage("/reviews?sort=oldest");
+    await screen.findByRole("list", { name: "Reviews" });
+    expect(screen.getByText(/everything liffy has read, oldest first/i))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /clear filters/i }));
+
+    await waitFor(() => expect(searchString()).toBe(""));
+    expect(screen.getByRole("combobox", { name: /order/i })).toHaveValue(
+      "newest",
+    );
+  });
+
+  it("keeps a half-typed PR number when another filter changes mid-type", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByRole("list", { name: "Reviews" });
+
+    await user.type(screen.getByRole("textbox", { name: /pr number/i }), "20");
+    // Changing a dropdown mid-type reaches the URL through the same path a
+    // clear does. Here the draft *should* survive and land: the box still
+    // says 20, so dropping it would be the box clearing itself.
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /status/i }),
+      "failed",
+    );
+
+    await waitFor(() => expect(searchString()).toBe("?pr=20&status=failed"));
+    expect(screen.getByRole("textbox", { name: /pr number/i })).toHaveValue(
+      "20",
+    );
+  });
+
+  it("does not resurrect a half-typed PR number after Clear filters", async () => {
+    const user = userEvent.setup();
+
+    // A status filter is active, so Clear filters is on screen to be clicked.
+    renderPage("/reviews?status=failed");
+    await screen.findByRole("list", { name: "Reviews" });
+
+    const pr = screen.getByRole("textbox", { name: /pr number/i });
+    await user.type(pr, "20");
+
+    // Clear while the draft is still in flight. The URL loses `status`, but
+    // `pr` was never in it, so a guard watching for changes to the published
+    // PR number cannot see this happen.
+    await user.click(screen.getByRole("button", { name: /clear filters/i }));
+    await waitFor(() => expect(searchString()).toBe(""));
+
+    // And it has to still be empty once the debounce would have settled:
+    // a pending draft publishing on top of the clear reads as Clear filters
+    // half-working and then undoing itself.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(searchString()).toBe("");
+    expect(pr).toHaveValue("");
+  });
+
   it("surfaces a failed page", async () => {
     server.use(
       http.get("*/reviews", () =>

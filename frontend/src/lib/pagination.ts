@@ -80,12 +80,28 @@ export function parseReviewFilters(params: URLSearchParams): ReviewFilters {
   };
 }
 
-/** True when anything is narrowing the list — what "Clear filters" keys off. */
+/**
+ * True when something is narrowing the list — when rows the account holds are
+ * being *withheld* from the page.
+ *
+ * Sort is deliberately not one of them. Reordering never excludes a row, so
+ * telling someone with an empty account that "no reviews match these filters"
+ * because they picked "Oldest first" claims reviews are being hidden that do
+ * not exist.
+ */
 export function hasActiveFilters(filters: ReviewFilters): boolean {
   return (
     filters.repoId !== undefined ||
     filters.prNumber !== undefined ||
-    filters.status !== undefined ||
-    filters.sort !== "newest"
+    filters.status !== undefined
   );
+}
+
+/**
+ * True when the view differs from the default one at all, order included —
+ * what "Clear filters" keys off, because clearing resets the order too and a
+ * button that does something has to be reachable.
+ */
+export function isNonDefaultView(filters: ReviewFilters): boolean {
+  return hasActiveFilters(filters) || filters.sort !== "newest";
 }

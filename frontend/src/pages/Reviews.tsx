@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -9,13 +9,19 @@ import { Pagination } from "@/components/review/Pagination";
 import { ReviewFilterBar } from "@/components/review/ReviewFilterBar";
 import { ReviewRow } from "@/components/review/ReviewRow";
 import { TriggerReviewForm } from "@/components/review/TriggerReviewForm";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { REVIEWS_PAGE_SIZE, useReviews } from "@/hooks/useReviews";
+import { isValidPrNumber } from "@/lib/validators";
 import {
   hasActiveFilters,
   parseOffset,
   parseReviewFilters,
   type ReviewFilters,
 } from "@/lib/pagination";
+
+/** The PR number box's value, as text, for a filter that may be unset. */
+const asPrText = (value: number | undefined) =>
+  value === undefined ? "" : String(value);
 
 export function Reviews() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -69,6 +75,65 @@ export function Reviews() {
   }
 
   /**
+   * The PR number box types faster than it filters, so its displayed value
+   * lives here as a draft and only reaches the URL once typing settles —
+   * otherwise "203" asks the API about PR 2 and PR 20 on the way.
+   *
+   * It lives *here*, next to the writes, rather than inside the filter bar:
+   * a clear has to reset the box and the URL together, and a bar holding its
+   * own draft cannot tell that a clear happened when `pr` was absent both
+   * before and after — so a pending keystroke would publish itself back on
+   * top of the clear a beat later.
+   */
+  const [prDraft, setPrDraft] = useState(() => asPrText(filters.prNumber));
+  const settledPr = useDebouncedValue(prDraft.trim());
+
+  /**
+   * Re-seed the box when the URL moves under it — the back button, or a
+   * pasted link. Adjusting state during render rather than in an effect:
+   * React re-runs this component before touching the DOM, so there is no
+   * flash of the stale value and no cascading render.
+   *
+   * Safe against clobbering a half-typed number because a draft only reaches
+   * the URL once it has been still for the debounce, so by the time the value
+   * comes back around the two already agree.
+   */
+  const [publishedPr, setPublishedPr] = useState(filters.prNumber);
+  if (filters.prNumber !== publishedPr) {
+    setPublishedPr(filters.prNumber);
+    setPrDraft(asPrText(filters.prNumber));
+  }
+
+  useEffect(() => {
+    if (settledPr === "") {
+      if (filters.prNumber !== undefined) changeFilters({ prNumber: undefined });
+      return;
+    }
+    // Invalid input is left alone rather than pushed to the URL: it would
+    // degrade to "no filter" on the way back in, which reads as the box
+    // silently clearing itself while you are still typing.
+    if (!isValidPrNumber(settledPr)) return;
+    const parsed = Number(settledPr);
+    if (parsed !== filters.prNumber) changeFilters({ prNumber: parsed });
+    // Publishes the settled draft outward. `filters.prNumber` stays out of the
+    // dependencies: reacting to the value coming back in is what the render
+    // adjustment above is for, and doing both here would have them fight.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settledPr]);
+
+  /**
+   * The one way back to the unfiltered list, used by all three things that
+   * offer it. The draft is reset in the same breath as the URL — that is the
+   * whole reason this is one function rather than three `setSearchParams({})`
+   * calls, since forgetting it at any one of them resurrects the filter.
+   */
+  function clearFilters() {
+    setSearchParams({});
+    setPrDraft("");
+    setPublishedPr(undefined);
+  }
+
+  /**
    * The 202 carries repo and pr_number but no review id, so there is nothing
    * to deep-link to. Close the modal, drop back to page one — the new row is
    * the newest, and it is not on page three — and say what happened. The
@@ -82,7 +147,7 @@ export function Reviews() {
   function onQueued(accepted: { repo: string; pr_number: number }) {
     setTriggering(false);
     setQueued(accepted);
-    setSearchParams({});
+    clearFilters();
   }
 
   return (
@@ -90,13 +155,17 @@ export function Reviews() {
       <header className="flex flex-wrap items-start gap-3">
         <div className="flex flex-col gap-1">
           <h1 className="font-hand text-2xl leading-tight text-ink">Reviews</h1>
-          {/* The standing description claims two things a filtered view
-              breaks — "everything", and the order. Both are visible on
-              screen, so saying them wrongly is worse than not saying them. */}
+          {/* The standing description claims two separate things, and they
+              break separately: only a filter stops this being "everything",
+              and only the order control changes the order. Both are visible
+              on screen, so saying either wrongly is worse than not saying
+              it — hence the order is named rather than assumed. */}
           <p className="text-base text-ink-dim">
             {filtered
               ? "A filtered view. Clear the filters to see everything."
-              : "Everything Liffy has read, newest first."}
+              : filters.sort === "oldest"
+                ? "Everything Liffy has read, oldest first."
+                : "Everything Liffy has read, newest first."}
           </p>
         </div>
         <Button
@@ -125,8 +194,10 @@ export function Reviews() {
 
       <ReviewFilterBar
         filters={filters}
+        prDraft={prDraft}
+        onPrDraftChange={setPrDraft}
         onChange={changeFilters}
-        onClear={() => setSearchParams({})}
+        onClear={clearFilters}
       />
 
       <Sheet>
@@ -173,9 +244,7 @@ export function Reviews() {
             }
             action={
               filtered ? (
-                <Button onClick={() => setSearchParams({})}>
-                  Clear filters
-                </Button>
+                <Button onClick={clearFilters}>Clear filters</Button>
               ) : offset === 0 ? (
                 <Button variant="primary" onClick={() => setTriggering(true)}>
                   Review a pull request

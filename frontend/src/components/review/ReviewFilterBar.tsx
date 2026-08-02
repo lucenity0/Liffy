@@ -1,10 +1,8 @@
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useRepos } from "@/hooks/useRepos";
 import { isValidPrNumber } from "@/lib/validators";
-import { hasActiveFilters, type ReviewFilters } from "@/lib/pagination";
+import { isNonDefaultView, type ReviewFilters } from "@/lib/pagination";
 import { REVIEW_STATUSES, type ReviewStatus } from "@/types/api";
 
 /** Sentence case, because these are labels rather than the raw column values. */
@@ -18,64 +16,30 @@ const STATUS_LABELS: Record<ReviewStatus, string> = {
 /**
  * The controls above the reviews list.
  *
- * Stateless apart from the PR number box: every filter is owned by the URL and
- * handed down, so the parent stays the single place that knows how to change
- * one — which is also where the offset reset lives.
+ * Stateless: every filter is owned by the URL and handed down, so the parent
+ * stays the single place that knows how to change one — which is also where
+ * the offset reset lives.
+ *
+ * That includes the PR number box, whose draft is the parent's too. It is the
+ * one control whose displayed value can differ from the filter — it renders
+ * every keystroke while only filtering once typing settles — and reconciling
+ * those two has to happen wherever the URL is written, not here. See
+ * `Reviews`.
  */
 export function ReviewFilterBar({
   filters,
+  prDraft,
+  onPrDraftChange,
   onChange,
   onClear,
 }: {
   filters: ReviewFilters;
+  prDraft: string;
+  onPrDraftChange: (next: string) => void;
   onChange: (next: Partial<ReviewFilters>) => void;
   onClear: () => void;
 }) {
   const repos = useRepos();
-
-  /**
-   * The one control with local state. It is a free-text box, so it has to
-   * render every keystroke while only *filtering* once typing settles —
-   * otherwise "203" asks the API about PR 2 and PR 20 on the way.
-   */
-  const asText = (value: number | undefined) =>
-    value === undefined ? "" : String(value);
-
-  const [prDraft, setPrDraft] = useState(() => asText(filters.prNumber));
-  const settledPr = useDebouncedValue(prDraft.trim());
-
-  /**
-   * Re-seed the box when the filter changes underneath it — Clear filters,
-   * or a pasted URL. Adjusting state during render rather than in an effect:
-   * React re-runs this component before touching the DOM, so there is no
-   * flash of the stale value and no cascading render.
-   *
-   * Safe against clobbering a half-typed number because the draft is only
-   * published once it has been still for the debounce, so by the time the
-   * value comes back around the two already agree.
-   */
-  const [lastPublished, setLastPublished] = useState(filters.prNumber);
-  if (filters.prNumber !== lastPublished) {
-    setLastPublished(filters.prNumber);
-    setPrDraft(asText(filters.prNumber));
-  }
-
-  useEffect(() => {
-    if (settledPr === "") {
-      if (filters.prNumber !== undefined) onChange({ prNumber: undefined });
-      return;
-    }
-    // Invalid input is left alone rather than pushed to the URL: it would
-    // degrade to "no filter" on the way back in, which reads as the box
-    // silently clearing itself while you are still typing.
-    if (!isValidPrNumber(settledPr)) return;
-    const parsed = Number(settledPr);
-    if (parsed !== filters.prNumber) onChange({ prNumber: parsed });
-    // Publishes the settled draft outward. `filters.prNumber` stays out of the
-    // dependencies: reacting to the value coming back in is what the render
-    // adjustment above is for, and doing both here would have them fight.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settledPr]);
 
   const invalidPr = prDraft.trim() !== "" && !isValidPrNumber(prDraft.trim());
 
@@ -115,7 +79,7 @@ export function ReviewFilterBar({
             inputMode="numeric"
             placeholder="Any"
             value={prDraft}
-            onChange={(event) => setPrDraft(event.target.value)}
+            onChange={(event) => onPrDraftChange(event.target.value)}
           />
         )}
       </Field>
@@ -158,10 +122,11 @@ export function ReviewFilterBar({
         )}
       </Field>
 
-      {/* Only rendered when there is something to clear. Filters persist in
-          the URL, which makes them easy to forget about a day later and then
-          read as "Liffy lost my reviews" — this is the way back. */}
-      {hasActiveFilters(filters) && (
+      {/* Only rendered when there is something to clear — which includes a
+          non-default order, because clearing resets that too. Filters persist
+          in the URL, which makes them easy to forget about a day later and
+          then read as "Liffy lost my reviews" — this is the way back. */}
+      {isNonDefaultView(filters) && (
         <Button variant="ghost" onClick={onClear} className="mb-px">
           Clear filters
         </Button>

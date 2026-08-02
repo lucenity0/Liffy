@@ -14,6 +14,7 @@ import {
   VerdictBadge,
 } from "./badgeMaps";
 import { Button } from "./Button";
+import { Dropdown } from "./Dropdown";
 import { Spinner } from "./Spinner";
 import { EmptyState } from "./EmptyState";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -266,6 +267,101 @@ describe("Field", () => {
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(input).toHaveAccessibleDescription("That looks wrong");
     expect(screen.queryByText("owner/name")).toBeNull();
+  });
+});
+
+describe("Dropdown", () => {
+  const OPTIONS = [
+    { value: "", label: "All statuses", triggerLabel: "All" },
+    { value: "pending", label: "Pending", node: <Badge>Pending</Badge> },
+    { value: "failed", label: "Failed", node: <Badge tone="oxide">Failed</Badge> },
+  ];
+
+  function Harness({ initial = "" }: { initial?: string }) {
+    const [value, setValue] = useState(initial);
+    return (
+      <Dropdown
+        label="Status"
+        value={value}
+        options={OPTIONS}
+        onChange={setValue}
+      />
+    );
+  }
+
+  it("names itself for the field and the value, and shows the short label", () => {
+    wrap(<Harness />);
+
+    const trigger = screen.getByRole("combobox", { name: "Status: All statuses" });
+    // The button only has room for the field; the list gets the full wording.
+    expect(trigger).toHaveTextContent("All");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("opens on click and reports the chosen value", async () => {
+    const user = userEvent.setup();
+    wrap(<Harness />);
+
+    await user.click(screen.getByRole("combobox"));
+    // Rows can be drawn rather than spelled — that is the whole reason this
+    // is not a native <select>.
+    expect(
+      within(screen.getByRole("listbox")).getAllByRole("option"),
+    ).toHaveLength(3);
+
+    await user.click(screen.getByRole("option", { name: "Failed" }));
+
+    expect(screen.getByRole("combobox")).toHaveAccessibleName("Status: Failed");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("arrows to a row, takes it with Enter, and hands focus back", async () => {
+    const user = userEvent.setup();
+    wrap(<Harness />);
+
+    const trigger = screen.getByRole("combobox");
+    trigger.focus();
+    await user.keyboard("{ArrowDown}");
+
+    // Focus stays on the button; the active row is named by activedescendant.
+    expect(trigger).toHaveFocus();
+    const active = screen.getByRole("listbox").querySelector('[data-active="true"]');
+    expect(trigger).toHaveAttribute("aria-activedescendant", active!.id);
+
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    expect(trigger).toHaveAccessibleName("Status: Pending");
+    expect(trigger).toHaveFocus();
+  });
+
+  it("leaves the value alone on Escape", async () => {
+    const user = userEvent.setup();
+    wrap(<Harness initial="failed" />);
+
+    const trigger = screen.getByRole("combobox");
+    trigger.focus();
+    // Arrowing past an option is not the same as picking it.
+    await user.keyboard("{ArrowDown}{ArrowUp}{ArrowUp}{Escape}");
+
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(trigger).toHaveAccessibleName("Status: Failed");
+  });
+
+  it("closes when a pointer lands outside it", async () => {
+    const user = userEvent.setup();
+    wrap(
+      <>
+        <Harness />
+        <button>elsewhere</button>
+      </>,
+    );
+
+    await user.click(screen.getByRole("combobox"));
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "elsewhere" }));
+    expect(screen.queryByRole("listbox")).toBeNull();
   });
 });
 

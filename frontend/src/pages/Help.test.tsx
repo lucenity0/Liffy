@@ -292,9 +292,14 @@ describe("Help — illustrations", () => {
     renderPage("/help?q=how%20does%20liffy%20work");
 
     const pane = await answer();
-    // The scroll-scrubbed sequence's rail — the four beats it walks through.
-    expect(within(pane).getByText("a PR arrives")).toBeInTheDocument();
-    expect(within(pane).getByText("comment")).toBeInTheDocument();
+    // The four labelled stages, all on screen at once — no scrolling, nothing
+    // to operate. A reference figure is read while reading, often re-read, and
+    // often arrived at by deep link; it has to be legible in one glance.
+    expect(within(pane).getByText("Connect a repo")).toBeInTheDocument();
+    expect(within(pane).getByText("You score it")).toBeInTheDocument();
+    expect(
+      within(pane).getByText(/neither recalled file appears in the diff/i),
+    ).toBeInTheDocument();
   });
 
   it("renders the page fine when the figure name is unknown", async () => {

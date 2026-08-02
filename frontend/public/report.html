@@ -7,10 +7,7 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <title>liffy — how it works</title>
-    <meta
-      name="description"
-      content="How Liffy works, in plain English: signing in with GitHub, reading a whole codebase, reviewing a pull request, and scoring the result."
-    />
+    <meta name="description" content="How Liffy works, in plain English: signing in with GitHub, reading a whole codebase, reviewing a pull request, and scoring the result." />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#1d1b18" media="(prefers-color-scheme: dark)" />
@@ -21,10 +18,7 @@
     <meta property="og:site_name" content="liffy" />
     <meta property="og:url" content="https://liffy.lucenity.dev/report" />
     <meta property="og:title" content="liffy — how it works" />
-    <meta
-      property="og:description"
-      content="An illustrated walkthrough of Liffy's architecture, from GitHub sign-in to a scored code review."
-    />
+    <meta property="og:description" content="An illustrated walkthrough of Liffy's architecture, from GitHub sign-in to a scored code review." />
 
     <!--
       GENERATED FILE — do not edit. Edit docs/report.src.html instead; that
@@ -33,17 +27,17 @@
 
       The generator and the publish script are local tooling and are not in
       the repository (see .gitignore); this committed output is what ships.
-      It goes up as report/index.html on the `under-construction` branch —
-      the GitHub Pages source behind liffy.lucenity.dev — while this copy
-      stays in the source tree so the two can be diffed. Only /favicon.svg
-      and /fonts/*.woff2 are external, and both degrade cleanly.
+      It goes up on the `under-construction` branch — the GitHub Pages
+      source behind liffy.lucenity.dev — while this copy stays in the
+      source tree so the two can be diffed. Only /favicon.svg and
+      /fonts/*.woff2 are external, and both degrade cleanly.
     -->
 
-    <!-- Same contract as index.html and the WIP page: theme on <html> before
+    <!-- Same contract as index.html and the app: theme on <html> before
          first paint, same `liffy-theme` key, so moving between the front
-         door, the app and this page never flashes. try/catch because
-         localStorage throws outright when storage is partitioned, and a
-         colour preference is not worth a blank page. -->
+         door, the walkthrough and the dashboard never flashes. try/catch
+         because localStorage throws outright when storage is partitioned,
+         and a colour preference is not worth a blank page. -->
     <script>
       (function () {
         try {
@@ -937,7 +931,7 @@ document.documentElement.classList.add("anim");
     </p>
 
     <div class="mast-meta">
-      <p class="lbl">Built by <span>Nafees&nbsp;S &amp; Gajalakshmi</span></p>
+      <p class="lbl">Built by <span>Nafees&nbsp;S &amp; S&nbsp;Gaja&nbsp;Lakshmi</span></p>
       <p class="lbl">Report <span>v1.0</span></p>
       <p class="lbl">Status <span>Working end to end</span></p>
     </div>
@@ -1859,7 +1853,7 @@ document.documentElement.classList.add("anim");
     <div class="colo-credit">
       <span class="lbl">Architecture &amp; Project Report</span>
       <span class="colo-credit-v">Version 1.0</span>
-      <span class="colo-credit-v">Nafees&nbsp;S &amp; Gajalakshmi</span>
+      <span class="colo-credit-v">Nafees&nbsp;S &amp; S&nbsp;Gaja&nbsp;Lakshmi</span>
     </div>
 
     <div class="colo-foot">

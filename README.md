@@ -92,11 +92,126 @@ Every provider sits behind one `ReviewLLM` protocol, so switching is config, not
 | **Ollama** (local) | free | **none** | `openai` + `OPENAI_BASE_URL=http://localhost:11434/v1` |
 | **Gemini** free tier | free | free Google account | `openai` + Gemini's compat URL |
 | **Claude Code** | your subscription | one you already pay for | `claude_code` |
+| **Codex** | your subscription | one you already pay for | `codex` |
 | **Anthropic API** | metered | API key | `anthropic` *(default)* |
 
 Embeddings are local by default and never need a key, whichever LLM you pick.
 
 > **On local models:** Liffy asks for strict JSON matching a fixed schema, and small models struggle with it. `qwen2.5-coder:7b` was measured returning comments anchored to files that aren't in the diff — every one gets dropped, leaving an empty review. Set `OPENAI_USE_JSON_SCHEMA=true` to constrain generation to the schema, and prefer a larger model. See **[docs/SETUP.md](docs/SETUP.md#running-without-an-api-key-ollama)**.
+
+<img src="./assets/divider.svg" width="100%" alt="" />
+
+### `// reviewing on a subscription you already pay for`
+
+The honest number: the first live run at `high` effort cost **~$0.35 for a single
+pull request**. If you are just trying Liffy out, that is a real reason not to.
+
+`LLM_PROVIDER=claude_code` and `LLM_PROVIDER=codex` remove that cost entirely.
+Both drive a CLI you have already signed into, so the review runs against your
+Claude or ChatGPT subscription — no API key, no metered billing, nothing to top
+up.
+
+**Running Liffy directly on your machine** — install the CLI, sign in, set
+`LLM_PROVIDER`, done. The CLI reads its own credentials from your home directory
+and Liffy never touches them.
+
+**Running Liffy through `./liffy.sh`** (Docker) needs one extra step, because the
+worker container has no home directory holding those credentials. `./liffy.sh`
+reads `LLM_PROVIDER` from `backend/.env` and switches to the worker image with the
+CLIs installed on its own; by hand that is
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
+```
+
+For **`claude_code`**, mint a token on the host:
+
+```bash
+claude setup-token          # → CLAUDE_CODE_OAUTH_TOKEN=...
+```
+
+Then either paste it into **Settings → Secrets → Connect**, which stores it in
+Liffy and applies from the next review, or put it in `backend/.env` if you would
+rather keep every credential in one file. The CLI's login is a browser flow with
+no headless mode, so the one command is unavoidable either way — what the page
+saves you is the dotfile edit and the restart.
+
+For **`codex`**, there is no equivalent — and that is worth being clear about
+rather than papering over. The Codex CLI has no auth environment variable, and
+`codex login --with-access-token` refuses a ChatGPT subscription token. The only
+thing that authenticates it is a real `auth.json`, so containerised Codex needs
+`~/.codex` mounted into the worker. `./liffy.sh` adds
+`docker-compose.codex.yml` automatically when Codex is selected; inspect that
+file before starting if you want to review the credential access. For a manual
+Compose invocation, add it as a third `-f` file. Running the worker on the host
+avoids the mount entirely.
+
+Either way, a missing credential **fails at startup with a message naming the fix**
+— not forty seconds into a queued review.
+
+**What these providers are for.** They are for local, personal use: one person,
+their own subscription, their own machine. Pointing a subscription at a shared or
+multi-user deployment is a different thing under different terms — check your
+Anthropic or OpenAI subscription agreement before doing it. Liffy will not stop
+you and does not encourage it.
+
+**They are also unavailable in CI.** No test depends on a signed-in CLI, and none
+should: every subscription-provider test in `backend/tests/test_llm_chain.py` runs
+against captured output.
+
+**Two caveats worth knowing.** Neither CLI offers a rate-limit contract, so
+exhausting your subscription mid-review surfaces as a failed review — Liffy names
+that case specifically rather than reporting it as a parse error. And Claude Code
+injects its own system prompt on every call (~17k tokens of overhead); on a
+subscription that spends quota rather than money, which is the trade. On an API
+key, calling the API directly is strictly better.
+
+<img src="./assets/divider.svg" width="100%" alt="" />
+
+### `// where your code goes`
+
+Liffy is self-hosted, so there is no Liffy server and no account: **the maintainers
+never receive your code, and neither does any Liffy-operated service, because none
+exists.** Everything runs on infrastructure you control.
+
+Whether your code leaves your machine at all is decided by one setting —
+`LLM_PROVIDER`.
+
+| `LLM_PROVIDER` | Does your code leave your machine? |
+|---|---|
+| **Ollama** (local, via `openai` + a localhost `OPENAI_BASE_URL`) | **No.** The model runs on your hardware. Liffy makes no outbound request carrying your code. Works with no network at all. |
+| **Gemini** (`openai` + Gemini's compat URL) | **Yes** — to Google, under [their terms](https://ai.google.dev/gemini-api/terms). Note that free-tier Gemini may be used to improve their models. |
+| **Anthropic** (`anthropic`) | **Yes** — to Anthropic, under [their terms](https://www.anthropic.com/legal/commercial-terms). |
+| **Claude Code** (`claude_code`) | **Yes** — the CLI runs locally but still calls Anthropic, under your existing subscription's terms. Running locally is not the same as staying local. |
+| **Codex** (`codex`) | **Yes** — to OpenAI, under your existing ChatGPT subscription's terms. Same caveat as Claude Code: a local CLI is still a network call. |
+
+**Embeddings are always local.** The `local` embedding provider is the default and
+runs on your machine, so indexing your codebase never sends anything anywhere,
+whichever review model you choose.
+
+<details>
+<summary><sub>what exactly gets sent, when you use a hosted provider</sub></summary>
+
+<br />
+
+Per review, once, at review time:
+
+- the pull request title
+- the **diff** — the actual added and removed lines of the changed files
+- the **retrieved context** — a handful of chunks of your existing source code
+  that the index matched as relevant, which by design are files *not* in the
+  diff (that is the entire point of the retrieval step)
+
+Not sent: your GitHub token, your other repositories, your `.env`, or any part of
+the codebase the retrieval step did not select.
+
+Your repositories are indexed into a vector store on your own disk
+(`chroma/`, gitignored). That index never leaves the machine.
+
+</details>
+
+If you are reviewing proprietary code and cannot send it to a third party, use
+Ollama. That path is free, needs no account, and is the reason it is supported.
 
 <img src="./assets/divider.svg" width="100%" alt="" />
 
@@ -110,6 +225,10 @@ commits   feat: add github webhook endpoint
 rules     1 approval min · CI green · small PRs · say what/why/how-to-test
 ```
 
+Full guide, including the exact commands CI runs: **[CONTRIBUTING.md](CONTRIBUTING.md)**
+
+Found a security problem? Please don't open a public issue — see **[SECURITY.md](SECURITY.md)**.
+
 <img src="./assets/divider.svg" width="100%" alt="" />
 
 ### `// docs`
@@ -118,4 +237,8 @@ rules     1 approval min · CI green · small PRs · say what/why/how-to-test
 
 <br />
 
-<div align="center"><sub>built by <a href="https://github.com/lucenity0">@lucenity0</a> · your code never leaves your machine — that's the whole point</sub></div>
+<div align="center"><sub><a href="LICENSE">MIT licensed</a> &nbsp;·&nbsp; <a href="CONTRIBUTING.md">contributing</a> &nbsp;·&nbsp; <a href="SECURITY.md">security policy</a></sub></div>
+
+<br />
+
+<div align="center"><sub>built by <a href="https://github.com/lucenity0">@lucenity0</a> · self-hosted · run it against a local model and your code never leaves your machine</sub></div>

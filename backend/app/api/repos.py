@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -20,6 +21,20 @@ from app.services.rag_service import collection_name, get_chroma_client
 from app.workers import index_worker
 
 router = APIRouter()
+
+
+def _queue_index(repo: Repository, db: Session) -> None:
+    """Persist an in-flight marker before handing work to Celery."""
+    repo.indexing_started_at = datetime.now(timezone.utc)
+    db.commit()
+    try:
+        index_worker.enqueue_index(repo.id)
+    except Exception:
+        # Do not leave a permanently "indexing" repository when the broker is
+        # unavailable. The last successful indexed_at remains truthful.
+        repo.indexing_started_at = None
+        db.commit()
+        raise
 
 
 def _get_repo_or_404(db: Session, repo_id: uuid.UUID, user: User) -> Repository:
@@ -56,7 +71,7 @@ def connect_repo(
         )
     )
     if existing is not None:
-        index_worker.enqueue_index(existing.id)
+        _queue_index(existing, db)
         return existing
 
     owner, name = payload.full_name.split("/", 1)
@@ -85,8 +100,7 @@ def connect_repo(
         default_branch=meta.default_branch,
     )
     db.add(repo)
-    db.commit()
-    index_worker.enqueue_index(repo.id)
+    _queue_index(repo, db)
     return repo
 
 
@@ -126,7 +140,10 @@ def trigger_index(
     user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     repo = _get_repo_or_404(db, repo_id, user)
-    index_worker.enqueue_index(repo.id)
+    # Keep the last successful indexed_at while the new task is in flight.
+    # Commit before enqueueing so the worker and the next status poll observe
+    # the same state even when the task starts immediately.
+    _queue_index(repo, db)
     return {"repo_id": str(repo.id), "status": "queued"}
 
 
@@ -145,7 +162,13 @@ def repo_status(
     return RepoStatusOut(
         id=repo.id,
         full_name=repo.full_name,
-        status="indexed" if repo.indexed_at else "not_indexed",
+        status=(
+            "indexing"
+            if repo.indexing_started_at
+            else "indexed"
+            if repo.indexed_at
+            else "not_indexed"
+        ),
         indexed_at=repo.indexed_at,
         chunk_count=int(chunk_count or 0),
         last_index_failed_files=repo.last_index_failed_files,

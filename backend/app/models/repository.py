@@ -22,6 +22,12 @@ class Repository(Base):
     indexed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Set when an index task is committed to the queue. Keeping this separate
+    # from indexed_at preserves the last known-good index during re-indexing
+    # and makes an in-flight run distinguishable from a never-indexed repo.
+    indexing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # How the **last** index run went, so a partial index is distinguishable
     # from a complete one.
     #

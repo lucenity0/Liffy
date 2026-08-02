@@ -84,7 +84,7 @@ export function IndexStatus({
 
   return (
     <Row>
-      <IndexBadge value="not_indexed" />
+      <IndexBadge value={status.status === "indexing" ? "indexing" : "not_indexed"} />
       {/* aria-live so a screen reader hears the flip to "indexed" that the
           5s poll produces, rather than only seeing it on the next visit. */}
       <Meta aria-live="polite">building the index — this can take a while</Meta>

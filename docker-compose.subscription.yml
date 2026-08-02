@@ -1,0 +1,42 @@
+# Overlay for the subscription-backed providers (LLM_PROVIDER=claude_code or
+# codex). Use it alongside the base file, never on its own:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
+#
+# What it changes: the worker — the only service that calls a model — is built
+# from an image that has the `claude` and `codex` CLIs installed. Everything
+# else is inherited.
+#
+# Why this exists at all: `liffy.sh` runs the worker in Docker, and the CLIs
+# authenticate against credentials in the user's *home directory*, which does
+# not exist in a container. Before this overlay, selecting `claude_code` in the
+# settings page produced a review that failed on a subprocess error.
+#
+# ⚠ Nothing is restated under `environment:` here, and nothing should be. That
+# block outranks `env_file`, so adding `CLAUDE_CODE_OAUTH_TOKEN: ${...:-}`
+# would resolve to an empty string and overwrite the real token in
+# backend/.env — the same failure as #228. The token reaches the process
+# through env_file in the base file, which is already correct.
+services:
+  worker:
+    # A distinct tag, not the default `liffy-worker`.
+    #
+    # Both compose invocations build the same *service*, so without this they
+    # write the same image name and the last build wins. A plain
+    # `docker compose up --build worker` would silently replace the image that
+    # has the CLIs with one that does not, and the next review would die on
+    # `'claude' is not on PATH` with nothing having visibly changed. Observed
+    # doing exactly that.
+    image: liffy-worker-subscription
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.subscription
+
+    # ── LLM_PROVIDER=codex only ───────────────────────────────────────────────
+    # liffy.sh adds docker-compose.codex.yml automatically for Codex. It is a
+    # separate overlay because the worker can read the host's ChatGPT access,
+    # refresh, and ID tokens; Claude users should not expose ~/.codex.
+    # For a manual Docker invocation, add that file as a third -f argument.
+
+  # The Codex overlay also mounts the credential directory into `backend`,
+  # because the settings page discovers the account's model slugs there.

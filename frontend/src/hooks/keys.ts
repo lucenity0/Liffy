@@ -42,4 +42,23 @@ export const keys = {
     all: ["analytics"] as const,
     summary: () => [...keys.analytics.all, "summary"] as const,
   },
+  /**
+   * One document, not a list — there is no per-key query, because the page
+   * renders every setting at once and a PATCH can change the provenance of a
+   * key it did not name.
+   */
+  settings: {
+    all: ["settings"] as const,
+  },
+  /**
+   * Static content that ships with the image, so nothing here is ever
+   * invalidated — a document changes only when the app is redeployed, which
+   * takes the whole cache with it.
+   */
+  help: {
+    all: ["help"] as const,
+    topics: () => [...keys.help.all, "topics"] as const,
+    search: (q: string) => [...keys.help.all, "search", q] as const,
+    page: (slug: string) => [...keys.help.all, "page", slug] as const,
+  },
 } as const;

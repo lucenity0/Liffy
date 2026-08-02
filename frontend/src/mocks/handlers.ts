@@ -1,16 +1,23 @@
 import { http, HttpResponse } from "msw";
 import {
   fixtureAnalyticsSummary,
+  fixtureHelpPassages,
+  fixtureHelpTopics,
   fixtureRepoIndexed,
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
   fixtureRepos,
   fixtureReviewDetailById,
   fixtureReviewListItems,
+  fixtureSettings,
   fixtureTokenPair,
   fixtureUser,
 } from "./fixtures";
-import { REVIEW_STATUSES, type ReviewDetailOut } from "@/types/api";
+import {
+  REVIEW_STATUSES,
+  type ReviewDetailOut,
+  type SettingsOut,
+} from "@/types/api";
 
 /**
  * Wildcard path matching (a leading "*" instead of a full origin) so the
@@ -46,6 +53,40 @@ const ratings = new Map<string, number>();
  */
 export function resetFeedback() {
   ratings.clear();
+}
+
+/**
+ * The settings document the PATCH handler mutates.
+ *
+ * Stateful for the same reason `ratings` is: `useUpdateSettings` writes the
+ * response into the cache, so a handler replaying the frozen fixture would
+ * answer a save with the old value and the control would snap back a beat
+ * after being changed.
+ *
+ * Cloned from the fixture rather than aliasing it, so a test that saves a
+ * setting cannot edit the shared constant every other test reads.
+ */
+let settingsState: SettingsOut = structuredClone(fixtureSettings);
+
+/**
+ * Secrets this mock pretends `backend/.env` also sets.
+ *
+ * Disconnect deletes Liffy's stored copy and the dotfile's value takes over —
+ * which is the case the UI got wrong: it read as "still connected", so the
+ * button appeared to do nothing. Modelling the file here is what lets a test
+ * tell the two apart.
+ */
+const dotenvSecrets = new Set<string>();
+
+/** Put a secret in the mock's `.env`. Cleared by `resetSettings`. */
+export function setDotenvSecret(key: string) {
+  dotenvSecrets.add(key);
+}
+
+/** Wired into setupTests' `afterEach`, alongside `resetFeedback`. */
+export function resetSettings() {
+  settingsState = structuredClone(fixtureSettings);
+  dotenvSecrets.clear();
 }
 
 /** The detail fixtures are shared module constants: overlay, never mutate. */
@@ -318,5 +359,164 @@ export const handlers = [
       // no `updated_at` by design. Close enough here: nothing renders it.
       created_at: new Date().toISOString(),
     });
+  }),
+
+  http.get("*/settings", () => HttpResponse.json(settingsState)),
+
+  /**
+   * Stateful, like the ratings handler above and for the same reason: the
+   * mutation writes the response straight into the cache, so a handler
+   * replaying the frozen fixture would answer a save with the *old* value and
+   * the control would snap back a beat after being changed.
+   *
+   * It also enforces the allowlist and the validation, so `dev:mock` cannot
+   * make an impossible write look like it worked.
+   */
+  http.patch("*/settings", async ({ request }) => {
+    const { values } = (await request.json()) as {
+      values: Record<string, string>;
+    };
+
+    const next = structuredClone(settingsState);
+    for (const [key, raw] of Object.entries(values)) {
+      const target = next.editable.find((entry) => entry.key === key);
+      if (!target) {
+        return HttpResponse.json(
+          { detail: `'${key}' is not an editable setting.` },
+          { status: 422 },
+        );
+      }
+      if (target.kind === "choice" && !target.choices.includes(raw)) {
+        return HttpResponse.json(
+          { detail: `Must be one of: ${target.choices.join(", ")}.` },
+          { status: 422 },
+        );
+      }
+      if (target.kind === "int") {
+        const parsed = Number(raw);
+        if (!Number.isInteger(parsed)) {
+          return HttpResponse.json(
+            { detail: `Expected a whole number, got '${raw}'.` },
+            { status: 422 },
+          );
+        }
+        if (target.minimum !== null && parsed < target.minimum) {
+          return HttpResponse.json(
+            { detail: `Must be at least ${target.minimum}.` },
+            { status: 422 },
+          );
+        }
+        target.value = parsed;
+      } else if (target.kind === "bool") {
+        target.value = raw === "true";
+      } else {
+        target.value = raw;
+      }
+      // Back to its default means no override — the same rule the resolver
+      // applies by deleting the row.
+      target.source = target.value === target.default_value ? "default" : "override";
+    }
+
+    settingsState = next;
+    return HttpResponse.json(settingsState);
+  }),
+
+  /**
+   * Connecting a credential from the page.
+   *
+   * Enforces the two rules that matter, so `dev:mock` cannot make a forbidden
+   * write look like it worked: only `connectable` keys are accepted, and the
+   * value is never echoed back into the document.
+   */
+  http.post("*/settings/secrets/:key", async ({ params, request }) => {
+    const { value } = (await request.json()) as { value: string };
+    const next = structuredClone(settingsState);
+    const target = next.secrets.find((entry) => entry.key === params.key);
+
+    if (!target?.connectable) {
+      return HttpResponse.json(
+        { detail: `'${params.key}' cannot be connected from the settings page.` },
+        { status: 422 },
+      );
+    }
+    if (value.trim().length < 20 || /\s/.test(value.trim())) {
+      return HttpResponse.json(
+        { detail: "That does not look like a token." },
+        { status: 422 },
+      );
+    }
+
+    target.is_set = true;
+    target.source = "override";
+    settingsState = next;
+    return HttpResponse.json(settingsState);
+  }),
+
+  http.delete("*/settings/secrets/:key", ({ params }) => {
+    const next = structuredClone(settingsState);
+    const target = next.secrets.find((entry) => entry.key === params.key);
+    if (!target?.connectable) {
+      return HttpResponse.json(
+        { detail: `'${params.key}' is not a connected credential.` },
+        { status: 422 },
+      );
+    }
+    // Disconnect drops Liffy's copy; whatever `.env` holds takes over again.
+    // `dotenvSecrets` is what the real backend re-reads from settings — here it
+    // stands in for the file, so the fallback is exercised rather than assumed.
+    const fromDotenv = dotenvSecrets.has(String(params.key));
+    target.is_set = fromDotenv;
+    target.source = fromDotenv ? "env" : "default";
+    settingsState = next;
+    return HttpResponse.json(settingsState);
+  }),
+
+  // ── Help (#237) ────────────────────────────────────────────────────────────
+  //
+  // Ranking is the backend's, and is tested there. This mock does the one
+  // thing the UI actually branches on: a query either matches something or it
+  // matches nothing, and "nothing" must be a 200 with an empty list rather
+  // than an error.
+  http.get("*/help/topics", () => HttpResponse.json(fixtureHelpTopics)),
+
+  // Liffy files the issue itself now, so the mock owns the receipt the form
+  // renders. 422 for a short title mirrors the backend's own validation.
+  http.post("*/help/report", async ({ request }) => {
+    const body = (await request.json()) as {
+      title?: string;
+      body?: string;
+      kind?: string;
+    };
+    if (body.kind === "security") {
+      return HttpResponse.json(
+        { detail: "security reports do not go in public issues" },
+        { status: 422 },
+      );
+    }
+    if ((body.title ?? "").trim().length < 3 || (body.body ?? "").trim().length < 10) {
+      return HttpResponse.json({ detail: "too short" }, { status: 422 });
+    }
+    return HttpResponse.json(
+      { number: 251, url: "https://github.com/lucenity0/Liffy/issues/251" },
+      { status: 201 },
+    );
+  }),
+
+  http.get("*/help/:slug", ({ params }) => {
+    const page = fixtureHelpPassages.find((p) => p.slug === params.slug);
+    return HttpResponse.json(page ?? null);
+  }),
+
+  http.get("*/help", ({ request }) => {
+    const q = (new URL(request.url).searchParams.get("q") ?? "").toLowerCase();
+    const results = q.trim()
+      ? fixtureHelpPassages.filter(
+          (p) =>
+            p.title.toLowerCase().includes(q) ||
+            p.snippet.toLowerCase().includes(q) ||
+            q.split(/\s+/).some((t) => t.length > 3 && p.body.toLowerCase().includes(t)),
+        )
+      : [];
+    return HttpResponse.json({ query: q, results });
   }),
 ];

@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { afterAll, afterEach, beforeAll } from "vitest";
 import { cleanup } from "@testing-library/react";
-import { resetFeedback } from "./mocks/handlers";
+import { resetFeedback, resetSettings } from "./mocks/handlers";
 import { server } from "./mocks/server";
 
 // jsdom has no layout, so it throws "Not implemented" for these. React
@@ -23,5 +23,6 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
   server.resetHandlers();
   resetFeedback();
+  resetSettings();
 });
 afterAll(() => server.close());

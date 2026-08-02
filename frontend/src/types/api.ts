@@ -35,7 +35,7 @@ export type Category =
   | "convention"
   | "improvement";
 export type Severity = "critical" | "warning" | "info";
-export type IndexStatus = "indexed" | "not_indexed";
+export type IndexStatus = "indexed" | "indexing" | "not_indexed";
 
 export interface RepoOut {
   id: string;
@@ -65,11 +65,27 @@ export interface RepoStatusOut {
   last_indexed_files_seen: number | null;
 }
 
+/** The structured half of a review's overview. Null when the model wrote only prose. */
+export interface SummaryDetail {
+  changes?: string[];
+  files?: { path: string; description: string }[];
+}
+
 export interface ReviewOut {
   id: string;
   pr_id: string;
   status: ReviewStatus;
   summary: string | null;
+  /**
+   * What the pull request does, and what changed where — everything the
+   * overview renders *around* `summary`.
+   *
+   * Null on every review written before this landed, and on any model that
+   * answered with the older three-field output. Treat it as absent, never as
+   * empty: "the model was not asked" and "the model found nothing to say" are
+   * different facts.
+   */
+  summary_detail: SummaryDetail | null;
   verdict: Verdict | null;
   model_used: string | null;
   tokens_used: number | null;
@@ -369,4 +385,118 @@ export interface UserOut {
   username: string;
   email: string | null;
   avatar_url: string | null;
+}
+
+// ── Settings (backend/app/schemas/setting.py) ────────────────────────────────
+
+/** Where a value came from. The reason the page explains rather than just edits. */
+export type SettingSource = "default" | "env" | "override";
+
+export interface EditableSetting {
+  key: string;
+  group: string;
+  label: string;
+  help: string;
+  kind: "str" | "bool" | "int" | "choice";
+  choices: string[];
+  /** Offered as a dropdown, but the field stays open — unlike `choices`. */
+  suggestions: string[];
+  /** `llm_provider` values this setting matters for; empty means always. */
+  applies_to: string[];
+  minimum: number | null;
+  maximum: number | null;
+  value: string | number | boolean;
+  default_value: string | number | boolean;
+  source: SettingSource;
+  /** Reaches outside Liffy when enabled, so the UI confirms first. */
+  confirm_on_enable: boolean;
+}
+
+export interface ReadOnlySetting {
+  key: string;
+  group: string;
+  label: string;
+  /** Why it cannot be changed here. Rendered beside the disabled control. */
+  reason: string;
+  value: string | number | boolean;
+}
+
+/**
+ * A secret's existence and nothing else. There is deliberately no `value`
+ * field to render — not even a masked one, which would still leak the length.
+ */
+export interface SecretSetting {
+  key: string;
+  label: string;
+  /** What an unset value means for this one — needed, or genuinely optional. */
+  requirement: string;
+  /** `llm_provider` values this credential matters for; empty means always. */
+  applies_to: string[];
+  /** True when the page may set this one, rather than only report on it. */
+  connectable: boolean;
+  /** The command that produces the value, shown in the connect dialog. */
+  connect_command: string;
+  is_set: boolean;
+  /**
+   * Where the value came from. `is_set` cannot answer "can I disconnect this?"
+   * — a `.env` token and a connected one both read as set — so only `override`
+   * gets a Disconnect button; the rest get Replace.
+   */
+  source: SettingSource;
+}
+
+export interface SettingsOut {
+  editable: EditableSetting[];
+  read_only: ReadOnlySetting[];
+  secrets: SecretSetting[];
+}
+
+// ── Help (backend/app/schemas/help.py) ───────────────────────────────────────
+
+export interface HelpLink {
+  slug: string;
+  title: string;
+}
+
+export interface HelpPassage {
+  slug: string;
+  title: string;
+  /** The opening of the page — what the list pane shows. */
+  snippet: string;
+  /** The whole page, as markdown. The reading pane renders all of it. */
+  body: string;
+  related: HelpLink[];
+  /**
+   * Names a diagram the client draws above the text, or "" for none. A *name*,
+   * never markup — the corpus says which illustration belongs to a page and
+   * `Figure` owns the drawing, so a document can never inject markup.
+   */
+  figure: string;
+  score: number;
+}
+
+export interface HelpSearchOut {
+  query: string;
+  /**
+   * Empty means *nothing matched*, which is an answer rather than an error.
+   * Render it as "Liffy's docs don't cover that" — never as a failure, and
+   * never by falling back to the closest miss.
+   */
+  results: HelpPassage[];
+}
+
+export interface HelpTopic {
+  slug: string;
+  title: string;
+}
+
+export interface HelpIndexOut {
+  common: HelpTopic[];
+  all_topics: HelpTopic[];
+}
+
+/** `POST /help/report` — where the filed issue landed. */
+export interface ReportOut {
+  number: number;
+  url: string;
 }

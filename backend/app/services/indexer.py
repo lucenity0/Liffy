@@ -20,6 +20,26 @@ from app.services.rag_service import get_repo_collection
 # Files larger than this are skipped (vendored bundles, fixtures, etc.).
 MAX_FILE_BYTES = 200_000
 
+# Chunks embedded and upserted per round trip.
+#
+# A memory control, not a throughput knob: the local embedder holds a batch's
+# text and activations at once, so this number decides whether the worker
+# survives a large repository.
+#
+# Measured on this repository (281 files, ~3k chunks), worker RSS:
+#
+#   unbatched   ~430MB through the walk, then one step to 5.5GB → SIGKILL
+#   batch=128   ~450MB through the walk, then 2.9GB → 4.6GB → completes
+#
+# Read that second row honestly: batching turned a fatal spike into a run that
+# finishes, but peak is still ~4.6GB and it *climbs across batches* rather than
+# returning to baseline between them. The per-batch cost is bounded; something
+# in the embedder or its runtime is not releasing between calls. A machine with
+# less headroom than 8GB would still die here, and a bigger repository may yet.
+# The remaining growth is worth chasing separately — this constant only buys the
+# room to get there.
+EMBED_BATCH = 128
+
 # The first logger in the backend. Celery captures stdlib loggers on the worker,
 # which is the only process this module runs in, so a skipped file surfaces in
 # the worker log without any logging configuration to add.
@@ -180,40 +200,54 @@ def index_repository(
         )
 
     if to_embed:
-        vectors = embedder.embed_texts([c.text for c in to_embed])
-        collection.upsert(
-            ids=[_chunk_id(c.file_path, c.chunk_index) for c in to_embed],
-            embeddings=vectors,
-            documents=[c.text for c in to_embed],
-            metadatas=[
-                {
-                    "file_path": c.file_path,
-                    "chunk_index": c.chunk_index,
-                    "start_line": c.start_line,
-                    "end_line": c.end_line,
-                    "kind": c.kind,
-                    "name": c.name or "",
-                }
-                for c in to_embed
-            ],
-        )
         now = datetime.now(timezone.utc)
-        for chunk in to_embed:
-            key = (chunk.file_path, chunk.chunk_index)
-            row = existing_rows.get(key)
-            if row is None:
-                db.add(
-                    RepoEmbedding(
-                        repo_id=repo.id,
-                        file_path=chunk.file_path,
-                        chunk_index=chunk.chunk_index,
-                        content_hash=chunk.content_hash,
-                        indexed_at=now,
+        # Batched, and the batch size is the difference between this working
+        # and the worker being killed.
+        #
+        # Embedding every changed chunk in one call meant the model held the
+        # whole repository's worth of text and activations at once: a flat
+        # ~430MB for the entire file walk, then a single step to 5.5GB the
+        # moment this ran — straight into the OOM killer, taking the task with
+        # it and leaving no row and no error anywhere. Re-indexing this
+        # repository had never once completed.
+        #
+        # The upsert is batched for the same reason: it carries every document
+        # body a second time, over HTTP to Chroma.
+        for start in range(0, len(to_embed), EMBED_BATCH):
+            batch = to_embed[start : start + EMBED_BATCH]
+            vectors = embedder.embed_texts([c.text for c in batch])
+            collection.upsert(
+                ids=[_chunk_id(c.file_path, c.chunk_index) for c in batch],
+                embeddings=vectors,
+                documents=[c.text for c in batch],
+                metadatas=[
+                    {
+                        "file_path": c.file_path,
+                        "chunk_index": c.chunk_index,
+                        "start_line": c.start_line,
+                        "end_line": c.end_line,
+                        "kind": c.kind,
+                        "name": c.name or "",
+                    }
+                    for c in batch
+                ],
+            )
+            for chunk in batch:
+                key = (chunk.file_path, chunk.chunk_index)
+                row = existing_rows.get(key)
+                if row is None:
+                    db.add(
+                        RepoEmbedding(
+                            repo_id=repo.id,
+                            file_path=chunk.file_path,
+                            chunk_index=chunk.chunk_index,
+                            content_hash=chunk.content_hash,
+                            indexed_at=now,
+                        )
                     )
-                )
-            else:
-                row.content_hash = chunk.content_hash
-                row.indexed_at = now
+                else:
+                    row.content_hash = chunk.content_hash
+                    row.indexed_at = now
         result.chunks_added = len(to_embed)
 
     # Remove chunks whose (file, index) no longer exists: deleted or shrunk files.
@@ -235,5 +269,6 @@ def index_repository(
     repo.last_index_failed_files = result.files_failed
     repo.last_indexed_files_seen = result.files_seen
     repo.indexed_at = datetime.now(timezone.utc)
+    repo.indexing_started_at = None
     db.commit()
     return result

@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -19,6 +29,19 @@ class Review(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     raw_diff: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The structured half of the overview: `{"changes": [...], "files": [...]}`.
+    #
+    # Separate from `summary` rather than replacing it, because `summary` is
+    # the one-line preview in the reviews list — markdown headings and table
+    # pipes in that column would show up as syntax in a table cell. This is
+    # everything the pull request body and the detail panel render *around*
+    # that sentence.
+    #
+    # JSON rather than columns: the shape is presentational and expected to
+    # move, and a migration per field is a poor trade for a payload nothing
+    # queries. Null on every review written before this landed, and on any
+    # model that answered with the older three-field output.
+    summary_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)

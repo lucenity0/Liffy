@@ -6,6 +6,7 @@ from app.config import settings
 from app.llm.chain import generate_review
 from app.llm.output_parser import LLMOutputError
 from app.llm.prompts import SYSTEM_PROMPT, build_review_prompt
+from app.schemas.review import LLMReviewOutput
 from app.services.diff_parser import parse_diff
 from app.services.rag_service import RetrievedChunk
 
@@ -164,6 +165,91 @@ def test_prompt_builder_handles_empty_inputs() -> None:
     prompt = build_review_prompt("Empty PR", [], [])
     assert "(empty diff)" in prompt
     assert "(no similar code found)" in prompt
+
+
+def test_prose_suggestions_are_removed_before_publishing() -> None:
+    from app.llm.chain import _remove_prose_suggestions
+
+    output = LLMReviewOutput.model_validate(
+        {
+            "summary": "One issue.",
+            "verdict": "comment",
+            "comments": [
+                {
+                    "file": "backend/Dockerfile",
+                    "line_start": 10,
+                    "line_end": 10,
+                    "category": "improvement",
+                    "severity": "info",
+                    "comment": "Keep the toolchain version deliberate.",
+                    "suggestion": (
+                        "Pin exact versions, e.g. `npm install -g @openai/codex@0.146.0`, "
+                        "and bump them deliberately alongside the tests."
+                    ),
+                }
+            ],
+        }
+    )
+
+    cleaned = _remove_prose_suggestions(output)
+    assert cleaned.comments[0].suggestion is None
+
+
+def test_code_suggestions_are_preserved() -> None:
+    from app.llm.chain import _remove_prose_suggestions
+
+    output = LLMReviewOutput.model_validate(
+        {
+            "summary": "One issue.",
+            "verdict": "comment",
+            "comments": [
+                {
+                    "file": "app/util.py",
+                    "line_start": 4,
+                    "line_end": 4,
+                    "category": "logic_error",
+                    "severity": "warning",
+                    "comment": "Return the computed value.",
+                    "suggestion": "return value",
+                }
+            ],
+        }
+    )
+
+    cleaned = _remove_prose_suggestions(output)
+    assert cleaned.comments[0].suggestion == "return value"
+
+
+def test_code_like_backticks_and_identifiers_are_preserved() -> None:
+    from app.llm.chain import _remove_prose_suggestions
+
+    suggestions = [
+        "const url = `${base}/repos/${name}`;",
+        "echo $(git rev-parse HEAD)",
+        "shouldRender = true",
+        "must_be_valid",
+    ]
+    output = LLMReviewOutput.model_validate(
+        {
+            "summary": "Several issues.",
+            "verdict": "comment",
+            "comments": [
+                {
+                    "file": "app/util.py",
+                    "line_start": 4,
+                    "line_end": 4,
+                    "category": "improvement",
+                    "severity": "info",
+                    "comment": "Use the replacement directly.",
+                    "suggestion": suggestion,
+                }
+                for suggestion in suggestions
+            ],
+        }
+    )
+
+    cleaned = _remove_prose_suggestions(output)
+    assert [comment.suggestion for comment in cleaned.comments] == suggestions
 
 
 # ── AnthropicReviewLLM (LLM-1) ────────────────────────────────────────────────
@@ -356,11 +442,33 @@ class _Completed:
         self.stderr = stderr
 
 
-def _claude_code(monkeypatch, payload=None, *, stdout=None, returncode=0, raises=None):
+def _cc_transcript(payload: dict, turns: list[str] | None = None) -> str:
+    """A `--output-format stream-json` transcript: assistant turns, then result.
+
+    Defaults to one turn carrying the payload's ``result``, which is the
+    single-turn shape. Pass ``turns`` to reproduce the multi-turn one.
+    """
+    if turns is None:
+        turns = [payload.get("result") or ""]
+    lines = [
+        _json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": t}]}})
+        for t in turns
+    ]
+    lines.append(_json.dumps({"type": "result", **payload}))
+    return "\n".join(lines) + "\n"
+
+
+def _claude_code(
+    monkeypatch, payload=None, *, stdout=None, returncode=0, raises=None, turns=None
+):
     """Build the provider with `claude` faked. Never runs the real binary."""
     from app.llm import chain
 
     monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/claude")
+    # Pin the host case. Without this the suite passes or fails depending on
+    # where it runs — the container guard fires for real when CI executes
+    # inside Docker, which is exactly what it is supposed to do.
+    monkeypatch.setattr(chain, "running_in_container", lambda: False)
     calls: dict = {}
 
     def fake_run(argv, **kwargs):
@@ -368,7 +476,7 @@ def _claude_code(monkeypatch, payload=None, *, stdout=None, returncode=0, raises
         calls["kwargs"] = kwargs
         if raises is not None:
             raise raises
-        out = stdout if stdout is not None else _json.dumps(payload or _cc_payload())
+        out = stdout if stdout is not None else _cc_transcript(payload or _cc_payload(), turns)
         return _Completed(out, returncode)
 
     monkeypatch.setattr(chain.subprocess, "run", fake_run)
@@ -379,6 +487,86 @@ def test_claude_code_satisfies_protocol(monkeypatch: pytest.MonkeyPatch) -> None
     llm, _ = _claude_code(monkeypatch)
     assert isinstance(llm.model_name, str)
     assert callable(llm.complete)
+
+
+def test_claude_code_reads_the_review_from_an_earlier_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The multi-turn regression, taken from a real run.
+
+    Claude Code is an agent loop, so on a real pull request it takes more than
+    one turn even with every tool disabled — `num_turns: 2` on PR #246, the
+    review in turn 1 and a chatty summary in turn 2. `--output-format json`
+    returns only the final turn, so the review was generated, discarded, and
+    reported as `No JSON object found in model output`.
+    """
+    review = '{"summary":"ok","verdict":"approve","comments":[]}'
+    llm, _ = _claude_code(
+        monkeypatch,
+        _cc_payload(
+            num_turns=2,
+            result="Review complete — findings reported above (2 items, no criticals).",
+        ),
+        turns=[review, "Review complete — findings reported above (2 items, no criticals)."],
+    )
+
+    assert llm.complete("sys", "user").text == review
+
+
+def test_claude_code_asks_for_the_whole_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--output-format json` cannot express a multi-turn run; don't ask for it."""
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv = calls["argv"]
+    assert argv[argv.index("--output-format") + 1] == "stream-json"
+    # The CLI rejects the combination without it.
+    assert "--verbose" in argv
+
+
+def test_claude_code_ignores_thinking_that_talks_about_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reasoning *about* the schema must not outrank the schema."""
+    from app.llm import chain
+
+    review = '{"summary":"ok","verdict":"approve","comments":[]}'
+    transcript = "\n".join(
+        [
+            _json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "thinking", "thinking": 'I should emit {"summary": ...}'},
+                            {"type": "text", "text": review},
+                        ]
+                    },
+                }
+            ),
+            _json.dumps({"type": "result", **_cc_payload(result="done")}),
+        ]
+    )
+    payload, turns, tools = chain._claude_code_stream(transcript)
+
+    assert payload is not None
+    assert turns == [review]
+    assert tools == []
+
+
+def test_claude_code_survives_a_junk_line_in_the_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One unparseable line is not a reason to throw away a completed review."""
+    llm, _ = _claude_code(
+        monkeypatch,
+        stdout="warning: something\n"
+        + _cc_transcript(_cc_payload()),
+    )
+
+    assert llm.complete("sys", "user").text == '{"summary":"ok","verdict":"approve","comments":[]}'
 
 
 def test_claude_code_parses_result_and_usage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -433,13 +621,63 @@ def test_claude_code_runs_in_a_neutral_cwd(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_claude_code_disables_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty allow-list, not a deny-list naming the tools we know about.
+
+    The deny-list this replaces named thirteen tools and still missed
+    `ReportFindings`, which the CLI reaches for exactly when the prompt looks
+    like a code review. On PR #246 the model filed its findings through it and
+    wrote prose about having done so, so the transcript held no JSON at all and
+    the review failed as `No JSON object found in model output`.
+    """
     llm, calls = _claude_code(monkeypatch)
     llm.complete("sys", "user")
 
     argv = calls["argv"]
-    disabled = argv[argv.index("--disallowed-tools") + 1]
-    for tool in ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task"):
-        assert tool in disabled
+    assert argv[argv.index("--tools") + 1] == ""
+    # A deny-list only has to be out of date once.
+    assert "--disallowed-tools" not in argv
+
+
+def test_claude_code_names_the_tool_it_answered_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a tool ever gets through again, the failure must say which one.
+
+    `No JSON object found in model output` was true and useless — it blamed the
+    output parser, and finding the real cause meant reading the CLI's own
+    session transcript inside the worker container.
+    """
+    from app.llm import chain
+
+    transcript = "\n".join(
+        [
+            _json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "name": "ReportFindings", "input": {}}
+                        ]
+                    },
+                }
+            ),
+            _json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Review complete. 2 findings reported above."}
+                        ]
+                    },
+                }
+            ),
+            _json.dumps({"type": "result", **_cc_payload(result="Review complete.")}),
+        ]
+    )
+    llm, _ = _claude_code(monkeypatch, stdout=transcript)
+
+    with pytest.raises(chain.ClaudeCodeError, match="ReportFindings"):
+        llm.complete("sys", "user")
 
 
 def test_claude_code_replaces_rather_than_appends_the_system_prompt(
@@ -453,7 +691,27 @@ def test_claude_code_replaces_rather_than_appends_the_system_prompt(
     assert "--system-prompt" in argv
     assert "--append-system-prompt" not in argv
     assert argv[argv.index("--system-prompt") + 1] == "SYSTEM"
-    assert "USER" in argv
+    # The prompt rides stdin, not argv — as an argument it exceeded the
+    # kernel's limit on a real pull request ("Argument list too long").
+    assert "USER" not in argv
+    assert calls["kwargs"]["input"] == "USER"
+
+
+def test_claude_code_passes_the_configured_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The settings page offers an effort control; it has to reach this provider.
+
+    The CLI takes the same five levels as the API (`--effort low|medium|high|
+    xhigh|max`). Without this the control rendered, saved, and changed nothing
+    — the worst kind of setting.
+    """
+    monkeypatch.setattr(settings, "anthropic_effort", "xhigh")
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv = calls["argv"]
+    assert argv[argv.index("--effort") + 1] == "xhigh"
 
 
 def test_claude_code_is_error_raises_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -505,6 +763,7 @@ def test_claude_code_missing_binary_raises_actionable_error(
     from app.llm import chain
 
     monkeypatch.setattr(chain.shutil, "which", lambda _b: None)
+    monkeypatch.setattr(chain, "running_in_container", lambda: False)
     with pytest.raises(chain.ClaudeCodeError, match="not on PATH"):
         chain.ClaudeCodeReviewLLM()
 
@@ -514,7 +773,494 @@ def test_get_llm_selects_claude_code_on_config(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(settings, "llm_provider", "claude_code")
     monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/claude")
+    monkeypatch.setattr(chain, "running_in_container", lambda: False)
     assert isinstance(chain.get_llm(), chain.ClaudeCodeReviewLLM)
+
+
+# ── Subscription providers in a container (LLM-SUB-1) ─────────────────────────
+#
+# The gap this issue exists to close: `claude_code` was reachable from the
+# settings page while `liffy.sh` ran the worker in Docker, where the CLI has no
+# credentials to read. It failed mid-review with a subprocess error. These tests
+# pin the replacement behaviour — fail at construction, say why, say the fix.
+
+
+def test_container_without_token_is_rejected_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/claude")
+    monkeypatch.setattr(chain, "running_in_container", lambda: True)
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "")
+
+    with pytest.raises(chain.SubscriptionAuthError) as exc:
+        chain.ClaudeCodeReviewLLM()
+
+    # The message has to carry the remedy, not just the diagnosis: this is the
+    # only thing the operator sees.
+    assert "claude setup-token" in str(exc.value)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in str(exc.value)
+
+
+def test_container_with_token_constructs(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/claude")
+    monkeypatch.setattr(chain, "running_in_container", lambda: True)
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "sk-ant-oat01-test")
+
+    assert isinstance(chain.ClaudeCodeReviewLLM(), chain.ClaudeCodeReviewLLM)
+
+
+def test_oauth_token_is_passed_to_the_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "claude_code_oauth_token", "sk-ant-oat01-test")
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("sys", "user")
+
+    env = calls["kwargs"]["env"]
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-test"
+    # Inherited, not replaced — dropping PATH would leave the CLI unable to
+    # find node.
+    assert "PATH" in env
+
+
+@pytest.mark.parametrize("token", ["sk-ant-oat01-test", ""])
+def test_the_anthropic_api_key_never_reaches_claude_code(
+    monkeypatch: pytest.MonkeyPatch, token: str
+) -> None:
+    """The billing test.
+
+    `backend/.env` holds ANTHROPIC_API_KEY for the `anthropic` provider, and
+    `env_file` puts it in the worker's environment. Claude Code prefers an API
+    key over the subscription credential when it sees both — verified against
+    claude-code 2.1.220 — so leaving it in the child environment bills the
+    user's Console credits for a review they asked to run on their
+    subscription, with nothing anywhere to show for it.
+
+    Both parameters matter. With a token, the key would win over it. Without
+    one, the CLI is supposed to fall back to ~/.claude on the host, and the
+    inherited key silently overrides that too.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-console-credits")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example/v1")
+    monkeypatch.setattr(settings, "claude_code_oauth_token", token)
+
+    llm, calls = _claude_code(monkeypatch)
+    llm.complete("sys", "user")
+
+    env = calls["kwargs"]["env"]
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert env.get("CLAUDE_CODE_OAUTH_TOKEN", "") == token
+    # Inherited, not replaced — dropping PATH would leave the CLI unable to
+    # find node.
+    assert "PATH" in env
+
+
+def test_rate_limit_is_distinguishable_from_a_parse_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A spent subscription is not a bug, and must not read like one."""
+    from app.llm import chain
+
+    llm, _ = _claude_code(
+        monkeypatch,
+        stdout="Claude usage limit reached. Your limit resets at 3pm.",
+        returncode=1,
+    )
+    with pytest.raises(chain.SubscriptionLimitError, match="rate limit or quota"):
+        llm.complete("sys", "user")
+
+
+def test_rate_limit_in_a_clean_exit_payload_is_also_caught(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm import chain
+
+    llm, _ = _claude_code(
+        monkeypatch,
+        _cc_payload(is_error=True, subtype="error", api_error_status="429"),
+    )
+    with pytest.raises(chain.SubscriptionLimitError):
+        llm.complete("sys", "user")
+
+
+def test_unauthenticated_cli_output_is_named_as_such(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm import chain
+
+    llm, _ = _claude_code(
+        monkeypatch, stdout="Not logged in. Run `claude` to sign in.", returncode=1
+    )
+    with pytest.raises(chain.SubscriptionAuthError, match="not authenticated"):
+        llm.complete("sys", "user")
+
+
+def test_running_in_container_is_false_on_a_bare_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.os.path, "exists", lambda _p: False)
+    assert chain.running_in_container() is False
+
+
+def test_running_in_container_reads_the_docker_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.os.path, "exists", lambda p: p == "/.dockerenv")
+    assert chain.running_in_container() is True
+
+
+# ── CodexReviewLLM (LLM-SUB-1) ────────────────────────────────────────────────
+#
+# Every payload below is real output captured from codex-cli 0.146.0 — see
+# tests/fixtures/codex_exec_success.jsonl. Nothing here runs the binary or
+# needs a logged-in CLI, because CI has neither.
+
+import os
+from pathlib import Path
+
+_CODEX_SUCCESS = (
+    Path(__file__).parent / "fixtures" / "codex_exec_success.jsonl"
+).read_text()
+
+
+def _codex(
+    monkeypatch, *, stdout=None, returncode=0, raises=None, login="Logged in using ChatGPT"
+):
+    """Build the Codex provider with the binary faked."""
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/codex")
+    monkeypatch.setattr(chain, "running_in_container", lambda: False)
+    calls: dict = {}
+
+    def fake_run(argv, **kwargs):
+        if "login" in argv:
+            calls["login_kwargs"] = kwargs
+            return _Completed(login, 0)
+        calls["argv"] = argv
+        calls["kwargs"] = kwargs
+        if raises is not None:
+            raise raises
+        return _Completed(stdout if stdout is not None else _CODEX_SUCCESS, returncode)
+
+    monkeypatch.setattr(chain.subprocess, "run", fake_run)
+    return chain.CodexReviewLLM(), calls
+
+
+def test_codex_parses_the_agent_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, _ = _codex(monkeypatch)
+    assert llm.complete("sys", "user").text == '{"ok": true}'
+
+
+def test_the_openai_credentials_never_reach_codex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Claude Code billing bug, in its ChatGPT-subscription form.
+
+    Worse here than a wrong bill: this install points OPENAI_BASE_URL at
+    Google's OpenAI-compatible endpoint for the `openai` provider, so an
+    inherited pair would aim the Codex CLI at a host its ChatGPT credentials
+    mean nothing to.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-billed-elsewhere")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    for kwargs in (calls["kwargs"], calls["login_kwargs"]):
+        assert "OPENAI_API_KEY" not in kwargs["env"]
+        assert "OPENAI_BASE_URL" not in kwargs["env"]
+
+
+def test_codex_token_count_does_not_double_count_the_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The captured run: 13,220 input (8,960 of it cached) + 9 output.
+
+    Codex nests `cached_input_tokens` inside `input_tokens`, where Claude Code
+    reports its cache fields alongside. Reusing the Claude arithmetic here would
+    report 22,189 for a 13,229-token call.
+    """
+    llm, _ = _codex(monkeypatch)
+    assert llm.complete("sys", "user").tokens_used == 13229
+
+
+def test_codex_tokens_are_none_when_the_cli_reports_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not 0 — a fabricated zero says the review was free, which is a lie."""
+    no_usage = (
+        '{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}\n'
+    )
+    llm, _ = _codex(monkeypatch, stdout=no_usage)
+    assert llm.complete("sys", "user").tokens_used is None
+
+
+def test_codex_runs_in_a_neutral_sandboxed_cwd(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv, kwargs = calls["argv"], calls["kwargs"]
+    assert argv[argv.index("--sandbox") + 1] == "read-only"
+    assert "liffy-review-" in kwargs["cwd"]
+    assert os.path.abspath(kwargs["cwd"]) != os.path.abspath(os.getcwd())
+    # The prompt is written to stdin, which also closes it — so the CLI stops
+    # reading and answers instead of hanging to the timeout.
+    assert kwargs["input"].startswith("sys")
+
+
+def test_codex_overrides_cli_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The settings value must win over model_reasoning_effort in config.toml."""
+    monkeypatch.setattr(settings, "codex_effort", "low")
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv = calls["argv"]
+    assert argv[argv.index("-c") + 1] == "model_reasoning_effort=low"
+
+
+def test_codex_carries_the_system_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`codex exec` has no system-prompt flag, so it has to be prepended."""
+    llm, calls = _codex(monkeypatch)
+    llm.complete("SYSTEM-PERSONA", "USER-DIFF")
+
+    # `-` tells the CLI to read the prompt from stdin; argv stays small.
+    assert calls["argv"][-1] == "-"
+    prompt = calls["kwargs"]["input"]
+    assert prompt.startswith("SYSTEM-PERSONA")
+    assert "USER-DIFF" in prompt
+
+
+def test_codex_omits_the_model_flag_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex slugs are version- and account-specific; pinning one breaks runs.
+
+    `gpt-5-codex` fails outright on codex-cli 0.146 with "Model metadata for
+    `gpt-5-codex` not found", while the CLI's own config names something else
+    entirely. Deferring to ~/.codex/config.toml is both likelier to work and
+    the choice the user already made.
+    """
+    monkeypatch.setattr(settings, "codex_model", "")
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    assert "--model" not in calls["argv"]
+    # Still has to name something, since this is persisted as `model_used`.
+    assert llm.model_name == "codex (CLI default)"
+
+
+def test_codex_honours_an_explicit_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "codex_model", "gpt-5.6-luna")
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    argv = calls["argv"]
+    assert argv[argv.index("--model") + 1] == "gpt-5.6-luna"
+    assert llm.model_name == "gpt-5.6-luna"
+
+
+def test_codex_missing_binary_raises_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.shutil, "which", lambda _b: None)
+    monkeypatch.setattr(chain, "running_in_container", lambda: False)
+    with pytest.raises(chain.CodexError, match="not on PATH"):
+        chain.CodexReviewLLM()
+
+
+def test_codex_preflight_detects_an_unauthenticated_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`codex login status` is free, so an expired login is caught at startup.
+
+    Asserted against the *output*, because the real CLI exits 0 while printing
+    "Not logged in" — verified against codex-cli 0.146. Checking the exit code
+    would let an unauthenticated worker start and fail on its first review,
+    which is the failure mode this whole preflight exists to remove.
+    """
+    from app.llm import chain
+
+    with pytest.raises(chain.SubscriptionAuthError, match="not signed in"):
+        _codex(monkeypatch, login="Not logged in")
+
+
+def test_codex_in_a_container_without_codex_home_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex is host-only by default, and that is the CLI's constraint.
+
+    codex-cli 0.146 has no auth environment variable, and
+    `codex login --with-access-token` rejects a ChatGPT subscription token. So
+    unlike claude_code there is nothing to copy into the container, and the
+    honest behaviour is to refuse at startup and say why.
+    """
+    from app.llm import chain
+
+    monkeypatch.setattr(chain.shutil, "which", lambda _b: "/usr/local/bin/codex")
+    monkeypatch.setattr(chain, "running_in_container", lambda: True)
+    monkeypatch.setattr(settings, "codex_home", "")
+
+    with pytest.raises(chain.SubscriptionAuthError) as exc:
+        chain.CodexReviewLLM()
+
+    message = str(exc.value)
+    assert "CODEX_HOME" in message
+    # It must offer the way out, not only the refusal.
+    assert "claude_code" in message
+
+
+def test_codex_home_is_passed_to_the_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """CODEX_HOME is the only mechanism the CLI honours for a credential dir."""
+    from app.llm import chain
+
+    monkeypatch.setattr(chain, "_CODEX_HOME_CACHE", {})
+    source = tmp_path / "codex-auth"
+    source.mkdir()
+    (source / "auth.json").write_text('{"auth_mode":"chatgpt"}')
+    monkeypatch.setattr(settings, "codex_home", str(source))
+
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    home = calls["kwargs"]["env"]["CODEX_HOME"]
+    assert home == str(source)  # writable source: used directly, no copy
+    # The preflight has to look in the same place, or it validates a different
+    # login than the review will use.
+    assert calls["login_kwargs"]["env"]["CODEX_HOME"] == home
+
+
+def test_read_only_codex_home_is_copied_somewhere_writable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The container case, and it is not optional.
+
+    The compose mount is `:ro` so the container cannot rewrite the host's
+    credential store — but the CLI writes into CODEX_HOME while running and dies
+    against a read-only one, *after* authenticating, with "failed to initialize
+    in-process app-server client: Read-only file system". Verified against
+    codex-cli 0.146 before this copy existed.
+    """
+    from app.llm import chain
+
+    monkeypatch.setattr(chain, "_CODEX_HOME_CACHE", {})
+    source = tmp_path / "ro-auth"
+    source.mkdir()
+    (source / "auth.json").write_text('{"auth_mode":"chatgpt"}')
+    (source / "config.toml").write_text('model = "gpt-5.6-luna"')
+    monkeypatch.setattr(settings, "codex_home", str(source))
+
+    # Unwritability is faked rather than chmod-ed, because the container runs
+    # tests as root and root ignores the mode bits. The real signal is the
+    # kernel's read-only bind mount, which `os.access` does report correctly
+    # even to root — confirmed by a live container run copying as expected.
+    real_access = os.access
+    monkeypatch.setattr(
+        os, "access", lambda p, m: False if str(p) == str(source) else real_access(p, m)
+    )
+
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+
+    llm, calls = _codex(monkeypatch)
+    llm.complete("sys", "user")
+
+    home = calls["kwargs"]["env"]["CODEX_HOME"]
+    assert home != str(source)
+    # Not under /tmp: the CLI installs helper binaries into CODEX_HOME and
+    # refuses to do so beneath a temporary directory.
+    assert home.startswith(str(home_dir))
+    # Both files matter: auth.json authenticates, config.toml carries the model
+    # choice, and losing the latter reintroduces the "Model metadata not found"
+    # failure this provider works around by not pinning a slug.
+    assert (Path(home) / "auth.json").read_text() == '{"auth_mode":"chatgpt"}'
+    assert (Path(home) / "config.toml").exists()
+
+
+def test_codex_timeout_surfaces_as_an_llm_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm import chain
+
+    llm, _ = _codex(
+        monkeypatch, raises=_subprocess.TimeoutExpired(cmd="codex", timeout=600)
+    )
+    with pytest.raises(chain.CodexError, match="timed out"):
+        llm.complete("sys", "user")
+
+
+def test_codex_rate_limit_is_distinguishable_from_a_parse_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm import chain
+
+    llm, _ = _codex(
+        monkeypatch, stdout="You've hit your usage limit.", returncode=1
+    )
+    with pytest.raises(chain.SubscriptionLimitError, match="rate limit or quota"):
+        llm.complete("sys", "user")
+
+
+def test_codex_unrecognised_output_names_the_format_not_a_keyerror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Event formats drift between CLI versions; the error must say so."""
+    from app.llm import chain
+
+    llm, _ = _codex(monkeypatch, stdout='{"type":"some.future.event"}\n')
+    with pytest.raises(chain.CodexError, match="event format changed"):
+        llm.complete("sys", "user")
+
+
+def test_codex_skips_unparseable_lines_rather_than_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    noisy = "warning: something\n" + _CODEX_SUCCESS
+    llm, _ = _codex(monkeypatch, stdout=noisy)
+    assert llm.complete("sys", "user").text == '{"ok": true}'
+
+
+def test_codex_turn_failed_is_classified(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm import chain
+
+    failed = '{"type":"turn.failed","error":{"message":"rate limit exceeded"}}\n'
+    llm, _ = _codex(monkeypatch, stdout=failed)
+    with pytest.raises(chain.SubscriptionLimitError):
+        llm.complete("sys", "user")
+
+
+def test_get_llm_selects_codex_on_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.llm import chain
+
+    monkeypatch.setattr(settings, "llm_provider", "codex")
+    llm, _ = _codex(monkeypatch)
+    assert isinstance(chain.get_llm(), chain.CodexReviewLLM)
+
+
+def test_unknown_token_count_poisons_the_review_total() -> None:
+    """One unknown attempt makes the whole total unknown, not a partial sum.
+
+    A retry loop that summed only the attempts that reported usage would return
+    a confident number that under-counts the review.
+    """
+    from app.llm.chain import _accumulate_tokens
+
+    assert _accumulate_tokens(100, 50) == 150
+    assert _accumulate_tokens(100, None) is None
+    assert _accumulate_tokens(None, 50) is None
 
 
 # ── Prompt caching + effort ───────────────────────────────────────────────────

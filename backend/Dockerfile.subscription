@@ -1,0 +1,28 @@
+# Worker image for the subscription-backed providers (LLM_PROVIDER=claude_code
+# or codex). A variant rather than the default, because it costs ~200MB of
+# Node and two npm packages that the API-key providers — the zero-config path —
+# have no use for.
+#
+# Build it through the compose overlay, not by hand:
+#   docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Node first, so a Python dependency change does not re-download it.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @anthropic-ai/claude-code@2.1.220 @openai/codex@0.146.0 \
+ && apt-get purge -y gnupg && apt-get autoremove -y \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+
+# No credentials are baked in. Claude receives a token at run time; Codex reads
+# a mounted credential directory when liffy.sh selects its Codex overlay. Both
+# paths are checked before a review starts, with an actionable error.
+CMD ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info"]

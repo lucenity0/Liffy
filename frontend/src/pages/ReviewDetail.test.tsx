@@ -155,6 +155,50 @@ describe("ReviewDetail — in flight", () => {
   });
 });
 
+describe("ReviewDetail — the overview", () => {
+  it("shows what the PR does and what changed where, not just a paragraph", async () => {
+    /**
+     * A paragraph gets skimmed. A short list of what the change *does* and a
+     * table of what changed where gets read — and it carries the review even
+     * when it found nothing worth commenting on, which is a common and correct
+     * outcome that used to leave this panel looking empty.
+     */
+    renderDetail(fixtureReviewCompleted.id);
+
+    expect(await screen.findByText("Changes")).toBeInTheDocument();
+    expect(
+      screen.getByText(/adds a token bucket in front of the review trigger/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("2 files reviewed")).toBeInTheDocument();
+    expect(screen.getByText("backend/app/api/reviews.py")).toBeInTheDocument();
+    expect(
+      screen.getByText(/applies the new limiter to the trigger route/i),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a prose-only review exactly as before", async () => {
+    /**
+     * Null means the model was never asked or answered only prose — every
+     * review written before this landed. It must not render as a page of
+     * empty headings.
+     */
+    server.use(
+      http.get("*/reviews/:reviewId", () =>
+        HttpResponse.json({
+          ...fixtureReviewCompleted,
+          summary_detail: null,
+          comments: [],
+        }),
+      ),
+    );
+    renderDetail(fixtureReviewCompleted.id);
+
+    await screen.findByText(/diff-hunk parser/i);
+    expect(screen.queryByText("Changes")).toBeNull();
+    expect(screen.queryByText(/files reviewed/)).toBeNull();
+  });
+});
+
 describe("ReviewDetail — failed", () => {
   it("explains the failure and leaves Re-review available", async () => {
     renderDetail(fixtureReviewFailed.id);
@@ -162,6 +206,41 @@ describe("ReviewDetail — failed", () => {
     expect(await screen.findByText(/did not finish/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Re-review" })).toBeEnabled();
     expect(screen.queryByText("Summary")).toBeNull();
+    // Nothing stored: the older row shape, where pointing at the log is the
+    // best available answer.
+    expect(screen.getByText(/worker log has the reason/i)).toBeInTheDocument();
+  });
+
+  it("shows the reason the worker stored instead of guessing at causes", async () => {
+    /**
+     * The page used to print a list of plausible causes — "a missing or
+     * rate-limited LLM key, or a diff too large for the model's context" —
+     * because the row genuinely carried nothing. Once the worker started
+     * writing the reason down, the guesses stayed and hid it. The real failure
+     * was `'claude' is not on PATH`: not on that list, fixed in one step, and
+     * reachable only by reading container logs.
+     */
+    server.use(
+      http.get("*/reviews/:reviewId", () =>
+        HttpResponse.json({
+          ...fixtureReviewFailed,
+          summary:
+            "Review failed: 'claude' is not on PATH. Install Claude Code and sign in, or set LLM_PROVIDER to a different provider.",
+          comments: [],
+          raw_diff: null,
+        }),
+      ),
+    );
+    renderDetail(fixtureReviewFailed.id);
+
+    expect(
+      await screen.findByText(/'claude' is not on PATH/i),
+    ).toBeInTheDocument();
+    // The prefix belongs to the list's one-liner, not to this panel.
+    expect(screen.queryByText(/^Review failed:/)).toBeNull();
+    // And the guesses do not come back alongside it.
+    expect(screen.queryByText(/diff too large/i)).toBeNull();
+    expect(screen.queryByText(/worker log has the reason/i)).toBeNull();
   });
 });
 

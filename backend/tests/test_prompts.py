@@ -120,6 +120,14 @@ def test_prompt_states_zero_comments_is_acceptable() -> None:
     ), "the prompt must say that returning no comments is a valid outcome"
 
 
+def test_prompt_requires_suggestions_to_be_replacement_text() -> None:
+    lowered = SYSTEM_PROMPT.lower()
+    assert "only" in lowered
+    assert "replacement" in lowered
+    assert "no explanation" in lowered
+    assert "suggestion to null" in lowered
+
+
 def test_severity_line_defines_all_three_levels() -> None:
     """Whatever the wording, every level the schema allows must be defined.
 

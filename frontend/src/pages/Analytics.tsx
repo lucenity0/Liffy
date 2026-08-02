@@ -9,6 +9,7 @@ import { FigureTile, MetricTile } from "@/components/analytics/MetricTile";
 import { SeverityCalibration } from "@/components/analytics/SeverityCalibration";
 import { TokenEfficiencyTrend } from "@/components/analytics/TokenEfficiencyTrend";
 import { useAnalyticsSummary } from "@/hooks/useAnalyticsSummary";
+import { totalComments } from "@/lib/categories";
 import { formatCount, formatPercent, formatSeconds } from "@/lib/utils";
 import type { AnalyticsSummaryOut } from "@/types/api";
 
@@ -31,7 +32,7 @@ export function Analytics() {
       <header className="flex flex-col gap-1">
         <h1 className="font-hand text-2xl leading-tight text-ink">Analytics</h1>
         <p className="text-base text-ink-dim">
-          Report §8.1's evaluation metrics, measured against their targets.
+          How Liffy is performing against the quality targets it was built to meet.
         </p>
       </header>
 
@@ -61,7 +62,7 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
       <Sheet>
         <EmptyState
           title="Nothing to measure yet."
-          description="Connect a repository and let Liffy review a pull request. The §8.1 metrics fill in from there."
+          description="Connect a repository and let Liffy review a pull request. The metrics fill in from there."
           action={<ButtonLink to="/">Connect a repository</ButtonLink>}
         />
       </Sheet>
@@ -108,7 +109,7 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
           label="Time to review"
           metric={data.time_to_review_ms}
           format={formatSeconds}
-          unit="reviews with a receipt"
+          unit="webhook-triggered reviews"
           unknownHint="Measured from webhook receipt, so only webhook-triggered reviews carry it."
           caption={
             /**
@@ -140,20 +141,63 @@ function Summary({ data }: { data: AnalyticsSummaryOut }) {
           value={data.token_efficiency}
           format={(value) => value.toFixed(3)}
           unknownHint="Needs a review with both a token count and at least one rating."
-          caption="Mean approval rate per 1,000 tokens. §8.1 tracks this as a trend rather than against a threshold — the shape is below."
+          caption="Mean approval rate per 1,000 tokens. Tracked as a trend rather than against a fixed threshold — the shape is beside it."
+        />
+
+        {/*
+          Paired with the figure above it rather than sent down to the chart
+          row, for two reasons.
+
+          The honest one: three tiles in a two-column grid leaves the fourth
+          cell empty, and that hole is as tall as the tile beside it — it
+          reads as a panel that failed to load rather than as whitespace.
+
+          The better one: this and the tile to its left are the *same metric*,
+          the number and its shape. They belong next to each other, and the
+          caption says so.
+        */}
+        <TokenEfficiencyTrend
+          points={data.token_efficiency_series}
+          reviewsCompleted={data.reviews_completed}
         />
       </div>
 
       {/*
-        The two §8.1 metrics that are claims about a *shape* rather than a
-        number: "even spread" and "tracked as trend". Neither fits a tile,
-        which is why they are here rather than above.
+        The chart stays in a half-width column, which is the constraint that
+        drives this row. `CategoryDistribution` is an SVG with a fixed
+        348-unit viewBox scaled by `w-full`, so width, height and type scale
+        together — there is no "wider but the same size". At full measure it
+        renders at roughly 3x.
+
+        Its partner is a figure rather than the severity table: the table is
+        shorter than the chart, so pairing them left dead space under its
+        footer, and four columns in half a column is cramped. The table wants
+        the full width, which is where it was.
       */}
       <div className="grid gap-4 sm:grid-cols-2">
         <CategoryDistribution distribution={data.category_distribution} />
-        <TokenEfficiencyTrend
-          points={data.token_efficiency_series}
-          reviewsCompleted={data.reviews_completed}
+
+        {/*
+          How much Liffy says per review, beside what it says — the count to
+          the chart's shape, and the one thing the page could report from
+          data already on it but did not.
+
+          No target. §8.1 sets none, and there is no defensible right answer:
+          a low number on clean code is the system working, and the same
+          number on a broken pull request is the system missing things. It is
+          a figure to watch, which is exactly what `FigureTile` is for.
+        */}
+        <FigureTile
+          label="Comments per review"
+          value={
+            data.reviews_completed === 0
+              ? null
+              : totalComments(data.category_distribution) /
+                data.reviews_completed
+          }
+          format={(value) => value.toFixed(1)}
+          unknownHint="Needs at least one completed review."
+          caption={`${formatCount(totalComments(data.category_distribution))} comments across ${formatCount(data.reviews_completed)} completed reviews. Reviews that found nothing count in the denominator — on clean code an empty review is the right answer, not a miss.`}
         />
       </div>
 

@@ -79,7 +79,7 @@ VALID_COMMENT = {
     "category": "logic_error",
     "severity": "warning",
     "comment": "Possible bug in the new branch.",
-    "suggestion": "Guard against None.",
+    "suggestion": "return value if value is not None else fallback",
 }
 
 
@@ -142,7 +142,7 @@ def test_run_review_persists_review_and_comments(db: Session) -> None:
     assert (c.file_path, c.line_start, c.line_end) == ("app/util.py", 11, 12)
     assert c.category == "logic_error"
     assert c.severity == "warning"
-    assert c.suggestion == "Guard against None."
+    assert c.suggestion == "return value if value is not None else fallback"
 
     repo = db.scalar(select(Repository).where(Repository.full_name == "octo/demo"))
     assert repo is not None
@@ -170,6 +170,36 @@ def test_llm_failure_marks_review_failed(db: Session) -> None:
     assert review.raw_diff == DIFF
     fetched = get_review_with_comments(db, review.id)
     assert fetched is not None and fetched[1] == []
+
+
+def test_a_provider_that_cannot_be_built_fails_visibly(db: Session) -> None:
+    """The failure that looked like the review had simply vanished.
+
+    Selecting `claude_code` on a worker without the CLI raised while the
+    transport was being *constructed*. Built by the caller as an argument, that
+    happened before any row existed: the task died, the queue emptied, and the
+    reviews list stayed empty with the reason only in the worker log. The UI
+    said "queued" and then showed nothing at all.
+    """
+
+    def cannot_build() -> FakeLLM:
+        raise RuntimeError("'claude' is not on PATH")
+
+    with pytest.raises(RuntimeError, match="not on PATH"):
+        _run(db, cannot_build)
+
+    # A row exists, says what happened, and says why.
+    review = db.scalars(select(Review)).one()
+    assert review.status == "failed"
+    assert review.completed_at is not None
+    assert "not on PATH" in (review.summary or "")
+
+
+def test_a_working_provider_may_still_be_passed_directly(db: Session) -> None:
+    """The factory is accepted, not required — every existing caller passes an
+    instance and must keep working."""
+    review = _run(db, FakeLLM([_payload([])]))
+    assert review.status == "completed"
 
 
 def test_unindexed_repo_reviews_with_empty_context(db: Session) -> None:

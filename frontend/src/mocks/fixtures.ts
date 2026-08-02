@@ -1,12 +1,15 @@
 import type {
   AnalyticsSummaryOut,
   EvalScoresOut,
+  HelpIndexOut,
+  HelpPassage,
   RepoOut,
   RepoStatusOut,
   ReviewCommentOut,
   ReviewDetailOut,
   ReviewListItem,
   ReviewListPage,
+  SettingsOut,
   TokenPair,
   UserOut,
 } from "@/types/api";
@@ -53,6 +56,11 @@ export const fixtureRepoStatusNotIndexed: RepoStatusOut = {
   chunk_count: 0,
   last_index_failed_files: null,
   last_indexed_files_seen: null,
+};
+
+export const fixtureRepoStatusIndexing: RepoStatusOut = {
+  ...fixtureRepoStatusIndexed,
+  status: "indexing",
 };
 
 /** A run that succeeded but left holes — #210's whole reason for existing. */
@@ -108,6 +116,16 @@ export const fixtureReviewCompleted: ReviewDetailOut = {
   pr_number: 58,
   repo_full_name: "lucenity0/Liffy",
   status: "completed",
+  summary_detail: {
+    changes: [
+      "Adds a token bucket in front of the review trigger.",
+      "Moves the retry budget into settings.",
+    ],
+    files: [
+      { path: "backend/app/api/reviews.py", description: "Applies the new limiter to the trigger route." },
+      { path: "backend/app/config.py", description: "Adds the bucket size and refill rate." },
+    ],
+  },
   summary:
     "One thing worth fixing before this merges: the diff-hunk parser assumes an explicit line count on every hunk header, but the format allows omitting it. Everything else — the setup script, the retry logic — reads cleanly.",
   verdict: "request_changes",
@@ -151,6 +169,7 @@ export const fixtureReviewApproved: ReviewDetailOut = {
   pr_number: 59,
   repo_full_name: "lucenity0/portfolio",
   status: "completed",
+  summary_detail: null,
   summary: "Clean change. No issues found.",
   verdict: "approve",
   model_used: "gpt-4o",
@@ -170,6 +189,7 @@ export const fixtureReviewPending: ReviewDetailOut = {
   pr_number: 62,
   repo_full_name: "lucenity0/Liffy",
   status: "pending",
+  summary_detail: null,
   summary: null,
   verdict: null,
   model_used: null,
@@ -199,6 +219,7 @@ export const fixtureReviewFailed: ReviewDetailOut = {
   pr_number: 61,
   repo_full_name: "lucenity0/Liffy",
   status: "failed",
+  summary_detail: null,
   summary: null,
   verdict: null,
   model_used: "gpt-4o",
@@ -228,6 +249,7 @@ const detailToListItem = (review: ReviewDetailOut): ReviewListItem => ({
   pr_id: review.pr_id,
   pr_number: review.pr_number,
   repo_full_name: review.repo_full_name,
+  summary_detail: review.summary_detail,
   status: review.status,
   summary: review.summary,
   verdict: review.verdict,
@@ -473,3 +495,298 @@ export const fixtureTokenPair: TokenPair = {
   token_type: "bearer",
   expires_in: 900,
 };
+
+// ── Settings (SETTINGS-1) ────────────────────────────────────────────────────
+
+/**
+ * A settings document covering all three provenance states and both dangerous
+ * toggles, because those are what the page has to render *differently* —
+ * a fixture where every setting is a plain default would exercise one branch.
+ */
+export const fixtureSettings: SettingsOut = {
+  editable: [
+    {
+      key: "llm_provider",
+      group: "review_model",
+      label: "Provider",
+      help: "Transport used for reviews.",
+      kind: "choice",
+      choices: ["anthropic", "openai", "claude_code", "codex"],
+      suggestions: [],
+      applies_to: [],
+      minimum: null,
+      maximum: null,
+      value: "anthropic",
+      default_value: "anthropic",
+      source: "default",
+      confirm_on_enable: false,
+    },
+    // The two provider-scoped model fields. Only one is ever rendered, chosen
+    // by `llm_provider` — the fixture carries both so the page test can prove
+    // the swap rather than just the happy path.
+    {
+      key: "anthropic_model",
+      group: "review_model",
+      label: "Model",
+      help: "Model used for Anthropic reviews.",
+      kind: "str",
+      choices: [],
+      suggestions: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+      applies_to: ["anthropic"],
+      minimum: null,
+      maximum: null,
+      value: "claude-opus-5",
+      default_value: "claude-opus-5",
+      source: "default",
+      confirm_on_enable: false,
+    },
+    {
+      key: "openai_base_url",
+      group: "review_model",
+      label: "Endpoint",
+      help: "Endpoint used by the OpenAI-compatible provider. Non-local endpoints receive your code.",
+      kind: "str",
+      choices: [],
+      suggestions: [
+        "http://localhost:11434/v1",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+      ],
+      applies_to: ["openai"],
+      minimum: null,
+      maximum: null,
+      value: "",
+      default_value: "",
+      source: "default",
+      // Decides who receives the code being reviewed.
+      confirm_on_enable: true,
+    },
+    {
+      key: "openai_model",
+      group: "review_model",
+      label: "Model",
+      help: "Model name served by the selected endpoint.",
+      kind: "str",
+      choices: [],
+      suggestions: ["gpt-4o", "gemini-2.5-flash", "qwen2.5-coder:14b"],
+      applies_to: ["openai"],
+      minimum: null,
+      maximum: null,
+      // Deliberately outside the suggestion list: a value set in .env must
+      // survive the page, not get replaced by the first dropdown entry.
+      value: "llama3.3:70b",
+      default_value: "gpt-4o",
+      source: "env",
+      confirm_on_enable: false,
+    },
+    {
+      key: "anthropic_effort",
+      group: "review_model",
+      label: "Thinking effort",
+      help: "Controls reasoning depth for Anthropic.",
+      kind: "choice",
+      choices: ["low", "medium", "high", "xhigh", "max"],
+      suggestions: [],
+      applies_to: ["anthropic"],
+      minimum: null,
+      maximum: null,
+      value: "high",
+      default_value: "medium",
+      // Changed in the app — the marker the page exists to show.
+      source: "override",
+      confirm_on_enable: false,
+    },
+    {
+      key: "codex_model",
+      group: "review_model",
+      label: "Model",
+      help: "Codex model; blank uses the CLI configuration.",
+      kind: "str",
+      choices: [],
+      suggestions: ["gpt-5.6-luna"],
+      applies_to: ["codex"],
+      minimum: null,
+      maximum: null,
+      value: "",
+      default_value: "",
+      source: "default",
+      confirm_on_enable: false,
+    },
+    {
+      key: "codex_effort",
+      group: "review_model",
+      label: "Thinking effort",
+      help: "Controls reasoning depth for Codex.",
+      kind: "choice",
+      choices: ["low", "medium", "high", "xhigh"],
+      suggestions: [],
+      applies_to: ["codex"],
+      minimum: null,
+      maximum: null,
+      value: "medium",
+      default_value: "medium",
+      source: "default",
+      confirm_on_enable: false,
+    },
+    {
+      key: "llm_max_tokens",
+      group: "review_model",
+      label: "Max tokens",
+      help: "Maximum combined reasoning and response tokens.",
+      kind: "int",
+      choices: [],
+      suggestions: [],
+      applies_to: [],
+      minimum: 4000,
+      maximum: 200000,
+      value: 24000,
+      default_value: 24000,
+      // Set in .env — distinct from both "default" and "changed here".
+      source: "env",
+      confirm_on_enable: false,
+    },
+    {
+      key: "post_reviews_to_github",
+      group: "github_posting",
+      label: "Post reviews to GitHub",
+      help: "Allow Liffy to write comments to real pull requests.",
+      kind: "bool",
+      choices: [],
+      suggestions: [],
+      applies_to: [],
+      minimum: null,
+      maximum: null,
+      value: false,
+      default_value: false,
+      source: "default",
+      confirm_on_enable: true,
+    },
+    {
+      key: "github_review_event_mode",
+      group: "github_posting",
+      label: "Review event mode",
+      help: "`request_changes` blocks a human's merge.",
+      kind: "choice",
+      choices: ["comment_only", "native"],
+      suggestions: [],
+      applies_to: [],
+      minimum: null,
+      maximum: null,
+      value: "comment_only",
+      default_value: "comment_only",
+      source: "default",
+      confirm_on_enable: true,
+    },
+  ],
+  read_only: [
+    {
+      key: "database_url",
+      group: "infrastructure",
+      label: "Database URL",
+      reason: "The engine is built at import. Changing it needs a restart.",
+      value: "postgresql://localhost/liffy",
+    },
+    {
+      key: "chroma_host",
+      group: "infrastructure",
+      label: "Chroma host",
+      reason: "Points at the vector store holding your index.",
+      value: "chroma",
+    },
+  ],
+  secrets: [
+    {
+      key: "anthropic_api_key",
+      label: "Anthropic API key",
+      requirement: "Required by this provider — reviews fail without it.",
+      applies_to: ["anthropic"],
+      connectable: false,
+      connect_command: "",
+      is_set: true,
+      source: "env",
+    },
+    {
+      key: "openai_api_key",
+      label: "OpenAI API key",
+      requirement: "Required by this provider.",
+      applies_to: ["openai"],
+      connectable: false,
+      connect_command: "",
+      is_set: false,
+      source: "default",
+    },
+    // Unset, belonging to a provider that isn't selected, and the only one the
+    // page may set — the two behaviours that used to be wrong, in one row.
+    {
+      key: "claude_code_oauth_token",
+      label: "Claude Code OAuth token",
+      requirement:
+        "Only needed in Docker. Running on the host, the CLI reads your own login and this stays empty.",
+      applies_to: ["claude_code"],
+      connectable: true,
+      connect_command: "claude setup-token",
+      is_set: false,
+      source: "default",
+    },
+    {
+      key: "github_token",
+      label: "GitHub token",
+      requirement: "Required to read repositories and post reviews.",
+      applies_to: [],
+      connectable: false,
+      connect_command: "",
+      is_set: true,
+      source: "env",
+    },
+  ],
+};
+
+// ── Help (#237) ──────────────────────────────────────────────────────────────
+
+/**
+ * A miniature corpus, not a copy of the real one.
+ *
+ * The frontend's job is rendering and routing; ranking is the backend's, and
+ * `backend/tests/test_help_service.py` owns it. Mirroring fifteen real pages
+ * here would make every corpus edit break frontend tests that never cared
+ * about the wording.
+ */
+export const fixtureHelpTopics: HelpIndexOut = {
+  common: [
+    { slug: "review-states", title: "Queued vs processing" },
+    { slug: "review-failed", title: "Why a review failed" },
+    { slug: "reindex-after-merge", title: "Should I reindex after every merge?" },
+  ],
+  all_topics: [
+    { slug: "review-states", title: "Queued vs processing" },
+    { slug: "review-failed", title: "Why a review failed" },
+    { slug: "reindex-after-merge", title: "Should I reindex after every merge?" },
+    { slug: "where-your-code-goes", title: "Where your code goes" },
+  ],
+};
+
+export const fixtureHelpPassages: HelpPassage[] = [
+  {
+    slug: "review-states",
+    title: "Queued vs processing",
+    snippet:
+      "A review sits in queued until a worker picks it up, then moves to processing while it runs.",
+    body:
+      "A review sits in **queued** until a worker picks it up, then moves to\n" +
+      "**processing** while it runs.\n\nBoth are normal; neither means anything is wrong.",
+    related: [{ slug: "review-failed", title: "Why a review failed" }],
+    figure: "",
+    score: 13.9,
+  },
+  {
+    slug: "review-failed",
+    title: "Why a review failed",
+    snippet: "The reason is recorded on the review itself and shown on the failed panel.",
+    body:
+      "The reason is recorded on the review itself.\n\n" +
+      "- `'claude' is not on PATH` — the worker has no CLI\n" +
+      "- Rate limit — the account is out of allowance",
+    related: [],
+    figure: "",
+    score: 4.6,
+  },
+];

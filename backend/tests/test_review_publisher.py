@@ -12,6 +12,7 @@ from app.services.review_publisher import (
     EVENT_MODE_COMMENT_ONLY,
     EVENT_MODE_NATIVE,
     MAX_POST_ERROR_CHARS,
+    ReviewEvent,
     build_review_body,
     partition_comments,
     resolve_event,
@@ -255,3 +256,76 @@ def test_long_errors_are_truncated_to_fit_the_column() -> None:
     truncated = truncate_post_error("x" * 5000)
     assert len(truncated) == MAX_POST_ERROR_CHARS
     assert truncated.endswith("…")
+
+
+# ── The overview ──────────────────────────────────────────────────────────────
+
+
+def test_the_body_opens_with_a_briefing_not_a_paragraph() -> None:
+    """What a reader meets before any finding.
+
+    A wall of prose gets skimmed. A heading, a short list of what the pull
+    request does, and a table of what changed where gets read — and it carries
+    the review even when there are no findings at all.
+    """
+    body = build_review_body(
+        "Adds a lexical help search over a shipped markdown corpus.",
+        event=ReviewEvent("COMMENT", None),
+        unanchorable=[],
+        changes=["Adds a BM25 index.", "Adds a /help page."],
+        files=[
+            ("backend/app/services/help_service.py", "The ranking core."),
+            ("frontend/src/pages/Help.tsx", "The two-pane page."),
+        ],
+        comment_count=3,
+    )
+
+    assert body.startswith("## Pull request overview")
+    assert "Adds a lexical help search" in body
+    assert "- Adds a BM25 index." in body
+    assert "| File | Description |" in body
+    assert "| `backend/app/services/help_service.py` | The ranking core. |" in body
+    assert "read 2 changed files and left 3 comments" in body
+
+
+def test_the_body_survives_a_model_that_only_returned_prose() -> None:
+    """The older three-field output, and any small model that ignores half the
+    schema, must still produce a sensible body — not a page of empty headings."""
+    body = build_review_body(
+        "Nothing worth flagging.",
+        event=ReviewEvent("COMMENT", None),
+        unanchorable=[],
+    )
+
+    assert "## Pull request overview" in body
+    assert "Nothing worth flagging." in body
+    assert "Changes:" not in body
+    assert "| File |" not in body
+
+
+def test_singular_and_plural_read_correctly() -> None:
+    body = build_review_body(
+        "One small change.",
+        event=ReviewEvent("COMMENT", None),
+        unanchorable=[],
+        files=[("a.py", "Renames a helper.")],
+        comment_count=1,
+    )
+
+    assert "read 1 changed file and left 1 comment." in body
+
+
+def test_a_pipe_in_a_cell_cannot_break_the_table() -> None:
+    """Unusual, not impossible — and a broken table takes the whole overview
+    down with it."""
+    body = build_review_body(
+        "A change.",
+        event=ReviewEvent("COMMENT", None),
+        unanchorable=[],
+        files=[("a|b.py", "Handles a | b cases.")],
+        comment_count=0,
+    )
+
+    table_row = [line for line in body.splitlines() if line.startswith("| `")][0]
+    # Four unescaped pipes: the row's own delimiters, and no more.
+    assert len([c for i, c in enumerate(table_row) if c == "|" and table_row[i - 1] != "\\"]) == 3

@@ -9,18 +9,24 @@ const TABS: Tab[] = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/reviews", label: "Reviews" },
   { to: "/analytics", label: "Analytics" },
+  // Last two, and deliberately in this order. The first three are *what Liffy
+  // has done*; Settings is how it is configured; Help is about neither — it is
+  // the manual. Each is its own category, which is why they queue at the end
+  // rather than interleaving with the reports.
+  { to: "/settings", label: "Settings" },
+  { to: "/help", label: "Help" },
 ];
 
 /**
  * The whole of Liffy's chrome: a wordmark, a breadcrumb, an actions slot,
  * and the tab strip.
  *
- * Still no sidebar. Analytics (#200) made this three top-level surfaces
- * rather than two, which was the number this comment used to lean on — but
- * three tabs is not the argument for a sidebar either, and the strip carries
- * them without changing shape. The rule is the same one, restated: a sidebar
- * has to earn a permanent column of the viewport, and three destinations do
- * not.
+ * Still no sidebar. Settings (#236) makes this four top-level surfaces —
+ * the count this comment has now been rewritten around twice, which is
+ * itself the useful signal: the rule is not about the number. A sidebar has
+ * to earn a permanent column of the viewport, and four destinations that fit
+ * comfortably in one strip do not. Revisit it when a tab has to be dropped
+ * to make room, not when one is added.
  */
 export function TopBar({
   crumbs,

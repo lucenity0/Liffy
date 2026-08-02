@@ -457,6 +457,22 @@ class GitHubClient:
         self._raise_for_status(response, with_body=False)
         return response
 
+    def create_issue(
+        self, owner: str, repo: str, title: str, body: str, labels: list[str]
+    ) -> dict:
+        """Open an issue and return GitHub's row for it.
+
+        Used only by the in-app report form. Note what this does *not* accept:
+        there is no path here for a security report, because those must go to a
+        private advisory rather than a public issue — `SECURITY.md` is explicit
+        about it and the caller enforces it before reaching this method.
+        """
+        response = self._post(
+            f"/repos/{owner}/{repo}/issues",
+            {"title": title, "body": body, "labels": labels},
+        )
+        return response.json()
+
     def _post(self, path: str, json: dict) -> httpx.Response:
         """The write counterpart of ``_get``.
 

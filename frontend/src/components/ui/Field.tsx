@@ -89,11 +89,11 @@ export function Input({ className, ...rest }: ComponentPropsWithoutRef<"input">)
 /**
  * The matching dropdown. A native `<select>` rather than a listbox built out
  * of divs: it is keyboard reachable, screen-reader labelled and correct on
- * touch for free, and none of the filters need an affordance a native control
- * cannot give them.
+ * touch for free, and nothing here needs an affordance a native control
+ * cannot give.
  *
- * `font-sans`, not the `font-code` of Input — these hold prose labels
- * ("All repositories"), not identifiers.
+ * `font-sans`, not the `font-code` of Input — these hold prose labels, not
+ * identifiers.
  */
 export function Select({
   className,

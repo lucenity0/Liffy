@@ -49,11 +49,27 @@ export interface RepoStatusOut {
   last_indexed_files_seen: number | null;
 }
 
+/** The structured half of a review's overview. Null when the model wrote only prose. */
+export interface SummaryDetail {
+  changes?: string[];
+  files?: { path: string; description: string }[];
+}
+
 export interface ReviewOut {
   id: string;
   pr_id: string;
   status: ReviewStatus;
   summary: string | null;
+  /**
+   * What the pull request does, and what changed where — everything the
+   * overview renders *around* `summary`.
+   *
+   * Null on every review written before this landed, and on any model that
+   * answered with the older three-field output. Treat it as absent, never as
+   * empty: "the model was not asked" and "the model found nothing to say" are
+   * different facts.
+   */
+  summary_detail: SummaryDetail | null;
   verdict: Verdict | null;
   model_used: string | null;
   tokens_used: number | null;

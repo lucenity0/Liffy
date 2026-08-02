@@ -78,6 +78,18 @@ describe("Help", () => {
     await waitFor(async () =>
       expect(await answer()).toHaveTextContent(/the reason is recorded on the review itself/i),
     );
+
+    // And it must still be that page *after the debounce has had its turn*.
+    //
+    // The first version of this assertion stopped above, and passed against a
+    // real bug: the search effect ran on mount, deleted `page` 200ms later,
+    // and the pane fell back to the top match. `waitFor` simply resolved
+    // first. Anything asserting a URL-driven selection has to outlive the
+    // timer that could clear it.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(await answer()).toHaveTextContent(
+      /the reason is recorded on the review itself/i,
+    );
   });
 
   it("says nothing matched instead of showing the closest miss", async () => {

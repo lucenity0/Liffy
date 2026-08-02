@@ -38,12 +38,38 @@ class LLMReviewComment(BaseModel):
     suggestion: str | None = None
 
 
+class LLMFileNote(BaseModel):
+    """One changed file, and what the change does to it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    description: str
+
+
 class LLMReviewOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str
+    """Prose. Two or three sentences, and the *only* part shown in the list.
+
+    Kept plain deliberately: it is the one-liner on the reviews page, so a
+    heading or a bullet here would put markdown syntax in a table cell.
+    """
+
     verdict: ReviewVerdict
     comments: list[LLMReviewComment]
+
+    # Both default to empty, and that is load-bearing rather than lazy. A model
+    # that answers with the older three-field shape still validates, so the
+    # retry loop is not spent arguing about presentation — and a review whose
+    # findings are right but whose file table is missing is still a good
+    # review. Presentation degrades; the review does not fail.
+    changes: list[str] = []
+    """What the pull request *does*, one bullet per change."""
+
+    files: list[LLMFileNote] = []
+    """Per-file notes, rendered as a table on the pull request."""
 
 
 # ── API response models (BASE-10) ────────────────────────────────────────────
@@ -82,6 +108,11 @@ class ReviewOut(BaseModel):
     pr_id: uuid.UUID
     status: str
     summary: str | None
+    # The structured half of the overview, or None when the model produced only
+    # prose. Shape: `{"changes": [str], "files": [{"path", "description"}]}`.
+    # Deliberately loose — this is presentation, and pinning it in a response
+    # model would mean a migration every time the overview grows a section.
+    summary_detail: dict | None
     verdict: str | None
     model_used: str | None
     tokens_used: int | None

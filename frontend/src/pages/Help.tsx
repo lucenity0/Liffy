@@ -35,6 +35,16 @@ export function Help() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Nothing to do when the field already agrees with the URL — which is
+    // exactly the state on mount, including for a deep link.
+    //
+    // Without this guard the effect fired 200ms after load and ran
+    // `next.delete("page")`, so `/help?q=…&page=subscription-providers` lost
+    // its selection and fell back to `results[0]`: "a different answer wearing
+    // the right URL", which is the case `useHelpPage` exists to prevent. The
+    // test passed only because `waitFor` resolved before the timer fired.
+    if (draft.trim() === query) return;
+
     const timer = setTimeout(() => {
       setParams(
         (prev) => {

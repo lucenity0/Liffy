@@ -201,7 +201,14 @@ def test_no_two_pages_claim_the_same_alias() -> None:
     for doc in H.load_corpus():
         for alias in doc.aliases:
             token = alias.strip()
-            if token in owners and token not in doc.priority_tokens:
+            # Tokenised on both sides. `aliases` holds normalised *phrases*
+            # ("queued"), `priority_tokens` holds *stemmed* tokens ("queu"), so
+            # comparing them directly meant the escape hatch could never match
+            # — the test would have failed the first time two pages
+            # legitimately shared a word one of them claims with `!`, despite
+            # the corpus following the rule in `app/help/README.md`.
+            claimed = bool(set(H._tokenize(token)) & doc.priority_tokens)
+            if token in owners and not claimed:
                 clashes.append(f"{token!r}: {owners[token]} and {doc.slug}")
             owners.setdefault(token, doc.slug)
     assert not clashes, "aliases claimed twice — give the word to one page:\n" + "\n".join(clashes)
@@ -232,3 +239,25 @@ def test_snippets_are_short_and_lead_with_the_answer() -> None:
         snippet = H._snippet(doc)
         assert len(snippet) <= 200
         assert not snippet.startswith("#")
+
+
+def test_the_alias_clash_escape_hatch_actually_fires(tmp_path) -> None:
+    """The mechanism the clash test relies on, exercised directly.
+
+    The clash check compares an alias phrase against `priority_tokens`, which
+    holds *stemmed* tokens. Comparing the two forms directly meant `!` could
+    never be recognised, so the guard above would have failed the first time
+    the corpus legitimately used the escape hatch it documents. A test that
+    cannot fail and a test that cannot pass are the same bug.
+    """
+    shared = "---\ntitle: A\naliases: queued\n---\n\nBody about queued things.\n"
+    claimed = "---\ntitle: B\naliases: queued!\n---\n\nBody about queued things.\n"
+    (tmp_path / "a.md").write_text(shared, encoding="utf-8")
+    (tmp_path / "b.md").write_text(claimed, encoding="utf-8")
+
+    docs = {d.slug: d for d in H.load_corpus(str(tmp_path))}
+
+    # `a` claims nothing; `b` claims the word, and the claim is visible in the
+    # stemmed form the check has to use.
+    assert docs["a"].priority_tokens == set()
+    assert set(H._tokenize("queued")) & docs["b"].priority_tokens

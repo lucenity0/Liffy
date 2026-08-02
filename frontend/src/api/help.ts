@@ -22,7 +22,12 @@ export async function getHelpTopics(): Promise<HelpIndexOut> {
 
 /** One page by slug — what a deep link resolves. Null when the slug is stale. */
 export async function getHelpPage(slug: string): Promise<HelpPassage | null> {
-  const { data } = await apiClient.get<HelpPassage | null>(`/help/${slug}`);
+  // Encoded: `slug` comes straight off `?page=`, and a value like `../reviews`
+  // is normalised by the browser into a request against a different endpoint
+  // entirely. Spaces, `?` and `#` would also build a malformed URL.
+  const { data } = await apiClient.get<HelpPassage | null>(
+    `/help/${encodeURIComponent(slug)}`,
+  );
   return data;
 }
 

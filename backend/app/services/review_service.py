@@ -246,6 +246,20 @@ def run_review(
                 )
             )
         review.summary = result.output.summary
+        # Stored only when the model actually produced it: null means "not
+        # asked or not answered", which is true of every review written before
+        # this existed and of any model that returned the older output shape.
+        review.summary_detail = (
+            {
+                "changes": result.output.changes,
+                "files": [
+                    {"path": f.path, "description": f.description}
+                    for f in result.output.files
+                ],
+            }
+            if (result.output.changes or result.output.files)
+            else None
+        )
         review.verdict = result.output.verdict.value
         review.status = "completed"
         review.model_used = result.model_used
@@ -384,11 +398,19 @@ def publish_review(
             is_own_pr=actor.username.lower() == (meta.author or "").lower(),
             mode=settings.github_review_event_mode,
         )
+        detail = review.summary_detail or {}
         body = build_review_body(
             review.summary,
             event=event,
             unanchorable=unanchorable,
             supersedes_url=_previous_posted_review_url(db, review),
+            changes=list(detail.get("changes") or []),
+            files=[
+                (f.get("path", ""), f.get("description", ""))
+                for f in (detail.get("files") or [])
+                if f.get("path")
+            ],
+            comment_count=len(comments),
         )
 
         posted = gh.create_pull_request_review(

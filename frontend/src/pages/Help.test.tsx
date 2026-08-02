@@ -168,6 +168,33 @@ describe("Help — reporting a problem", () => {
     open.mockRestore();
   });
 
+  it("files a feature idea as a labelled suggestion, not as a bug", async () => {
+    /**
+     * Suggestions land as `enhancement`-labelled issues. Discussions would be
+     * the better home — a suggestion is a conversation, not a defect — but
+     * they are not enabled on the repository, and a button pointing at a
+     * disabled tab is worse than one pointing somewhere slightly wrong-shaped.
+     */
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Queued vs processing");
+
+    await user.click(screen.getByRole("button", { name: /report a problem/i }));
+    await user.click(screen.getByLabelText(/feature idea/i));
+    await user.type(
+      screen.getByLabelText(/what would you like/i),
+      "Let me filter reviews by repository",
+    );
+    await user.click(screen.getByRole("button", { name: /prefilled suggestion/i }));
+
+    const url = decodeURIComponent(open.mock.calls[0][0] as string);
+    expect(url).toContain("labels=enhancement");
+    expect(url).not.toContain("labels=bug");
+    expect(url).toContain("What I'd like");
+    open.mockRestore();
+  });
+
   it("never puts a credential in a report", async () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     const user = userEvent.setup();
@@ -182,5 +209,64 @@ describe("Help — reporting a problem", () => {
       expect(url.toLowerCase()).not.toContain(marker);
     }
     open.mockRestore();
+  });
+});
+
+describe("Help — illustrations", () => {
+  it("draws the figure a page asks for, above its text", async () => {
+    /**
+     * The corpus names a figure; the drawing lives in `Figure`. That split is
+     * what keeps a markdown document from carrying markup onto a page served
+     * without a session — so this asserts the *name* is honoured, never that
+     * the document produced the graphic.
+     */
+    server.use(
+      http.get("*/help", () =>
+        HttpResponse.json({
+          query: "how does liffy work",
+          results: [
+            {
+              slug: "how-liffy-works",
+              title: "How Liffy works",
+              snippet: "You do step one. Liffy does the rest.",
+              body: "You do step one. Liffy does the rest.",
+              related: [],
+              figure: "how-it-works",
+              score: 20,
+            },
+          ],
+        }),
+      ),
+    );
+    renderPage("/help?q=how%20does%20liffy%20work");
+
+    const pane = await answer();
+    expect(within(pane).getByText("Connect a repo")).toBeInTheDocument();
+    expect(within(pane).getByText("You score it")).toBeInTheDocument();
+  });
+
+  it("renders the page fine when the figure name is unknown", async () => {
+    /** A corpus typo should cost the picture, never the answer. */
+    server.use(
+      http.get("*/help", () =>
+        HttpResponse.json({
+          query: "x",
+          results: [
+            {
+              slug: "review-states",
+              title: "Queued vs processing",
+              snippet: "s",
+              body: "A review sits in queued until a worker picks it up.",
+              related: [],
+              figure: "no-such-figure",
+              score: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    renderPage("/help?q=x");
+
+    expect(await answer()).toHaveTextContent(/until a worker picks it up/i);
   });
 });

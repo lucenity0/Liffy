@@ -62,6 +62,7 @@ def _passage(match: HelpMatch, titles: dict[str, str]) -> HelpPassage:
         snippet=match.snippet,
         body=match.doc.body,
         related=_links(match.doc, titles),
+        figure=match.doc.figure,
         score=round(match.score, 3),
     )
 

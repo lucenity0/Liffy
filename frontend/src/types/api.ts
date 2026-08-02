@@ -423,6 +423,12 @@ export interface HelpPassage {
   /** The whole page, as markdown. The reading pane renders all of it. */
   body: string;
   related: HelpLink[];
+  /**
+   * Names a diagram the client draws above the text, or "" for none. A *name*,
+   * never markup — the corpus says which illustration belongs to a page and
+   * `Figure` owns the drawing, so a document can never inject markup.
+   */
+  figure: string;
   score: number;
 }
 

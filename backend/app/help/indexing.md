@@ -2,6 +2,7 @@
 title: What indexing does
 aliases: index! / indexing / embeddings / chroma / context / retrieval
 related: reindex-after-merge, where-your-code-goes
+figure: indexing
 ---
 
 Indexing reads every file in a repository, splits it into chunks, embeds them,

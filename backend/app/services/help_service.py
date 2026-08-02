@@ -173,6 +173,14 @@ class HelpDoc:
     """Rendered as markdown by the client — the reading pane shows all of it."""
 
     related: list[str]
+    figure: str
+    """Names a diagram the client draws, or "" for none.
+
+    A *name*, never markup. The corpus says which illustration belongs to a
+    page; the drawing lives in the frontend, so a document can never become a
+    vector for markup on an endpoint that needs no session.
+    """
+
     aliases: list[str]
     """Normalised phrases the author says this page answers to."""
 
@@ -219,7 +227,7 @@ def _parse_front_matter(raw: str, source: str) -> tuple[dict[str, str], str]:
         key, _, value = line.partition(":")
         meta[key.strip().lower()] = value.strip()
 
-    unknown = set(meta) - {"title", "aliases", "related"}
+    unknown = set(meta) - {"title", "aliases", "related", "figure"}
     if unknown:
         raise HelpCorpusError(f"{source}: unknown front-matter key(s): {', '.join(sorted(unknown))}")
     for required in ("title", "aliases"):
@@ -257,6 +265,7 @@ def _build_doc(slug: str, raw: str, source: str) -> HelpDoc:
         title=meta["title"],
         body=body,
         related=[r.strip() for r in meta.get("related", "").split(",") if r.strip()],
+        figure=meta.get("figure", ""),
         aliases=aliases,
         alias_tokens=set().union(*(set(_tokenize(a)) for a in aliases)) if aliases else set(),
         priority_tokens=priority_tokens,
@@ -340,11 +349,23 @@ class HelpIndex:
                 best = (candidate, distance, idf)
         return best[0] if best else None
 
-    def _score(self, doc: HelpDoc, terms: list[str], norm: str) -> tuple[float, int, float, float]:
+    def _score(
+        self, doc: HelpDoc, terms: list[str], norm: str
+    ) -> tuple[float, int, float, float, bool]:
         score = 0.0
         matched = 0
         best_idf = 0.0
         idf_sum = 0.0
+        authored = False
+        """A `!` alias or a verbatim multi-word title — an author's ruling.
+
+        These clear the relevance floor on their own. The floor measures how
+        *telling* a word is across the corpus, which is the wrong question for
+        a word the author explicitly assigned to a page: "provider" appears in
+        a dozen documents, so its IDF sits under the floor, and a search for
+        "providers" returned nothing at all while `provider!` sat in the
+        providers page's aliases saying exactly where it should go.
+        """
 
         for term in terms:
             idf = self._idf.get(term, 0.0)
@@ -356,7 +377,10 @@ class HelpIndex:
             )
             body_score = idf * tf_part
             alias_score = idf * ALIAS_WEIGHT if term in doc.alias_tokens else 0.0
-            priority_score = PRIORITY_BONUS if term in doc.priority_tokens else 0.0
+            priority_score = 0.0
+            if term in doc.priority_tokens:
+                priority_score = PRIORITY_BONUS
+                authored = True
 
             if body_score > 0 or alias_score > 0:
                 matched += 1
@@ -368,8 +392,9 @@ class HelpIndex:
         for phrase in doc.name_phrases:
             if _pad(phrase) in padded:
                 score += PHRASE_BONUS
+                authored = True
 
-        return score, matched, best_idf, idf_sum
+        return score, matched, best_idf, idf_sum, authored
 
     def search(self, query: str) -> list[HelpMatch]:
         """Ranked passages, or an empty list when nothing is a real answer.
@@ -389,12 +414,17 @@ class HelpIndex:
 
         scored = []
         for doc in self.docs:
-            score, matched, best_idf, idf_sum = self._score(doc, terms, norm)
+            score, matched, best_idf, idf_sum, authored = self._score(doc, terms, norm)
             if score <= 0:
                 continue
-            # The floor: one telling term, or several that add up. Without it
-            # every query matches whatever page happens to say "review".
-            if not (best_idf >= IDF_FLOOR or (matched >= 2 and idf_sum >= IDF_SUM_FLOOR)):
+            # The floor: an authored claim on the word, one telling term, or
+            # several that add up. Without it every query matches whatever page
+            # happens to say "review".
+            if not (
+                authored
+                or best_idf >= IDF_FLOOR
+                or (matched >= 2 and idf_sum >= IDF_SUM_FLOOR)
+            ):
                 continue
             scored.append(HelpMatch(doc=doc, score=score, snippet=_snippet(doc)))
 

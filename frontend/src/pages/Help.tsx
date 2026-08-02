@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
+import { Figure } from "@/components/help/Figure";
 import { Prose } from "@/components/help/Prose";
 import { ReportProblem } from "@/components/help/ReportProblem";
 import { useHelpPage, useHelpSearch, useHelpTopics } from "@/hooks/useHelp";
@@ -320,6 +321,7 @@ function ReadingPane({
         aria-live="polite"
         className="flex flex-col gap-5"
       >
+        {passage.figure && <Figure name={passage.figure} />}
         <Prose markdown={passage.body} />
         {passage.related.length > 0 && (
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-rule pt-4 text-sm">

@@ -745,6 +745,7 @@ export const fixtureHelpPassages: HelpPassage[] = [
       "A review sits in **queued** until a worker picks it up, then moves to\n" +
       "**processing** while it runs.\n\nBoth are normal; neither means anything is wrong.",
     related: [{ slug: "review-failed", title: "Why a review failed" }],
+    figure: "",
     score: 13.9,
   },
   {
@@ -756,6 +757,7 @@ export const fixtureHelpPassages: HelpPassage[] = [
       "- `'claude' is not on PATH` — the worker has no CLI\n" +
       "- Rate limit — the account is out of allowance",
     related: [],
+    figure: "",
     score: 4.6,
   },
 ];

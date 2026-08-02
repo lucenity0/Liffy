@@ -37,6 +37,39 @@ ANSWERABLE = [
     ("re-run a review", "re-review"),
 ]
 
+# Every surface of the app, and the page that must answer for it.
+#
+# This is the coverage contract. #237 asks that "a user shouldn't feel confused
+# about anything", and the way that decays is not a wrong answer — it is a whole
+# feature nobody wrote a page for. Searching "analytics" returned nothing at all
+# when the Analytics tab had existed for months.
+#
+# Add a surface to the app, add a row here.
+SURFACES = [
+    ("dashboard", "dashboard"),
+    ("reviews list", "reviews-list"),
+    ("analytics", "analytics"),
+    ("analytics page", "analytics"),
+    ("settings page", "settings-and-env"),
+    ("approval rate", "approval-rate"),
+    ("time to review", "time-to-review"),
+    ("token efficiency", "token-efficiency"),
+    ("comments per review", "comments-per-review"),
+    ("rating a comment", "rating-comments"),
+    ("indexing", "indexing"),
+    ("webhooks", "webhooks"),
+    ("providers", "providers"),
+    ("provider", "providers"),
+    ("privacy", "where-your-code-goes"),
+    ("cost", "costs"),
+    ("sign in", "signing-in"),
+    ("connect a repository", "connecting-a-repo"),
+    ("inline comments", "pr-comments"),
+    ("feature request", "suggest-a-feature"),
+    ("how liffy works", "how-liffy-works"),
+    ("troubleshooting", "troubleshooting"),
+]
+
 # Nothing in Liffy's docs answers these. The floor must reject them outright.
 OFF_TOPIC = [
     "how do i deploy to kubernetes",
@@ -55,6 +88,23 @@ def test_a_real_question_reaches_the_page_that_answers_it(query: str, expected_s
     assert results[0].doc.slug == expected_slug, (
         f"{query!r} ranked {results[0].doc.slug} first, expected {expected_slug}. "
         f"Full order: {[r.doc.slug for r in results]}"
+    )
+
+
+@pytest.mark.parametrize("query,expected_slug", SURFACES)
+def test_every_surface_of_the_app_has_a_page(query: str, expected_slug: str) -> None:
+    """No part of Liffy may be undocumented.
+
+    "providers" is the case that shows why this needs its own test rather than
+    trusting the corpus to grow: the word ended up in a dozen pages, its IDF
+    fell under the relevance floor, and a search for it returned *nothing* even
+    though a page called Providers existed. Coverage is not the same as having
+    written the file.
+    """
+    results = H.search(query)
+    assert results, f"{query!r} — no page answers for this part of the app"
+    assert results[0].doc.slug == expected_slug, (
+        f"{query!r} ranked {results[0].doc.slug}, expected {expected_slug}"
     )
 
 

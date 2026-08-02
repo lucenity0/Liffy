@@ -25,7 +25,7 @@ import { useSettings } from "@/hooks/useSettings";
 const REPO = "lucenity0/Liffy";
 const ADVISORY_URL = `https://github.com/${REPO}/security/advisories/new`;
 
-type Kind = "bug" | "security";
+type Kind = "bug" | "feature" | "security";
 
 export function ReportProblem({ query }: { query: string }) {
   const [open, setOpen] = useState(false);
@@ -51,10 +51,14 @@ export function ReportProblem({ query }: { query: string }) {
     .filter(Boolean)
     .join("\n");
 
+  const feature = kind === "feature";
   const body = [
-    "## What happened",
+    feature ? "## What I'd like" : "## What happened",
     "",
-    description.trim() || "_(describe what you expected and what happened instead)_",
+    description.trim() ||
+      (feature
+        ? "_(what were you trying to do, and how does Liffy get in the way?)_"
+        : "_(describe what you expected and what happened instead)_"),
     "",
     "## Context",
     "",
@@ -63,9 +67,22 @@ export function ReportProblem({ query }: { query: string }) {
     "<!-- Liffy prefilled the Context section. Edit anything before submitting. -->",
   ].join("\n");
 
+  /**
+   * Suggestions land as labelled issues rather than anywhere separate.
+   *
+   * GitHub Discussions would be the better home for them — a suggestion is a
+   * conversation, not a defect — but Discussions are not enabled on this
+   * repository, and a button pointing at a disabled tab is worse than one
+   * pointing at a slightly wrong-shaped place. `enhancement` already exists as
+   * a label, so this lands where the roadmap is actually kept. If Discussions
+   * are ever turned on, this is the one line to change.
+   */
   const issueUrl =
     `https://github.com/${REPO}/issues/new` +
-    `?title=${encodeURIComponent(description.trim().slice(0, 80) || "Bug report")}` +
+    `?title=${encodeURIComponent(
+      description.trim().slice(0, 80) || (feature ? "Feature idea" : "Bug report"),
+    )}` +
+    `&labels=${feature ? "enhancement" : "bug"}` +
     `&body=${encodeURIComponent(body)}`;
 
   if (!open) {
@@ -94,6 +111,7 @@ export function ReportProblem({ query }: { query: string }) {
           {(
             [
               ["bug", "A bug, or something confusing"],
+              ["feature", "A feature idea, or feedback"],
               ["security", "A security vulnerability"],
             ] as const
           ).map(([value, label]) => (
@@ -137,7 +155,14 @@ export function ReportProblem({ query }: { query: string }) {
           </div>
         ) : (
           <>
-            <Field label="What went wrong?" hint="What you expected, and what happened instead.">
+            <Field
+              label={feature ? "What would you like?" : "What went wrong?"}
+              hint={
+                feature
+                  ? "Start from the problem rather than the solution — it is much easier to act on."
+                  : "What you expected, and what happened instead."
+              }
+            >
               {(props) => (
                 <textarea
                   {...props}
@@ -167,7 +192,7 @@ export function ReportProblem({ query }: { query: string }) {
                 variant="primary"
                 onClick={() => window.open(issueUrl, "_blank", "noopener,noreferrer")}
               >
-                Open a prefilled issue ↗
+                {feature ? "Open a prefilled suggestion ↗" : "Open a prefilled issue ↗"}
               </Button>
               {/* Said plainly, because "Open" could reasonably be read as
                   "post". Nothing is filed until they press Submit on GitHub. */}

@@ -27,6 +27,9 @@ class HelpPassage(BaseModel):
     """Markdown. Rendered by the client."""
 
     related: list[HelpLink]
+    figure: str
+    """Name of a diagram the client draws above the text, or "" for none."""
+
     score: float
     """Exposed for debugging and for ordering ties client-side, not for display."""
 

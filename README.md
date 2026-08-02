@@ -117,8 +117,9 @@ and Liffy never touches them.
 
 **Running Liffy through `./liffy.sh`** (Docker) needs one extra step, because the
 worker container has no home directory holding those credentials. `./liffy.sh`
-reads `LLM_PROVIDER` from `backend/.env` and switches to the worker image with the
-CLIs installed on its own; by hand that is
+always builds the worker image with both CLIs installed — so changing provider in
+the settings page applies to the next review with no restart, and no rebuild. By
+hand that is
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
@@ -140,9 +141,11 @@ For **`codex`**, there is no equivalent — and that is worth being clear about
 rather than papering over. The Codex CLI has no auth environment variable, and
 `codex login --with-access-token` refuses a ChatGPT subscription token. The only
 thing that authenticates it is a real `auth.json`, so containerised Codex needs
-`~/.codex` mounted into the worker. `./liffy.sh` adds
-`docker-compose.codex.yml` automatically when Codex is selected; inspect that
-file before starting if you want to review the credential access. For a manual
+`~/.codex` mounted into the worker. `./liffy.sh` adds `docker-compose.codex.yml`
+whenever that directory exists on the host — which is what keeps a switch to
+Codex restart-free, and also means the worker can read your ChatGPT tokens on
+runs that never touch Codex. Inspect that file before starting if you want to
+review the access, or decline it with `LIFFY_NO_CODEX_MOUNT=1`. For a manual
 Compose invocation, add it as a third `-f` file. Running the worker on the host
 avoids the mount entirely.
 

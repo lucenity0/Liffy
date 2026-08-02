@@ -323,12 +323,19 @@ machine** — the CLI reads its own credentials from your home directory.
 `./liffy.sh` runs the worker in a container, which has no home directory holding
 those credentials. Two things change.
 
-**1. The worker image that has the CLIs installed.** `./liffy.sh` picks it up
-automatically from `LLM_PROVIDER`; by hand it is
+**1. The worker image that has the CLIs installed.** `./liffy.sh` uses it always,
+not only when a subscription provider is selected, so that switching provider in
+the settings page never means a rebuild — the review task re-reads `llm_provider`
+from the database at the start of every run, and one worker carrying every CLI is
+what makes that enough. By hand it is
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
 ```
+
+The CLIs cost roughly 1.6GB of Node on top of the plain worker. If you know you
+will only ever use an API-key provider, `LIFFY_SLIM_WORKER=1 ./liffy.sh` builds
+without them — at the price of a rebuild the day you change your mind.
 
 **2. Credentials the container can reach**, and this differs per provider.
 
@@ -351,9 +358,10 @@ subscription token because it expects an agent-identity JWT. The only thing that
 authenticates the CLI is a real `auth.json`, so the container needs the
 credential *directory*:
 
-`./liffy.sh` adds `docker-compose.codex.yml` automatically when Codex is
-selected. That overlay mounts `${HOME}/.codex` read-only at `/codex-auth` in
-the backend and worker and sets `CODEX_HOME=/codex-auth`. Inspect that file
+`./liffy.sh` adds `docker-compose.codex.yml` whenever `~/.codex` exists on the
+host — not only when Codex is the selected provider, so that selecting it later
+needs no restart. That overlay mounts `${HOME}/.codex` read-only at `/codex-auth`
+in the backend and worker and sets `CODEX_HOME=/codex-auth`. Inspect that file
 before starting if you want to review the credential access. For a manual
 Compose invocation, add it as a third file:
 
@@ -364,9 +372,12 @@ docker compose -f docker-compose.yml \
 ```
 
 That mount lets anything in the worker container read your ChatGPT access,
-refresh, and ID tokens, and `:ro` means the CLI cannot refresh them in place — so
-when the token expires you re-run `codex login` on the host. If that trade is not
-one you want, `claude_code` reaches the same place with a revocable token, and
+refresh, and ID tokens — including on runs that never invoke Codex, since the
+overlay is applied on the directory existing rather than on the provider being
+selected. `:ro` means the CLI cannot refresh them in place either, so when the
+token expires you re-run `codex login` on the host. If that trade is not one you
+want, `LIFFY_NO_CODEX_MOUNT=1 ./liffy.sh` declines it and you restart when you
+switch to Codex; `claude_code` reaches the same place with a revocable token, and
 running the worker on the host needs none of it.
 
 Miss any of this and the worker **refuses to start**, with a message naming the

@@ -459,10 +459,12 @@ class ClaudeCodeReviewLLM:
             raise SubscriptionAuthError(
                 "LLM_PROVIDER=claude_code is running inside a container, where "
                 "there is no home directory holding your Claude credentials. "
-                "Run `claude setup-token` on the host and set "
-                "CLAUDE_CODE_OAUTH_TOKEN in backend/.env, then start with "
-                "`docker compose -f docker-compose.yml "
-                "-f docker-compose.subscription.yml up`."
+                "Run `claude setup-token` on the host, then paste the result "
+                "into Settings → Secrets → Connect (applies from the next "
+                "review) or set CLAUDE_CODE_OAUTH_TOKEN in backend/.env. For a "
+                "manual Compose invocation the worker also needs "
+                "`-f docker-compose.subscription.yml`, which `./liffy.sh` adds "
+                "on its own."
             )
 
     def _argv(self, system: str) -> list[str]:
@@ -713,11 +715,13 @@ class CodexReviewLLM:
             raise SubscriptionAuthError(
                 "LLM_PROVIDER=codex is running inside a container, where there "
                 "is no home directory holding your Codex credentials — and the "
-                "Codex CLI has no token-based login to work around it. Either "
-                "run the worker on the host, use LLM_PROVIDER=claude_code "
-                "(which does support a token), or mount ~/.codex into the "
-                "worker and set CODEX_HOME — see the commented volume in "
-                "docker-compose.subscription.yml for the trade-offs."
+                "Codex CLI has no token-based login to work around it. Run "
+                "`codex login` on the host and rerun `./liffy.sh`, which mounts "
+                "~/.codex into the worker and sets CODEX_HOME once that "
+                "directory exists (unless LIFFY_NO_CODEX_MOUNT=1). Otherwise "
+                "run the worker on the host, or use LLM_PROVIDER=claude_code, "
+                "which does support a token. See docker-compose.codex.yml for "
+                "what the mount grants."
             )
 
         if self._codex_home:

@@ -108,10 +108,11 @@ class Settings(BaseSettings):
     # CODEX_HOME at a directory holding a real auth.json.
     #
     # So in a container this provider needs the credential *directory* mounted,
-    # which is a weaker position than the Claude path and is why it is opt-in
-    # and empty by default: unset means "host only", and the provider refuses to
-    # start in a container rather than failing later. docker-compose.subscription.yml
-    # has the mount, commented, with the trade-offs written out.
+    # which is a weaker position than the Claude path. Empty by default because
+    # unset means "host only", and the provider then refuses to start in a
+    # container rather than failing later. `./liffy.sh` sets it to /codex-auth
+    # through docker-compose.codex.yml whenever ~/.codex exists on the host —
+    # that file writes out the trade-offs of granting the access.
     codex_home: str = Field(default="")
     # Keep Codex reasoning under Liffy's control instead of inheriting the
     # user's ~/.codex/config.toml value.

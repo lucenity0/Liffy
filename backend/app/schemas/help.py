@@ -1,6 +1,8 @@
 """Response shapes for the help search (#237)."""
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class HelpLink(BaseModel):
@@ -56,3 +58,23 @@ class HelpIndexOut(BaseModel):
     """The hand-picked starting questions."""
 
     all_topics: list[HelpTopic]
+
+
+class ReportIn(BaseModel):
+    """A report submitted from the in-app help.
+
+    No `kind` for security. A security report must reach a private advisory,
+    never a public issue, so this endpoint has no shape that could express one
+    — the frontend routes it to GitHub's advisory form and Liffy never carries
+    the details. Making it unrepresentable here is stronger than validating it
+    away.
+    """
+
+    title: str = Field(min_length=3, max_length=120)
+    body: str = Field(min_length=10, max_length=8000)
+    kind: Literal["bug", "feature"] = "bug"
+
+
+class ReportOut(BaseModel):
+    number: int
+    url: str

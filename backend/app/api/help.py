@@ -10,14 +10,23 @@ Nothing user-specific is reachable through it. It takes a string, ranks static
 documents, and returns their text.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.deps import get_current_user
+from app.models.user import User
 from app.schemas.help import (
     HelpIndexOut,
     HelpLink,
     HelpPassage,
     HelpSearchOut,
     HelpTopic,
+    ReportIn,
+    ReportOut,
+)
+from app.services.github_service import (
+    GitHubClient,
+    GitHubError,
+    get_github_token,
 )
 from app.services.help_service import HelpDoc, HelpMatch, get_index
 
@@ -115,3 +124,55 @@ def get_help_page(slug: str) -> HelpPassage | None:
     if doc is None:
         return None
     return _passage(HelpMatch(doc=doc, score=0.0, snippet=""), titles)
+
+
+LIFFY_REPO = ("lucenity0", "Liffy")
+"""Where reports go. Liffy's own repository, not the user's.
+
+Hardcoded rather than configurable: a report is about Liffy, and pointing it at
+the repository being reviewed would file "your help search is broken" against
+somebody's unrelated codebase.
+"""
+
+
+@router.post("/help/report", response_model=ReportOut, status_code=201)
+def submit_report(
+    payload: ReportIn,
+    user: User = Depends(get_current_user),
+) -> ReportOut:
+    """File a bug or a feature idea as a GitHub issue, and return where it went.
+
+    **Authenticated**, unlike the rest of this router. Reading the docs needs no
+    session; writing to a public issue tracker does. Without that gate a Liffy
+    instance reachable from the internet is an anonymous issue-posting endpoint
+    aimed at someone else's repository.
+
+    The issue is filed with the instance's own GitHub token, so it is attributed
+    to whoever owns that token rather than to the person typing. On a self-hosted
+    install those are usually the same person; where they are not, the body says
+    so rather than leaving the attribution silently wrong.
+
+    Security reports cannot reach here — `ReportIn` has no shape for one. They
+    go to a private advisory, per `SECURITY.md`.
+    """
+    owner, repo = LIFFY_REPO
+    label = "enhancement" if payload.kind == "feature" else "bug"
+
+    # Says who actually typed it, since the issue will carry the token owner's
+    # name. Only the GitHub login — nothing else about the account, and nothing
+    # about the instance.
+    body = (
+        f"{payload.body.strip()}\n\n---\n"
+        f"Reported by @{user.username} from Liffy's in-app help."
+    )
+
+    try:
+        with GitHubClient(get_github_token()) as client:
+            issue = client.create_issue(owner, repo, payload.title.strip(), body, [label])
+    except GitHubError as exc:
+        # 502, not 500: Liffy is fine, GitHub refused. The message carries
+        # through so "your token cannot write to that repository" reaches the
+        # person who can fix it instead of a generic failure.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return ReportOut(number=issue["number"], url=issue["html_url"])

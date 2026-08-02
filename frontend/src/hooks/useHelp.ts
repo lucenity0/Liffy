@@ -1,5 +1,5 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { getHelpPage, getHelpTopics, searchHelp } from "@/api/help";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import { getHelpPage, getHelpTopics, searchHelp, submitReport } from "@/api/help";
 import { keys } from "./keys";
 
 /** Common questions and the table of contents. Never changes between deploys. */
@@ -49,4 +49,12 @@ export function useHelpPage(slug: string | null, enabled: boolean) {
     enabled: enabled && !!slug,
     staleTime: Infinity,
   });
+}
+
+/**
+ * Files the report. Nothing is cached or invalidated — an issue lives on
+ * GitHub, and Liffy holds no list of them to keep fresh.
+ */
+export function useSubmitReport() {
+  return useMutation({ mutationFn: submitReport });
 }

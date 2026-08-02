@@ -451,3 +451,9 @@ export interface HelpIndexOut {
   common: HelpTopic[];
   all_topics: HelpTopic[];
 }
+
+/** `POST /help/report` — where the filed issue landed. */
+export interface ReportOut {
+  number: number;
+  url: string;
+}

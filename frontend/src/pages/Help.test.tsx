@@ -120,94 +120,145 @@ describe("Help", () => {
 });
 
 describe("Help — reporting a problem", () => {
+  const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
+    await screen.findByRole("button", { name: /report a problem/i });
+    await user.click(screen.getByRole("button", { name: /report a problem/i }));
+  };
+
+  it("files a bug and shows where it went", async () => {
+    const user = userEvent.setup();
+    renderPage("/help?q=queued");
+    await openForm(user);
+
+    await user.type(screen.getByLabelText("Title"), "Reviews stay queued");
+    await user.type(
+      screen.getByLabelText(/what went wrong/i),
+      "They never start running.",
+    );
+    await user.click(screen.getByRole("button", { name: "File this issue" }));
+
+    // The number is the receipt, and this is the only chance to hand it over.
+    const link = await screen.findByRole("link", { name: /lucenity0\/Liffy#251/ });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://github.com/lucenity0/Liffy/issues/251",
+    );
+  });
+
+  it("sends the title, the body, and the search that failed", async () => {
+    /** The failed search is the single most useful line for triage, and the
+     *  one nobody thinks to include. */
+    let sent: Record<string, unknown> | null = null;
+    server.use(
+      http.post("*/help/report", async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          { number: 251, url: "https://github.com/lucenity0/Liffy/issues/251" },
+          { status: 201 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage("/help?q=queued");
+    await openForm(user);
+
+    await user.type(screen.getByLabelText("Title"), "A clear title");
+    await user.type(screen.getByLabelText(/what went wrong/i), "A long enough body.");
+    await user.click(screen.getByRole("button", { name: "File this issue" }));
+
+    await waitFor(() => expect(sent).not.toBeNull());
+    expect(sent).toMatchObject({ title: "A clear title", kind: "bug" });
+    expect(String(sent!.body)).toContain("A long enough body.");
+    expect(String(sent!.body)).toContain('Searched help for: "queued"');
+  });
+
+  it("sends a feature idea as its own kind, with its own words", async () => {
+    let sent: Record<string, unknown> | null = null;
+    server.use(
+      http.post("*/help/report", async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          { number: 252, url: "https://github.com/lucenity0/Liffy/issues/252" },
+          { status: 201 },
+        );
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await openForm(user);
+    await user.click(screen.getByLabelText(/feature idea/i));
+
+    // The prompt changes with the kind — "what went wrong" is the wrong
+    // question to ask someone describing something that does not exist yet.
+    await user.type(screen.getByLabelText("Title"), "Filter reviews by repo");
+    await user.type(
+      screen.getByLabelText(/what changes would you like/i),
+      "Scrolling the whole list to find one repository.",
+    );
+    await user.click(screen.getByRole("button", { name: "Send this suggestion" }));
+
+    await waitFor(() => expect(sent).not.toBeNull());
+    expect(sent).toMatchObject({ kind: "feature" });
+  });
+
+  it("cannot submit an empty report", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await openForm(user);
+
+    expect(screen.getByRole("button", { name: "File this issue" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Title"), "Ok");
+    expect(screen.getByRole("button", { name: "File this issue" })).toBeDisabled();
+  });
+
+  it("says GitHub refused rather than blaming Liffy", async () => {
+    server.use(
+      http.post("*/help/report", () =>
+        HttpResponse.json(
+          { detail: "Resource not accessible by personal access token" },
+          { status: 502 },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await openForm(user);
+
+    await user.type(screen.getByLabelText("Title"), "A clear title");
+    await user.type(screen.getByLabelText(/what went wrong/i), "A long enough body.");
+    await user.click(screen.getByRole("button", { name: "File this issue" }));
+
+    expect(await screen.findByText(/github refused/i)).toBeInTheDocument();
+  });
+
   it("routes a security report to the private advisory form, carrying no detail", async () => {
     /**
      * SECURITY.md is explicit: a public issue is readable by everyone,
-     * including whoever would use the bug, before there is a fix. So the
-     * security branch must not open an issue — and must not put the
-     * description in a URL either, where it would land in browser history and
-     * a referrer header.
+     * including whoever would use the bug, before there is a fix. The API has
+     * no shape for a security report at all — this branch is the courtesy, and
+     * the absent request is the proof.
      */
+    let posted = false;
+    server.use(
+      http.post("*/help/report", () => {
+        posted = true;
+        return HttpResponse.json({}, { status: 201 });
+      }),
+    );
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText("Queued vs processing");
-
-    await user.click(screen.getByRole("button", { name: /report a problem/i }));
+    await openForm(user);
     await user.click(screen.getByLabelText(/security vulnerability/i));
+
+    // No fields to type a vulnerability into, by design.
+    expect(screen.queryByLabelText("Title")).toBeNull();
     await user.click(screen.getByRole("button", { name: /private advisory form/i }));
 
-    const url = open.mock.calls[0][0] as string;
-    expect(url).toBe("https://github.com/lucenity0/Liffy/security/advisories/new");
-    expect(url).not.toContain("issues/new");
-    expect(url).not.toContain("body=");
-    open.mockRestore();
-  });
-
-  it("prefills a normal issue with context and lets the reporter submit it", async () => {
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
-    const user = userEvent.setup();
-    renderPage("/help?q=queued");
-    await screen.findByRole("button", { name: /report a problem/i });
-
-    await user.click(screen.getByRole("button", { name: /report a problem/i }));
-    await user.type(
-      screen.getByLabelText(/what went wrong/i),
-      "Reviews stay queued forever",
+    expect(open.mock.calls[0][0]).toBe(
+      "https://github.com/lucenity0/Liffy/security/advisories/new",
     );
-    await user.click(screen.getByRole("button", { name: /prefilled issue/i }));
-
-    const url = decodeURIComponent(open.mock.calls[0][0] as string);
-    expect(url).toContain("github.com/lucenity0/Liffy/issues/new");
-    expect(url).toContain("Reviews stay queued forever");
-    expect(url).toContain("Searched help for");
-    // Liffy never files it — the reporter does, under their own account.
-    expect(
-      screen.getByText(/nothing is filed until you submit it there/i),
-    ).toBeInTheDocument();
-    open.mockRestore();
-  });
-
-  it("files a feature idea as a labelled suggestion, not as a bug", async () => {
-    /**
-     * Suggestions land as `enhancement`-labelled issues. Discussions would be
-     * the better home — a suggestion is a conversation, not a defect — but
-     * they are not enabled on the repository, and a button pointing at a
-     * disabled tab is worse than one pointing somewhere slightly wrong-shaped.
-     */
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByText("Queued vs processing");
-
-    await user.click(screen.getByRole("button", { name: /report a problem/i }));
-    await user.click(screen.getByLabelText(/feature idea/i));
-    await user.type(
-      screen.getByLabelText(/what would you like/i),
-      "Let me filter reviews by repository",
-    );
-    await user.click(screen.getByRole("button", { name: /prefilled suggestion/i }));
-
-    const url = decodeURIComponent(open.mock.calls[0][0] as string);
-    expect(url).toContain("labels=enhancement");
-    expect(url).not.toContain("labels=bug");
-    expect(url).toContain("What I'd like");
-    open.mockRestore();
-  });
-
-  it("never puts a credential in a report", async () => {
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByText("Queued vs processing");
-
-    await user.click(screen.getByRole("button", { name: /report a problem/i }));
-    await user.click(screen.getByRole("button", { name: /prefilled issue/i }));
-
-    const url = decodeURIComponent(open.mock.calls[0][0] as string);
-    for (const marker of ["sk-ant-", "ghp_", "token", "secret", "password"]) {
-      expect(url.toLowerCase()).not.toContain(marker);
-    }
+    expect(posted).toBe(false);
     open.mockRestore();
   });
 });
@@ -241,8 +292,9 @@ describe("Help — illustrations", () => {
     renderPage("/help?q=how%20does%20liffy%20work");
 
     const pane = await answer();
-    expect(within(pane).getByText("Connect a repo")).toBeInTheDocument();
-    expect(within(pane).getByText("You score it")).toBeInTheDocument();
+    // The scroll-scrubbed sequence's rail — the four beats it walks through.
+    expect(within(pane).getByText("a PR arrives")).toBeInTheDocument();
+    expect(within(pane).getByText("comment")).toBeInTheDocument();
   });
 
   it("renders the page fine when the figure name is unknown", async () => {

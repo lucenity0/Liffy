@@ -1,6 +1,6 @@
 ---
 title: How Liffy works
-aliases: how it works! / what does liffy do / overview / pipeline / explain liffy / what happens
+aliases: liffy! / how it works / what does liffy do / overview / pipeline / explain liffy / what happens / what is this
 related: indexing, webhooks, providers, pr-comments
 figure: how-it-works
 ---

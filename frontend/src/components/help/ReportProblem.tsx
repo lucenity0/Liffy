@@ -1,25 +1,46 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Field } from "@/components/ui/Field";
 import { Sheet } from "@/components/ui/Sheet";
-import { useSettings } from "@/hooks/useSettings";
+import { useSubmitReport } from "@/hooks/useHelp";
+import { normalizeApiError } from "@/lib/errors";
+
+/**
+ * `normalizeApiError`'s shared copy is written around the repo and trigger
+ * endpoints — its 422 branch says "That doesn't look like owner/name.", which
+ * is nonsense on this form. Phrase the two failures this endpoint actually
+ * produces, and fall back to the server's own detail for anything else.
+ */
+function reportError(error: unknown): string {
+  const normalized = normalizeApiError(error);
+  if (normalized.status === 422) {
+    return "A title of at least 3 characters and a description of at least 10 are needed.";
+  }
+  if (normalized.status === 502) {
+    return `GitHub refused the issue. ${normalized.message}`;
+  }
+  return normalized.message;
+}
 
 /**
  * The last rung of the ladder: search didn't answer it, so report it.
  *
- * Two things here are not cosmetic.
- *
  * **Security reports do not become public issues.** `SECURITY.md` is explicit
  * that a public issue is readable by everyone, including whoever would use the
  * bug, before there is a fix. So the form asks what kind of report this is
- * *first*, and a security answer routes to GitHub's private advisory form —
- * with the description deliberately left behind rather than carried into a URL
- * that would put it in browser history and a referrer.
+ * first, and a security answer routes to GitHub's private advisory form — with
+ * the description deliberately left behind rather than carried into a URL that
+ * would put it in browser history and a referrer. The API has no shape for a
+ * security report at all, so this branch is the courtesy; that is the fence.
  *
- * **Liffy does not file the issue.** It opens GitHub with the text prefilled
- * and the reporter submits it themselves. That keeps attribution with the
- * person who hit the bug, needs no new token scope, and means no deployment of
- * Liffy can post to the repository unattended.
+ * **Everything else Liffy files itself**, with the instance's own GitHub token.
+ * That attributes the issue to whoever owns that token rather than to the
+ * person typing — on a self-hosted install those are usually the same person,
+ * and where they are not, the body records who actually wrote it. The earlier
+ * design opened a prefilled GitHub URL instead, which kept attribution exact
+ * but asked someone who had just failed to find an answer to go and fill in a
+ * second form somewhere else.
  */
 
 const REPO = "lucenity0/Liffy";
@@ -27,63 +48,36 @@ const ADVISORY_URL = `https://github.com/${REPO}/security/advisories/new`;
 
 type Kind = "bug" | "feature" | "security";
 
+const COPY = {
+  bug: {
+    titleHint: "One line. What is broken?",
+    titlePlaceholder: "Reviews stay queued and never start",
+    bodyLabel: "What went wrong?",
+    bodyHint: "What you expected, and what happened instead.",
+    submit: "File this issue",
+  },
+  feature: {
+    titleHint: "One line. What would you like?",
+    titlePlaceholder: "Filter reviews by repository",
+    bodyLabel: "What changes would you like?",
+    bodyHint:
+      "Start from the problem rather than the solution — what were you trying to do, and how does Liffy get in the way?",
+    submit: "Send this suggestion",
+  },
+} as const;
+
 export function ReportProblem({ query }: { query: string }) {
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<Kind>("bug");
-  const [description, setDescription] = useState("");
-  const settings = useSettings();
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const report = useSubmitReport();
 
-  /**
-   * The diagnostic block, assembled from settings the API already publishes.
-   *
-   * Only `llm_provider` and the model — both non-secret, both the first thing
-   * anyone triaging a Liffy bug asks for. Secrets are not reachable from here
-   * even in principle: the settings endpoint reports whether a credential is
-   * set and never its value, so there is nothing to leak into a URL.
-   */
-  const provider =
-    settings.data?.editable.find((s) => s.key === "llm_provider")?.value ?? "unknown";
-  const context = [
-    `- Provider: ${provider}`,
-    query ? `- Searched help for: "${query}"` : null,
-    `- Reported from: Liffy's in-app help`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const feature = kind === "feature";
-  const body = [
-    feature ? "## What I'd like" : "## What happened",
-    "",
-    description.trim() ||
-      (feature
-        ? "_(what were you trying to do, and how does Liffy get in the way?)_"
-        : "_(describe what you expected and what happened instead)_"),
-    "",
-    "## Context",
-    "",
-    context,
-    "",
-    "<!-- Liffy prefilled the Context section. Edit anything before submitting. -->",
-  ].join("\n");
-
-  /**
-   * Suggestions land as labelled issues rather than anywhere separate.
-   *
-   * GitHub Discussions would be the better home for them — a suggestion is a
-   * conversation, not a defect — but Discussions are not enabled on this
-   * repository, and a button pointing at a disabled tab is worse than one
-   * pointing at a slightly wrong-shaped place. `enhancement` already exists as
-   * a label, so this lands where the roadmap is actually kept. If Discussions
-   * are ever turned on, this is the one line to change.
-   */
-  const issueUrl =
-    `https://github.com/${REPO}/issues/new` +
-    `?title=${encodeURIComponent(
-      description.trim().slice(0, 80) || (feature ? "Feature idea" : "Bug report"),
-    )}` +
-    `&labels=${feature ? "enhancement" : "bug"}` +
-    `&body=${encodeURIComponent(body)}`;
+  const reset = () => {
+    setTitle("");
+    setBody("");
+    report.reset();
+  };
 
   if (!open) {
     return (
@@ -95,19 +89,71 @@ export function ReportProblem({ query }: { query: string }) {
     );
   }
 
+  // Filed. The number is the receipt, and this is the only chance to hand it
+  // over — so the form reports where it went rather than snapping shut.
+  if (report.isSuccess) {
+    return (
+      <Sheet>
+        <Sheet.Header title="Filed" />
+        <Sheet.Body className="flex flex-col gap-3">
+          <p className="text-base text-ink">
+            Opened as{" "}
+            <a
+              href={report.data.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline decoration-rule underline-offset-4 hover:text-ink"
+            >
+              {REPO}#{report.data.number}
+            </a>
+            . Thank you — genuinely.
+          </p>
+          <p className="max-w-prose text-sm text-ink-dim">
+            Follow it there for updates, and add screenshots or detail by
+            commenting on the issue.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                reset();
+                setOpen(false);
+              }}
+            >
+              Done
+            </Button>
+            <Button size="sm" variant="ghost" onClick={reset}>
+              Report something else
+            </Button>
+          </div>
+        </Sheet.Body>
+      </Sheet>
+    );
+  }
+
+  const copy = kind === "security" ? null : COPY[kind];
+  const canSubmit = title.trim().length >= 3 && body.trim().length >= 10;
+
   return (
     <Sheet>
       <Sheet.Header
         title="Report a problem"
         actions={
-          <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              reset();
+              setOpen(false);
+            }}
+          >
             Cancel
           </Button>
         }
       />
       <Sheet.Body className="flex flex-col gap-4">
         <fieldset className="flex flex-col gap-2">
-          <legend className="mb-1 text-sm text-ink">What kind of problem?</legend>
+          <legend className="mb-1 text-sm text-ink">What kind of report?</legend>
           {(
             [
               ["bug", "A bug, or something confusing"],
@@ -115,13 +161,19 @@ export function ReportProblem({ query }: { query: string }) {
               ["security", "A security vulnerability"],
             ] as const
           ).map(([value, label]) => (
-            <label key={value} className="flex items-center gap-2 text-sm text-ink-dim">
+            <label
+              key={value}
+              className="flex items-center gap-2 text-sm text-ink-dim"
+            >
               <input
                 type="radio"
                 name="report-kind"
                 value={value}
                 checked={kind === value}
-                onChange={() => setKind(value)}
+                onChange={() => {
+                  setKind(value);
+                  report.reset();
+                }}
               />
               {label}
             </label>
@@ -140,14 +192,16 @@ export function ReportProblem({ query }: { query: string }) {
               somewhere to work on a fix with you, and can issue a CVE.
             </p>
             <p className="max-w-prose text-sm leading-relaxed text-ink-dim">
-              Describe it there rather than here: Liffy deliberately doesn't
-              carry the details, so nothing about the vulnerability ends up in
-              a URL, your browser history, or a referrer header.
+              Describe it there rather than here. Liffy deliberately doesn't
+              carry the details, so nothing about the vulnerability ends up in a
+              URL, your browser history, or a referrer header.
             </p>
             <div>
               <Button
                 variant="primary"
-                onClick={() => window.open(ADVISORY_URL, "_blank", "noopener,noreferrer")}
+                onClick={() =>
+                  window.open(ADVISORY_URL, "_blank", "noopener,noreferrer")
+                }
               >
                 Open the private advisory form ↗
               </Button>
@@ -155,50 +209,59 @@ export function ReportProblem({ query }: { query: string }) {
           </div>
         ) : (
           <>
-            <Field
-              label={feature ? "What would you like?" : "What went wrong?"}
-              hint={
-                feature
-                  ? "Start from the problem rather than the solution — it is much easier to act on."
-                  : "What you expected, and what happened instead."
-              }
-            >
+            <Field label="Title" hint={copy!.titleHint}>
+              {(props) => (
+                <input
+                  {...props}
+                  type="text"
+                  value={title}
+                  maxLength={120}
+                  placeholder={copy!.titlePlaceholder}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full rounded border border-rule bg-card px-3 py-2 text-sm text-ink outline-none placeholder:text-ink-sub focus-visible:border-rule-strong"
+                />
+              )}
+            </Field>
+
+            <Field label={copy!.bodyLabel} hint={copy!.bodyHint}>
               {(props) => (
                 <textarea
                   {...props}
-                  rows={4}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  rows={5}
+                  value={body}
+                  maxLength={8000}
+                  onChange={(e) => setBody(e.target.value)}
                   className="w-full rounded border border-rule bg-card px-3 py-2 text-sm text-ink outline-none focus-visible:border-rule-strong"
                 />
               )}
             </Field>
 
-            <div className="rounded border border-rule bg-recessed px-3 py-2">
-              <p className="mb-1 text-xs text-ink-dim">
-                Liffy will attach this — you can edit it on GitHub before
-                submitting:
-              </p>
-              <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-ink-sub">
-                {context}
-              </pre>
-              <p className="mt-1 text-xs text-ink-sub">
-                No tokens, keys, or source code are included.
-              </p>
-            </div>
+            {report.isError && (
+              <ErrorNote error={report.error} message={reportError(report.error)} />
+            )}
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <Button
                 variant="primary"
-                onClick={() => window.open(issueUrl, "_blank", "noopener,noreferrer")}
+                disabled={!canSubmit || report.isPending}
+                onClick={() =>
+                  report.mutate({
+                    title: title.trim(),
+                    // The failed search, appended rather than mixed in. It is
+                    // the single most useful line for triage and nobody thinks
+                    // to include it.
+                    body: query.trim()
+                      ? `${body.trim()}\n\n---\nSearched help for: "${query.trim()}"`
+                      : body.trim(),
+                    kind,
+                  })
+                }
               >
-                {feature ? "Open a prefilled suggestion ↗" : "Open a prefilled issue ↗"}
+                {report.isPending ? "Filing…" : copy!.submit}
               </Button>
-              {/* Said plainly, because "Open" could reasonably be read as
-                  "post". Nothing is filed until they press Submit on GitHub. */}
               <span className="text-xs text-ink-sub">
-                Opens GitHub under your own account. Nothing is filed until you
-                submit it there.
+                Posts to {REPO} straight away. No tokens, keys, or source code
+                are included.
               </span>
             </div>
           </>

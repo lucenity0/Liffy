@@ -5,8 +5,15 @@ depends on, plus the two decisions that are easy to reverse by accident: that
 help is readable without a session, and that finding nothing is a 200.
 """
 
+import pytest
+from conftest import auth_headers, seed_user
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.api import help as help_api
+from app.database import Base, get_db
 from app.main import app
 
 client = TestClient(app)
@@ -111,3 +118,173 @@ def test_help_leaks_no_configuration() -> None:
 
     for marker in ("sk-ant-", "sk-proj-", "ghp_", "github_pat_", "postgresql://", "BEGIN PRIVATE KEY"):
         assert marker not in raw, f"the help corpus contains {marker!r}"
+
+
+# ── Filing a report ───────────────────────────────────────────────────────────
+
+
+class _FakeClient:
+    """Stands in for GitHubClient. Records the call; never touches the network."""
+
+    calls: list[dict] = []
+
+    def __init__(self, *_a, **_k) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def create_issue(self, owner, repo, title, body, labels):
+        _FakeClient.calls.append(
+            {"owner": owner, "repo": repo, "title": title, "body": body, "labels": labels}
+        )
+        return {"number": 251, "html_url": "https://github.com/lucenity0/Liffy/issues/251"}
+
+
+@pytest.fixture
+def seeded():
+    """A signed-in user, since filing a report needs a session."""
+    engine = create_engine(
+        "sqlite://", future=True, connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False)
+
+    with factory() as db:
+        user = seed_user(db, github_id=1, username="octo")
+        db.commit()
+        headers = auth_headers(user)
+
+    def override():
+        db = factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override
+    yield {"headers": headers}
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def fake_github(monkeypatch):
+    _FakeClient.calls = []
+    monkeypatch.setattr(help_api, "GitHubClient", _FakeClient)
+    monkeypatch.setattr(help_api, "get_github_token", lambda: "token")
+    return _FakeClient
+
+
+def test_reporting_requires_a_session(fake_github) -> None:
+    """Reading help needs none; writing to a public tracker does.
+
+    Without this an instance reachable from the internet is an anonymous
+    issue-posting endpoint aimed at somebody else's repository.
+    """
+    response = client.post("/help/report", json={"title": "Something", "body": "x" * 20})
+
+    assert response.status_code == 401
+    assert fake_github.calls == []
+
+
+def test_a_bug_report_files_a_labelled_issue(seeded, fake_github) -> None:
+    response = client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={"title": "Reviews stay queued", "body": "They never start running."},
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {
+        "number": 251,
+        "url": "https://github.com/lucenity0/Liffy/issues/251",
+    }
+    call = fake_github.calls[0]
+    assert call["labels"] == ["bug"]
+    assert call["title"] == "Reviews stay queued"
+    # Filed with the instance's token, so the issue would otherwise carry the
+    # wrong name. The body says who actually typed it.
+    assert "Reported by @" in call["body"]
+
+
+def test_a_feature_idea_is_labelled_enhancement(seeded, fake_github) -> None:
+    client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={
+            "title": "Filter reviews by repository",
+            "body": "Scrolling the whole list to find one repo's reviews.",
+            "kind": "feature",
+        },
+    )
+
+    assert fake_github.calls[0]["labels"] == ["enhancement"]
+
+
+def test_a_security_report_cannot_be_expressed(seeded, fake_github) -> None:
+    """The strongest form of "security reports do not become public issues".
+
+    `SECURITY.md` says a public issue is readable by everyone, including whoever
+    would use the bug, before there is a fix. Rather than validate that away,
+    the request model has no shape for it — there is no `kind` that reaches
+    GitHub with a vulnerability in it.
+    """
+    response = client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={"title": "Auth bypass", "body": "Here is how to forge a session.", "kind": "security"},
+    )
+
+    assert response.status_code == 422
+    assert fake_github.calls == []
+
+
+def test_reports_go_to_liffys_repository_not_the_users(seeded, fake_github) -> None:
+    """A report is about Liffy. Filing it against the repo under review would
+    put "your help search is broken" on somebody's unrelated codebase."""
+    client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={"title": "A title", "body": "A body long enough."},
+    )
+
+    assert (fake_github.calls[0]["owner"], fake_github.calls[0]["repo"]) == ("lucenity0", "Liffy")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"title": "ab", "body": "long enough body here"},
+        {"title": "fine title", "body": "short"},
+        {"title": "x" * 200, "body": "long enough body here"},
+    ],
+)
+def test_a_malformed_report_is_rejected_before_github(seeded, fake_github, payload) -> None:
+    assert client.post("/help/report", headers=seeded["headers"], json=payload).status_code == 422
+    assert fake_github.calls == []
+
+
+def test_github_refusing_reads_as_github_not_as_liffy(seeded, monkeypatch) -> None:
+    """502, not 500 — and the reason travels, so "your token cannot write there"
+    reaches the person who can fix it."""
+    from app.services.github_service import GitHubError
+
+    class _Refusing(_FakeClient):
+        def create_issue(self, *_a, **_k):
+            raise GitHubError("Resource not accessible by personal access token")
+
+    monkeypatch.setattr(help_api, "GitHubClient", _Refusing)
+    monkeypatch.setattr(help_api, "get_github_token", lambda: "token")
+
+    response = client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={"title": "A title", "body": "A body long enough."},
+    )
+
+    assert response.status_code == 502
+    assert "not accessible" in response.json()["detail"]

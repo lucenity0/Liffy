@@ -10,9 +10,12 @@ import { loader } from "@monaco-editor/react";
 // this from jsDelivr, which is not an option for a self-hosted tool.
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import { resolveColor } from "@/lib/colors";
+import { polarityOf, type ThemeId } from "@/lib/themes";
 
-export const PAPER_THEME = "liffy-paper";
-export const GRAPHITE_THEME = "liffy-graphite";
+/** Monaco's name for a Liffy theme. Namespaced so it cannot collide. */
+export function monacoThemeName(theme: ThemeId): string {
+  return `liffy-${theme}`;
+}
 
 declare global {
   interface Window {
@@ -39,28 +42,36 @@ window.MonacoEnvironment = {
 loader.config({ monaco });
 
 /**
- * Both themes, built from the same CSS variables.
+ * One editor theme, built from that theme's CSS variables.
  *
  * Monaco does not read custom properties — it wants literal hex — so the
  * palette is resolved through the browser rather than restated here.
  *
- * `scope` is always passed explicitly, never left to the ambient page. Both
- * themes are defined in one pass on whichever mode the app booted in, so
- * reading ambient values would build the *other* theme out of the current
- * palette — a graphite boot would give "paper" a graphite background.
+ * The theme is always passed to resolveColor explicitly, never left to the
+ * ambient page: a theme may be defined while the document is wearing a
+ * different one, and reading ambient values would build it out of the wrong
+ * palette.
+ *
+ * The fallbacks are the only place the palette is duplicated in TS. They
+ * matter solely if the probe fails outright (no layout, no document), so they
+ * approximate by polarity rather than tracking every theme's exact values —
+ * a per-theme table here would be five more copies to drift.
  */
-function defineTheme(name: string, scope: "light" | "dark") {
-  const dark = scope === "dark";
-  const ink = resolveColor("--ink", dark ? "#e6e1d6" : "#2b2925", scope);
-  const inkDim = resolveColor("--ink-dim", dark ? "#9c9280" : "#6b6459", scope);
-  const inkSub = resolveColor("--ink-sub", dark ? "#786f60" : "#8e8678", scope);
-  const rule = resolveColor("--rule", dark ? "#423d36" : "#ded8cb", scope);
-  const surface = resolveColor("--card", dark ? "#28251f" : "#faf8f3", scope);
-  const sage = resolveColor("--sage", dark ? "#7ba171" : "#4a6b4a", scope);
-  const payne = resolveColor("--payne", dark ? "#84a5c2" : "#3f5a73", scope);
-  const oxide = resolveColor("--oxide", dark ? "#dd8462" : "#9a3f2b", scope);
+function defineTheme(theme: ThemeId) {
+  const dark = polarityOf(theme) === "dark";
+  const at = (name: string, light: string, darkValue: string) =>
+    resolveColor(name, dark ? darkValue : light, theme);
 
-  monaco.editor.defineTheme(name, {
+  const ink = at("--ink", "#2b2925", "#e6e1d6");
+  const inkDim = at("--ink-dim", "#524b3e", "#b2a898");
+  const inkSub = at("--ink-sub", "#696154", "#958c7c");
+  const rule = at("--rule", "#c5bca9", "#423d36");
+  const surface = at("--card", "#fbf9f5", "#28251f");
+  const sage = at("--sage", "#456646", "#7ba171");
+  const payne = at("--payne", "#3b5670", "#84a5c2");
+  const oxide = at("--oxide", "#9a3f2b", "#dd8462");
+
+  monaco.editor.defineTheme(monacoThemeName(theme), {
     // `vs-dark` matters beyond colour: it is what flips Monaco's own
     // widgets — find box, hover, context menu — which the `colors` map below
     // does not enumerate.
@@ -92,26 +103,33 @@ function defineTheme(name: string, scope: "light" | "dark") {
   });
 }
 
-let configured = false;
+const defined = new Set<ThemeId>();
 
 /**
- * Idempotent: React 19 StrictMode mounts twice in development, and redefining
- * the same two themes on every mount is wasted work.
+ * Defines a theme with Monaco if it has not been defined already.
  *
- * Still a `beforeMount` hook rather than module scope, unlike the loader
- * config above: themes only need to exist by the time the editor is created,
- * and resolving the palette on first mount rather than on chunk load keeps it
+ * A Set rather than the old single `configured` flag, and lazy rather than
+ * all-up-front: with two themes it was reasonable to build both on first
+ * mount, but resolving every palette in the ladder to serve the one the
+ * reader is actually looking at is work for its own sake. Each costs a
+ * handful of hidden-probe reads, paid the first time that theme is shown.
+ *
+ * Idempotent because React 19 StrictMode mounts twice in development.
+ */
+export function ensureTheme(theme: ThemeId): string {
+  if (!defined.has(theme)) {
+    defineTheme(theme);
+    defined.add(theme);
+  }
+  return monacoThemeName(theme);
+}
+
+/**
+ * A `beforeMount` hook rather than module scope, unlike the loader config
+ * above: themes only need to exist by the time the editor is created, and
+ * resolving the palette on first mount rather than on chunk load keeps it
  * behind the same lazy boundary as everything else here.
  */
 export function setupMonaco(): typeof monaco {
-  if (configured) return monaco;
-  configured = true;
-
-  // Both up front, in the one pass. Defining graphite lazily on first flip
-  // would mean resolving the palette while the editor is already mounted,
-  // for no saving worth the extra state.
-  defineTheme(PAPER_THEME, "light");
-  defineTheme(GRAPHITE_THEME, "dark");
-
   return monaco;
 }

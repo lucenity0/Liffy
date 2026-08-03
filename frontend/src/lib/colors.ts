@@ -11,19 +11,24 @@
 /**
  * Resolves a CSS custom property to a `#rrggbb` string.
  *
- * `scope` puts the probe inside a wrapper carrying that class, which is what
- * lets the *graphite* value be read while the page is still light — the
- * Monaco setup defines both themes in one pass and cannot flip the document
- * to do it.
+ * `theme` puts the probe inside a wrapper carrying that `data-theme`, which
+ * is what lets *any* theme's value be read while the page is wearing a
+ * different one — Monaco has to build an editor theme for whichever palette
+ * is active without flipping the document, and the style guide prints every
+ * palette at once. Omit it to read the ambient value.
+ *
+ * This used to take a `.light`/`.dark` class name, which could only address
+ * two palettes and answered the wrong question once there were more: two
+ * dark themes share a polarity but not a single colour.
  */
 export function resolveColor(
   variable: string,
   fallback: string,
-  scope?: string,
+  theme?: string,
 ): string {
   try {
     const host = document.createElement("div");
-    if (scope) host.className = scope;
+    if (theme) host.dataset.theme = theme;
     host.style.display = "none";
 
     const probe = document.createElement("span");

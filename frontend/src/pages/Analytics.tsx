@@ -1,6 +1,7 @@
 import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorNote } from "@/components/ui/ErrorNote";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { Sheet } from "@/components/ui/Sheet";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { CategoryDistribution } from "@/components/analytics/CategoryDistribution";
@@ -29,12 +30,10 @@ export function Analytics() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="font-hand text-2xl leading-tight text-ink">Analytics</h1>
-        <p className="text-base text-ink-dim">
-          How Liffy is performing against the quality targets it was built to meet.
-        </p>
-      </header>
+      <PageHeader
+        title="Analytics"
+        description="How Liffy is performing against the quality targets it was built to meet."
+      />
 
       {summary.isPending ? (
         <TileSkeletons />

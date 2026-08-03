@@ -1,31 +1,23 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
 import { clearReturnTo } from "@/lib/returnTo";
-import { cn } from "@/lib/utils";
 import type { UserOut } from "@/types/api";
 
 /**
- * Who you are signed in as, and the way out.
+ * Who you are signed in as, and the way out — as two rail rows.
  *
- * Hand-rolled rather than built on a primitive because `components/ui/` has
- * no dropdown — `Modal` is a native `<dialog>`, which is far too heavy for
- * two lines of content and would trap focus for a control the user is only
- * glancing at.
+ * This used to be a disclosure: a trigger in the chrome that opened a panel
+ * holding the same two things. In a top bar that was fine. At the bottom of a
+ * full-height rail it was not — the panel opened downward from the last row
+ * on screen, so "Log out" rendered past the viewport edge and, once the rail
+ * gained its own scroll container, was clipped outright. There was no way to
+ * sign out at all.
  *
- * **A disclosure, not a `role="menu"`.** ARIA reserves `menu` for
- * application menus, and its keyboard model is arrow-key navigation between
- * `menuitem`s with a roving tabindex. What this actually implements is Tab
- * through ordinary controls in DOM order — the right model for an account
- * dropdown, and the honest markup for it is a button with `aria-expanded`
- * over a plain container. Claiming `menu` while behaving like a disclosure
- * is worse than either: assistive technology walking it in application mode
- * moves between menuitems, so the "Signed in as …" line risks never being
- * announced at all.
- *
- * The keyboard contract below is the part hand-rolled dropdowns usually get
- * wrong, so it is explicit.
+ * Flattening it fixes the class of bug rather than the instance: no popover
+ * means no placement to get wrong, no focus to trap and return, no outside-
+ * click to listen for. The nav is already a column of rows, and these are two
+ * more of them.
  */
 
 /**
@@ -71,42 +63,12 @@ function Avatar({ user }: { user: UserOut }) {
 export function UserMenu() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const panelId = useId();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      // Focus goes back to the trigger, not to the top of the document —
-      // otherwise Escape silently loses the user's place in the tab order.
-      triggerRef.current?.focus();
-    };
-
-    // Pointer, not click: a mousedown outside should dismiss immediately
-    // rather than waiting for the button-up that may land elsewhere.
-    const onPointerDown = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-
-    document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("pointerdown", onPointerDown);
-    };
-  }, [open]);
 
   if (!user) return null;
 
   async function onLogout() {
-    setOpen(false);
     // `logout` never rejects: it clears local state even when the revoke call
-    // fails, so a user who clicks Log out always ends up logged out.
+    // fails, so a user who clicks Sign out always ends up signed out.
     await logout();
 
     // After the await, not before. `logout()` flips the status to anonymous,
@@ -123,42 +85,21 @@ export function UserMenu() {
   }
 
   return (
-    <div ref={containerRef} className="relative">
-      <Button
-        ref={triggerRef}
-        variant="ghost"
-        onClick={() => setOpen((wasOpen) => !wasOpen)}
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-      >
+    <>
+      {/* Identity is a statement, not a control — nothing happens if you
+          press it, so it is not a button. */}
+      <p className="flex items-center gap-2 px-2 py-1.5 text-sm text-ink-dim">
         <Avatar user={user} />
-        <span className="max-w-32 truncate">{user.username}</span>
-      </Button>
+        <span className="min-w-0 truncate">{user.username}</span>
+      </p>
 
-      {open && (
-        <div
-          id={panelId}
-          data-testid="user-menu"
-          className={cn(
-            "rounded-sheet absolute right-0 z-30 mt-1 min-w-44 overflow-hidden",
-            "border border-rule-strong bg-card py-1 shadow-hard-lg",
-          )}
-        >
-          {/* An ordinary paragraph in an ordinary container, so it is read
-              like any other content. Under `role="menu"` this was a
-              non-conforming child and liable to be skipped entirely. */}
-          <p className="label px-3 py-1.5 text-ink-sub">
-            Signed in as <span className="text-ink">{user.username}</span>
-          </p>
-          <button
-            type="button"
-            onClick={() => void onLogout()}
-            className="w-full px-3 py-1.5 text-left text-base text-ink hover:bg-recessed focus-visible:bg-recessed"
-          >
-            Log out
-          </button>
-        </div>
-      )}
-    </div>
+      <button
+        type="button"
+        onClick={() => void onLogout()}
+        className="rounded-chip px-2 py-1.5 text-left text-sm text-ink-dim hover:bg-recessed hover:text-ink"
+      >
+        Sign out
+      </button>
+    </>
   );
 }

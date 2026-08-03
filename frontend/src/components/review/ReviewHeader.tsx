@@ -11,12 +11,15 @@ import type { ReviewDetailOut } from "@/types/api";
  */
 export function ReviewHeader({
   review,
+  meta,
   onRereview,
   rereviewing = false,
   rereviewQueued = false,
   rereviewError,
 }: {
   review: ReviewDetailOut;
+  /** Model, tokens, file counts — whatever the page has worked out. */
+  meta?: string;
   onRereview: () => void;
   rereviewing?: boolean;
   rereviewQueued?: boolean;
@@ -25,7 +28,7 @@ export function ReviewHeader({
   const inFlight = review.status === "pending" || review.status === "processing";
 
   return (
-    <header className="flex flex-col gap-3">
+    <header className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
         <h1 className="font-code text-xl leading-tight break-all text-ink">
           {review.repo_full_name}
@@ -43,11 +46,20 @@ export function ReviewHeader({
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <StatusBadge value={review.status} size="md" />
-        {review.verdict && <VerdictBadge value={review.verdict} size="md" />}
-        <p className="text-sm text-ink-sub">
-          {"opened "}
+      {/* No summary line here. The brief's header carries a short blurb
+          above a longer OVERVIEW in the Summary tab, but the API has exactly
+          one `summary` field — so a header line would be the same sentence
+          the default tab already renders in full, two elements apart. One
+          copy, in the tab whose job it is.
+
+          Status, verdict and metadata on one line. The badges stay the
+          existing size rather than growing into hero indicators; the repo
+          and PR above must remain the strongest thing here. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <StatusBadge value={review.status} />
+        {review.verdict && <VerdictBadge value={review.verdict} />}
+        <p className="text-sm text-ink-sub" data-numeric>
+          {meta ? `${meta} · ` : ""}
           <time
             dateTime={review.created_at}
             title={formatAbsolute(review.created_at)}

@@ -4,6 +4,7 @@ import { RouteError } from "@/components/layout/RouteError";
 import { Analytics } from "@/pages/Analytics";
 import { Dashboard } from "@/pages/Dashboard";
 import { Reviews } from "@/pages/Reviews";
+import { Repositories } from "@/pages/Repositories";
 import { Settings } from "@/pages/Settings";
 import { Help } from "@/pages/Help";
 import { ReviewDetail } from "@/pages/ReviewDetail";
@@ -78,6 +79,11 @@ export const routes: RouteObject[] = [
         { path: "/", element: <Dashboard />, handle: { title: "Dashboard" } },
         { path: "/reviews", element: <Reviews />, handle: { title: "Reviews" } },
         {
+          path: "/repositories",
+          element: <Repositories />,
+          handle: { title: "Repositories" },
+        },
+        {
           path: "/analytics",
           element: <Analytics />,
           handle: { title: "Analytics" },
@@ -94,7 +100,7 @@ export const routes: RouteObject[] = [
           handle: { title: "Review" },
         },
         {
-          path: "/repos/:repoId",
+          path: "/repositories/:repoId",
           element: <RepoDetail />,
           handle: { title: "Repository" },
         },

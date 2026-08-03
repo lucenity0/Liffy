@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/Button";
 import { ErrorNote } from "@/components/ui/ErrorNote";
-import { Field, Input } from "@/components/ui/Field";
+import { Field, Input, Select } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
+import { useRepos } from "@/hooks/useRepos";
 import { useTriggerReview } from "@/hooks/useReviewMutations";
 import { normalizeApiError } from "@/lib/errors";
 import {
@@ -22,7 +23,18 @@ import {
  * different ways to type a repository name in the same product is worse than
  * either one on its own. The request body is still `{owner, repo, pr_number}`
  * — the split happens on submit.
+ *
+ * The redesign asks for a searchable pull-request picker here — open/closed
+ * counts, titles, head → base branches. **That needs a backend endpoint that
+ * does not exist.** Nothing enumerates a repository's pull requests: the API
+ * offers `POST /reviews/trigger` taking a number, and no GitHub proxy behind
+ * it. Rather than fabricate a list, the half that *is* real landed — the
+ * repository comes from the ones Liffy has actually indexed — and the pull
+ * request stays a number until there is something to list.
  */
+
+/** Sentinel for "not one of the connected repositories". */
+const CUSTOM = "__custom__";
 export function TriggerReviewForm({
   onClose,
   onQueued,
@@ -37,6 +49,11 @@ export function TriggerReviewForm({
   const [fullName, setFullName] = useState("");
   const [prNumber, setPrNumber] = useState("");
   const [attempted, setAttempted] = useState(false);
+  /** Escape hatch out of the picker, for a repository not connected here. */
+  const [custom, setCustom] = useState(false);
+
+  const repos = useRepos();
+  const connected = repos.data ?? [];
 
   const trigger = useTriggerReview();
   const serverError = trigger.error ? normalizeApiError(trigger.error) : null;
@@ -90,7 +107,11 @@ export function TriggerReviewForm({
       >
         <Field
           label="Repository"
-          hint={FULL_NAME_HINT}
+          hint={
+            connected.length > 0
+              ? "Repositories Liffy has indexed. Reviews of anything else have no context to retrieve."
+              : FULL_NAME_HINT
+          }
           error={
             nameInvalid
               ? "That doesn't look like owner/name."
@@ -100,19 +121,64 @@ export function TriggerReviewForm({
           }
           required
         >
-          {(props) => (
-            <Input
-              {...props}
-              autoFocus
-              name="full_name"
-              placeholder="lucenity0/Liffy"
-              value={fullName}
-              onChange={(event) => setFullName(event.target.value)}
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-          )}
+          {(props) =>
+            // Nothing typeable until /repos has settled.
+            //
+            // Rendering the box first and swapping in the picker on arrival
+            // meant anyone who started typing immediately had the control
+            // replaced under them and their input silently discarded — a race
+            // nobody would ever reproduce deliberately but everybody would hit
+            // on a slow request. One disabled placeholder, then whichever
+            // control is right, and it never changes shape again.
+            repos.isPending ? (
+              <Select {...props} disabled value="">
+                <option value="">Loading repositories…</option>
+              </Select>
+            ) : // A picker once there is something to pick from, and the
+            // free-text box otherwise — the endpoint takes any repository
+            // Liffy can reach, so nothing is taken away, but typing
+            // `owner/name` by hand when the app already knows the list was
+            // busywork with a typo in it. Falls back on its own before the
+            // first repository is connected and if /repos fails.
+            connected.length > 0 && !custom ? (
+              <Select
+                {...props}
+                autoFocus
+                name="full_name"
+                value={fullName}
+                onChange={(event) => {
+                  if (event.target.value === CUSTOM) {
+                    setCustom(true);
+                    setFullName("");
+                    return;
+                  }
+                  setFullName(event.target.value);
+                }}
+              >
+                <option value="" disabled>
+                  Choose a repository…
+                </option>
+                {connected.map((repo) => (
+                  <option key={repo.id} value={repo.full_name}>
+                    {repo.full_name}
+                  </option>
+                ))}
+                <option value={CUSTOM}>Another repository…</option>
+              </Select>
+            ) : (
+              <Input
+                {...props}
+                autoFocus
+                name="full_name"
+                placeholder="lucenity0/Liffy"
+                value={fullName}
+                onChange={(event) => setFullName(event.target.value)}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+            )
+          }
         </Field>
 
         <Field

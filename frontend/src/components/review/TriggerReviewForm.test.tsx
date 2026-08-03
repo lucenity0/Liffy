@@ -15,7 +15,40 @@ function open() {
   return { onClose, onQueued, user: userEvent.setup() };
 }
 
-const repoField = () => screen.getByRole("textbox", { name: /repository/i });
+/**
+ * The repository control is a picker once repositories are connected, and the
+ * free-text box before that — so a test says which repository it wants and
+ * lets this find the right way to say it.
+ */
+async function chooseRepo(
+  user: ReturnType<typeof userEvent.setup>,
+  value: string,
+) {
+  // Waits for /repos to settle: the field is a disabled placeholder until
+  // then, precisely so it cannot swap under someone mid-keystroke.
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: /repository/i }),
+    ).not.toBeDisabled(),
+  ).catch(() => {});
+
+  const select = screen.queryByRole("combobox", { name: /repository/i });
+  if (!select) {
+    await user.type(screen.getByRole("textbox", { name: /repository/i }), value);
+    return;
+  }
+  const known = within(select)
+    .queryAllByRole("option")
+    .some((option) => option.textContent === value);
+  if (known) {
+    await user.selectOptions(select, value);
+    return;
+  }
+  // Not one Liffy has indexed — the endpoint still accepts it, via the
+  // escape hatch the picker keeps for exactly this.
+  await user.selectOptions(select, "__custom__");
+  await user.type(screen.getByRole("textbox", { name: /repository/i }), value);
+}
 const prField = () => screen.getByRole("textbox", { name: /pull request/i });
 const submit = () => screen.getByRole("button", { name: "Start review" });
 
@@ -33,7 +66,7 @@ describe("TriggerReviewForm", () => {
       }),
     );
 
-    await user.type(repoField(), "lucenity0/Liffy");
+    await chooseRepo(user, "lucenity0/Liffy");
     await user.type(prField(), "58");
     await user.click(submit());
 
@@ -55,7 +88,7 @@ describe("TriggerReviewForm", () => {
       }),
     );
 
-    await user.type(repoField(), "not-a-repo");
+    await chooseRepo(user, "not-a-repo");
     await user.type(prField(), "58");
     await user.click(submit());
 
@@ -77,7 +110,7 @@ describe("TriggerReviewForm", () => {
         }),
       );
 
-      await user.type(repoField(), "lucenity0/Liffy");
+      await chooseRepo(user, "lucenity0/Liffy");
       if (value) await user.type(prField(), value);
       await user.click(submit());
 
@@ -107,7 +140,7 @@ describe("TriggerReviewForm", () => {
       ),
     );
 
-    await user.type(repoField(), "lucenity0/Liffy");
+    await chooseRepo(user, "lucenity0/Liffy");
     await user.type(prField(), "58");
     await user.click(submit());
 
@@ -123,7 +156,7 @@ describe("TriggerReviewForm", () => {
       ),
     );
 
-    await user.type(repoField(), "lucenity0/Liffy");
+    await chooseRepo(user, "lucenity0/Liffy");
     await user.type(prField(), "58");
     await user.click(submit());
 

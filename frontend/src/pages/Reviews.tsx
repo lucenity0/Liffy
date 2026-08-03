@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Sheet } from "@/components/ui/Sheet";
@@ -165,30 +166,26 @@ export function Reviews() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-start gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="font-hand text-2xl leading-tight text-ink">Reviews</h1>
-          {/* The standing description claims two separate things, and they
-              break separately: only a filter stops this being "everything",
-              and only the order control changes the order. Both are visible
-              on screen, so saying either wrongly is worse than not saying
-              it — hence the order is named rather than assumed. */}
-          <p className="text-base text-ink-dim">
-            {filtered
-              ? "A filtered view. Clear the filters to see everything."
-              : filters.sort === "oldest"
-                ? "Everything Liffy has read, oldest first."
-                : "Everything Liffy has read, newest first."}
-          </p>
-        </div>
-        <Button
-          variant="primary"
-          onClick={() => setTriggering(true)}
-          className="ml-auto"
-        >
-          New review
-        </Button>
-      </header>
+      <PageHeader
+        title="Reviews"
+        /* The standing description claims two separate things, and they
+           break separately: only a filter stops this being "everything",
+           and only the order control changes the order. Both are visible
+           on screen, so saying either wrongly is worse than not saying
+           it — hence the order is named rather than assumed. */
+        description={
+          filtered
+            ? "A filtered view. Clear the filters to see everything."
+            : filters.sort === "oldest"
+              ? "Everything Liffy has read, oldest first."
+              : "Everything Liffy has read, newest first."
+        }
+        actions={
+          <Button variant="primary" onClick={() => setTriggering(true)}>
+            New review
+          </Button>
+        }
+      />
 
       {queued && (
         <p

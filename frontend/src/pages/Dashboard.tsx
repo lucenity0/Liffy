@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/ui/PageHeader";
+import { NeedsAttention } from "@/components/repo/NeedsAttention";
 import { RepoList } from "@/components/repo/RepoList";
 import { RecentReviews } from "@/components/review/RecentReviews";
 
@@ -10,16 +12,25 @@ import { RecentReviews } from "@/components/review/RecentReviews";
 export function Dashboard() {
   return (
     <div className="flex flex-col gap-10">
-      <header className="flex flex-col gap-1">
-        <h1 className="font-hand text-2xl leading-tight text-ink">Dashboard</h1>
-        <p className="text-base text-ink-dim">
-          Connected repositories, and the reviews Liffy has written most
-          recently.
-        </p>
-      </header>
+      <PageHeader
+        title="Dashboard"
+        description="Connected repositories, and the reviews Liffy has written most recently."
+      />
 
-      <RepoList />
-      <RecentReviews />
+      {/* First, and only when it has something to say — the point of a
+          snapshot is that what is wrong reaches you before what is fine. */}
+      <NeedsAttention />
+
+      {/* Anchors, not decoration: the rail's Dashboard sub-items point here,
+          so a section that loses its id silently turns a nav entry into a
+          link to the top of the page. `scroll-mt` clears the sticky PageBar,
+          which would otherwise sit over the heading you just jumped to. */}
+      <div id="repositories" className="scroll-mt-16">
+        <RepoList />
+      </div>
+      <div id="recent-reviews" className="scroll-mt-16">
+        <RecentReviews />
+      </div>
     </div>
   );
 }

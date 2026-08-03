@@ -318,10 +318,12 @@ describe("Reviews", () => {
     await screen.findByRole("list", { name: "Reviews" });
 
     await user.click(screen.getByRole("button", { name: "New review" }));
-    await user.type(
-      screen.getByRole("textbox", { name: /repository/i }),
-      "lucenity0/Liffy",
-    );
+    // The repository is a picker over what Liffy has indexed, and stays a
+    // disabled placeholder until /repos settles — so this waits rather than
+    // typing into a control that is about to be replaced.
+    const repoPicker = screen.getByRole("combobox", { name: /repository/i });
+    await waitFor(() => expect(repoPicker).not.toBeDisabled());
+    await user.selectOptions(repoPicker, fixtureRepoIndexed.full_name);
     await user.type(screen.getByRole("textbox", { name: /pull request/i }), "58");
     await user.click(screen.getByRole("button", { name: "Start review" }));
 

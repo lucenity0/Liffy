@@ -395,7 +395,7 @@ function NothingMatched({ query }: { query: string }) {
         {suggestion && <p className="max-w-prose">{suggestion}</p>}
         <p className="max-w-prose text-sm">
           The full documentation lives in the repository under{" "}
-          <code className="rounded border border-rule bg-recessed px-1 py-px">
+          <code className="rounded-chip border border-rule bg-recessed px-1 py-px">
             docs/
           </code>
           . If this is a bug rather than a question, report it below.

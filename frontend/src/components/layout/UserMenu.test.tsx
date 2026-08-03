@@ -26,16 +26,19 @@ function renderMenu(auth: Partial<AuthContextValue> = {}) {
   );
 }
 
-const trigger = () => screen.getByRole("button", { name: /lucenity0|gajalakshmi/i });
-/** The disclosure panel has no role of its own — it is a plain container. */
-const panel = () => screen.queryByTestId("user-menu");
-const logoutItem = () => screen.getByRole("button", { name: "Log out" });
+/**
+ * Identity is a statement, not a control, so it is looked up as text rather
+ * than as a button — pressing your own username never did anything, and the
+ * popover it used to open is gone.
+ */
+const identity = () => screen.getByText(/lucenity0|gajalakshmi/i);
+const logoutItem = () => screen.getByRole("button", { name: "Sign out" });
 
 describe("UserMenu", () => {
   it("shows the logged-in username and avatar", () => {
     renderMenu();
 
-    expect(trigger()).toHaveTextContent(fixtureUser.username);
+    expect(identity()).toHaveTextContent(fixtureUser.username);
     const avatar = document.querySelector("img");
     expect(avatar).toHaveAttribute("src", fixtureUser.avatar_url);
     // Decorative: the username sits right beside it, so an alt would make a
@@ -49,7 +52,7 @@ describe("UserMenu", () => {
     expect(document.querySelector("img")).toBeNull();
     expect(screen.getByTestId("avatar-initials")).toHaveTextContent("GA");
     // A missing avatar must not cost the username too.
-    expect(trigger()).toHaveTextContent(fixtureUserNoAvatar.username);
+    expect(identity()).toHaveTextContent(fixtureUserNoAvatar.username);
   });
 
   it("falls back to initials when the avatar URL fails to load", () => {
@@ -68,70 +71,15 @@ describe("UserMenu", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("opens and closes on click, and reports its state", async () => {
-    const user = userEvent.setup();
-    renderMenu();
 
-    expect(trigger()).toHaveAttribute("aria-expanded", "false");
-    expect(panel()).not.toBeInTheDocument();
 
-    await user.click(trigger());
 
-    expect(trigger()).toHaveAttribute("aria-expanded", "true");
-    expect(panel()).toBeInTheDocument();
-
-    await user.click(trigger());
-    expect(panel()).not.toBeInTheDocument();
-  });
-
-  it("closes on Escape and returns focus to the trigger", async () => {
-    const user = userEvent.setup();
-    renderMenu();
-
-    await user.click(trigger());
-    expect(panel()).toBeInTheDocument();
-
-    await user.keyboard("{Escape}");
-
-    expect(panel()).not.toBeInTheDocument();
-    // Focus must come back, or Escape silently loses the user's place in the
-    // tab order.
-    expect(trigger()).toHaveFocus();
-  });
-
-  it("closes when a pointer lands outside it", async () => {
-    const user = userEvent.setup();
-    renderMenu();
-
-    await user.click(trigger());
-    expect(panel()).toBeInTheDocument();
-
-    await user.click(document.body);
-    expect(panel()).not.toBeInTheDocument();
-  });
-
-  it("is reachable and operable by keyboard alone", async () => {
-    const user = userEvent.setup();
-    const logout = vi.fn(async () => {});
-    renderMenu({ logout });
-
-    await user.tab();
-    expect(trigger()).toHaveFocus();
-
-    await user.keyboard("{Enter}");
-    expect(panel()).toBeInTheDocument();
-
-    await user.tab();
-    await user.keyboard("{Enter}");
-    expect(logout).toHaveBeenCalledTimes(1);
-  });
 
   it("logout clears the session and navigates to /login", async () => {
     const user = userEvent.setup();
     const logout = vi.fn(async () => {});
     renderMenu({ logout });
 
-    await user.click(trigger());
     await user.click(logoutItem());
 
     expect(logout).toHaveBeenCalledTimes(1);
@@ -148,7 +96,6 @@ describe("UserMenu", () => {
     const logout = vi.fn(async () => {});
     renderMenu({ logout });
 
-    await user.click(trigger());
     await user.click(logoutItem());
 
     await waitFor(() =>
@@ -156,45 +103,8 @@ describe("UserMenu", () => {
     );
   });
 
-  it("wires the trigger to the panel it discloses", async () => {
-    const user = userEvent.setup();
-    renderMenu();
 
-    // The codebase's accessibility convention is structural assertions rather
-    // than an axe pass — there is no axe dependency and adding one is outside
-    // this issue.
-    expect(trigger()).toHaveAccessibleName();
 
-    await user.click(trigger());
-
-    expect(trigger()).toHaveAttribute("aria-controls", panel()!.id);
-    expect(logoutItem()).toBeInTheDocument();
-  });
-
-  it("is a disclosure, not an ARIA menu", async () => {
-    const user = userEvent.setup();
-    renderMenu();
-    await user.click(trigger());
-
-    // The keyboard model here is Tab through ordinary controls, not arrow-key
-    // navigation between menuitems. Claiming `menu` while behaving like a
-    // disclosure is the mismatch that leaves "Signed in as …" unannounced,
-    // because AT walking a menu in application mode only visits menuitems.
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
-    expect(trigger()).not.toHaveAttribute("aria-haspopup");
-  });
-
-  it("keeps the signed-in line readable, not skipped", async () => {
-    const user = userEvent.setup();
-    renderMenu();
-    await user.click(trigger());
-
-    // Plain content in a plain container: no role restricts what may live
-    // here, so it is announced like any other text.
-    expect(panel()).toHaveTextContent(`Signed in as ${fixtureUser.username}`);
-    expect(panel()!.querySelector("[aria-hidden='true']")).toBeNull();
-  });
 });
 
 /**
@@ -249,8 +159,7 @@ describe("logout and the return-to stash", () => {
     const user = userEvent.setup();
     renderGuardedMenu("/reviews/aaaaaaaa-1111-2222-3333-444444444444");
 
-    await user.click(screen.getByRole("button", { name: /lucenity0/ }));
-    await user.click(screen.getByRole("button", { name: "Log out" }));
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(screen.getByText("Login page")).toBeInTheDocument());
 

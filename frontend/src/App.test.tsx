@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { routes } from "@/routes";
 import { createWrapper } from "@/test/renderWithProviders";
 import type { AuthContextValue } from "@/hooks/useAuth";
@@ -27,6 +28,10 @@ function renderAt(path: string, auth?: Partial<AuthContextValue>) {
 }
 
 describe("app shell", () => {
+  // The rail persists which sections are expanded, so a leaked value would
+  // decide the outcome of the disclosure tests below.
+  beforeEach(() => localStorage.clear());
+
   it("renders the wordmark and all three primary tabs", () => {
     renderAt("/");
 
@@ -67,16 +72,87 @@ describe("app shell", () => {
     );
   });
 
+  /**
+   * A breadcrumb only where there is a trail. A top-level page's crumb would
+   * carry the same string as the <h1> immediately below it, so the page
+   * announced itself twice and the bar holding the duplicate was spare
+   * chrome.
+   */
   it("shows no breadcrumb on the index route", () => {
     renderAt("/");
     expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
   });
 
-  it("breadcrumbs the route title on deeper routes", () => {
+  it("shows no breadcrumb on a top-level page, whose h1 already names it", () => {
     renderAt("/reviews");
 
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Reviews" })).toBeInTheDocument();
+  });
+
+  it("breadcrumbs the way back on a detail route", () => {
+    renderAt("/reviews/abc");
+
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    // The section, linked, then where you actually are.
     expect(crumbs).toHaveTextContent("Reviews");
+    expect(within(crumbs).getByRole("link", { name: "Reviews" })).toHaveAttribute(
+      "href",
+      "/reviews",
+    );
+  });
+
+  /**
+   * The label navigates and the chevron expands. Two jobs, two controls —
+   * a row doing both would make "show me what is in here" and "take me
+   * there" the same click.
+   */
+  it("expands a nav section without navigating, and remembers it", async () => {
+    const user = userEvent.setup();
+    renderAt("/reviews");
+
+    const disclosure = screen.getByRole("button", { name: /expand dashboard/i });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "Recent reviews" })).toBeNull();
+
+    await user.click(disclosure);
+
+    expect(screen.getByRole("link", { name: "Recent reviews" })).toHaveAttribute(
+      "href",
+      "/#recent-reviews",
+    );
+    // Expanding is not navigating: still on Reviews.
+    expect(screen.getByRole("heading", { name: "Reviews" })).toBeInTheDocument();
+    // Tri-state, so an explicit collapse is distinguishable from "never
+    // touched" — a Set could only say "expanded", which made collapsing the
+    // section you were standing in a no-op.
+    expect(JSON.parse(localStorage.getItem("liffy-nav-expanded")!)).toEqual({
+      "/": true,
+    });
+  });
+
+  it("collapses the section you are in, which a set-based state could not", async () => {
+    const user = userEvent.setup();
+    renderAt("/");
+
+    expect(screen.getByRole("link", { name: "Recent reviews" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /collapse dashboard/i }));
+
+    expect(screen.queryByRole("link", { name: "Recent reviews" })).toBeNull();
+    expect(JSON.parse(localStorage.getItem("liffy-nav-expanded")!)).toEqual({
+      "/": false,
+    });
+  });
+
+  /** A collapsed *current* section would hide the only sub-items reachable
+   *  from where you are, so the active one opens regardless of preference. */
+  it("opens the section you are in even with nothing stored", () => {
+    renderAt("/");
+
+    expect(screen.getByRole("link", { name: "Recent reviews" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse dashboard/i }),
+    ).toHaveAttribute("aria-expanded", "true");
   });
 
   it("renders the 404 page for an unmatched path, inside the shell", () => {
@@ -140,9 +216,7 @@ describe("route protection", () => {
     renderAt("/reviews");
 
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent(
-      "Reviews",
-    );
+    expect(screen.getByRole("heading", { name: "Reviews" })).toBeInTheDocument();
   });
 
   it("shows no authenticated chrome on the way to /login", () => {

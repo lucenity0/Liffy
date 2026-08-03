@@ -49,7 +49,7 @@ export function FileTree({
   const filtering = query.trim().length > 0;
 
   return (
-    <div className="flex min-h-0 flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <Input
         type="search"
         value={query}
@@ -62,7 +62,7 @@ export function FileTree({
       {visible.length === 0 ? (
         <p className="px-1 text-sm text-ink-dim">No files match “{query}”.</p>
       ) : (
-        <ul className="flex min-w-0 flex-col overflow-y-auto">
+        <ul className="min-h-0 flex-1 overflow-y-auto">
           {visible.map((node) => (
             <TreeRow
               key={node.type === "dir" ? `d:${node.path}` : `f:${node.path}`}

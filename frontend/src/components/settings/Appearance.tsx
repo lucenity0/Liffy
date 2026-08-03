@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Field";
 import { Sheet } from "@/components/ui/Sheet";
@@ -206,6 +206,7 @@ function CustomEditor({
   const [overrides, setOverrides] =
     useState<Partial<Record<TokenName, string>>>(initialOverrides);
   const [advanced, setAdvanced] = useState(false);
+  const probeRef = useRef<HTMLDivElement>(null);
 
   const tokens = useMemo(
     () => resolveCustom({ seeds, overrides }),
@@ -216,20 +217,26 @@ function CustomEditor({
    * Resolved through the browser rather than computed here.
    *
    * The derived values are `color-mix()` expressions, so there is no hex to
-   * measure until something has rendered them — and mounting a probe is
-   * exactly how lib/colors already reads a palette out of the document.
+   * measure until something has rendered them. A stable probe lets the effect
+   * read those values without mutating the DOM during render.
    */
-  const checks = useMemo(() => {
-    const probe = document.createElement("div");
-    probe.style.cssText = TOKENS.map((t) => `--${t}:${tokens[t]}`).join(";");
-    probe.style.display = "none";
-    document.body.appendChild(probe);
+  const [checks, setChecks] = useState<ContrastChecks | null>(null);
+
+  useEffect(() => {
+    const probe = probeRef.current;
+    if (!probe) return;
+
+    // The probe is mounted in the tree and measured after commit. React can
+    // replay a render, but it cannot leave a render-phase append/remove pair
+    // unbalanced.
+    TOKENS.forEach((token) =>
+      probe.style.setProperty(`--${token}`, tokens[token]),
+    );
     const hex = (token: TokenName) =>
       resolveColor(`--${token}`, "#000000", undefined, probe);
     const values = Object.fromEntries(
       TOKENS.map((token) => [token, hex(token)]),
     ) as Record<TokenName, string>;
-    probe.remove();
 
     const against = (fg: TokenName, bg: TokenName, floor: number) => ({
       label: `${fg} on ${bg}`,
@@ -237,7 +244,7 @@ function CustomEditor({
       floor,
     });
 
-    return {
+    setChecks({
       values,
       rows: [
         against("ink", "paper", 7),
@@ -252,10 +259,10 @@ function CustomEditor({
         // would turn every divider into an outline. Flagged low, not failed.
         against("rule", "paper", 1.55),
       ],
-    };
+    });
   }, [tokens]);
 
-  const failing = checks.rows.filter((row) => row.ratio < row.floor);
+  const failing = checks?.rows.filter((row) => row.ratio < row.floor) ?? [];
 
   return (
     <div className="flex flex-col gap-5">
@@ -330,19 +337,23 @@ function CustomEditor({
       <div className="flex flex-col gap-2">
         <p className="label">Contrast</p>
         <ul className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
-          {checks.rows.map((row) => (
-            <li key={row.label} className="flex items-baseline gap-2">
-              <span className="min-w-0 flex-1 truncate font-code text-2xs text-ink-dim">
-                {row.label}
-              </span>
-              <span
-                data-numeric
-                className={row.ratio < row.floor ? "text-oxide" : "text-sage"}
-              >
-                {row.ratio.toFixed(2)}
-              </span>
-            </li>
-          ))}
+          {checks ? (
+            checks.rows.map((row) => (
+              <li key={row.label} className="flex items-baseline gap-2">
+                <span className="min-w-0 flex-1 truncate font-code text-2xs text-ink-dim">
+                  {row.label}
+                </span>
+                <span
+                  data-numeric
+                  className={row.ratio < row.floor ? "text-oxide" : "text-sage"}
+                >
+                  {row.ratio.toFixed(2)}
+                </span>
+              </li>
+            ))
+          ) : (
+            <li className="text-ink-dim">Measuring…</li>
+          )}
         </ul>
         {failing.length > 0 && (
           <p className="text-sm text-oxide" role="status">
@@ -368,7 +379,7 @@ function CustomEditor({
                 <input
                   type="color"
                   aria-label={token}
-                  value={checks.values[token]}
+                  value={checks?.values[token] ?? "#000000"}
                   onChange={(event) =>
                     setOverrides({ ...overrides, [token]: event.target.value })
                   }
@@ -413,6 +424,13 @@ function CustomEditor({
           Reset
         </Button>
       </div>
+
+      <div ref={probeRef} aria-hidden="true" className="hidden" />
     </div>
   );
 }
+
+type ContrastChecks = {
+  values: Record<TokenName, string>;
+  rows: { label: string; ratio: number; floor: number }[];
+};

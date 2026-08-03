@@ -85,7 +85,7 @@ export function FilesTab({
       <div className="w-full shrink-0 lg:sticky lg:top-14 lg:max-h-[calc(100dvh-5rem)] lg:w-64">
         <Sheet className="flex max-h-[22rem] flex-col lg:max-h-[calc(100dvh-5rem)]">
           <Sheet.Header title="Changed files" count={files.length} />
-          <Sheet.Body className="min-h-0 flex-1 overflow-hidden">
+          <Sheet.Body className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <FileTree
               paths={paths}
               selected={active?.path ?? null}
@@ -186,7 +186,6 @@ function FilePane({
               key={comment.id}
               comment={comment}
               reviewId={reviewId}
-              onReveal={onGlyphClick ? undefined : undefined}
             />
           ))}
         </div>

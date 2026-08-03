@@ -620,6 +620,7 @@ def model_performance(db: Session, *, user_id: uuid.UUID) -> list[ModelPerforman
         )
         .select_from(ReviewComment)
         .outerjoin(CommentFeedback, CommentFeedback.comment_id == ReviewComment.id)
+        .where(ReviewComment.review_id.in_(select(scoped.c.review_id)))
         .group_by(ReviewComment.review_id)
         .subquery()
     )
@@ -692,11 +693,26 @@ def model_comparisons(
     db: Session, *, user_id: uuid.UUID, limit: int = 10
 ) -> list[ModelComparisonRow]:
     """Pull requests reviewed by more than one model, newest first."""
+    scoped = (
+        select(Review.id.label("review_id"))
+        .select_from(Review)
+        .join(PullRequest, Review.pr_id == PullRequest.id)
+        .join(Repository, PullRequest.repo_id == Repository.id)
+        .where(
+            Repository.user_id == user_id,
+            Review.status == "completed",
+            Review.model_used.is_not(None),
+        )
+        .subquery()
+    )
+
     comment_counts = (
         select(
             ReviewComment.review_id,
             func.count(ReviewComment.id).label("comments"),
         )
+        .select_from(ReviewComment)
+        .where(ReviewComment.review_id.in_(select(scoped.c.review_id)))
         .group_by(ReviewComment.review_id)
         .subquery()
     )

@@ -245,6 +245,7 @@ export function useTheme() {
   }, []);
 
   /** Drop the custom palette and fall back to a preset. */
+  /** Drop the custom palette and fall back to a preset. */
   const clearCustom = useCallback(() => {
     const prefs = readPrefs();
     const fallback = prefs.custom?.seeds.polarity === "light"
@@ -258,7 +259,9 @@ export function useTheme() {
       dark: prefs.dark === "custom" ? DEFAULT_DARK : prefs.dark,
     });
     applyCustomTheme(null);
-    if (prefs.theme === "custom") apply(fallback);
+    // Always re-applies, so subscribers hear about the deletion even when the
+    // custom theme was not the one on screen.
+    apply(prefs.theme === "custom" ? fallback : getSnapshot());
   }, []);
 
   /** Hand the choice back to the OS, keeping the per-side preferences. */

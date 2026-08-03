@@ -1,4 +1,5 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "@/mocks/server";
@@ -349,5 +350,48 @@ describe("Analytics — the other three states", () => {
     expect(alert).toHaveTextContent("boom");
     expect(within(alert).getByRole("button", { name: /try again/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Analytics" })).toBeInTheDocument();
+  });
+});
+
+// ── The Models tab ───────────────────────────────────────────────────────────
+
+describe("Analytics — models", () => {
+  it("compares models per review, and never shows an unrated model as 0%", async () => {
+    const user = userEvent.setup();
+    render();
+
+    await user.click(await screen.findByRole("tab", { name: "Models" }));
+
+    const table = await screen.findByRole("region", { name: "Model performance" });
+    expect(within(table).getByText("claude-opus-5")).toBeInTheDocument();
+    // 20 comments rated, so the sample size travels with the rate.
+    expect(within(table).getByText("85%")).toBeInTheDocument();
+    expect(within(table).getByText("/20")).toBeInTheDocument();
+
+    // codex has no ratings at all. Rendering that as 0% would rank a model
+    // nobody voted on below one people actively disliked.
+    const codexRow = within(table).getByText("codex-5.3").closest("tr")!;
+    expect(within(codexRow).queryByText("0%")).toBeNull();
+    expect(within(codexRow).getByText("—")).toBeInTheDocument();
+  });
+
+  it("does not fetch the model aggregates until the tab is opened", async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    server.use(
+      http.get("*/analytics/models", () => {
+        calls += 1;
+        return HttpResponse.json({ models: [], comparisons: [] });
+      }),
+    );
+
+    render();
+    await screen.findByRole("tab", { name: "Models" });
+    // Overview is where most visits stop, and both aggregates scan every
+    // completed review and every rating.
+    expect(calls).toBe(0);
+
+    await user.click(screen.getByRole("tab", { name: "Models" }));
+    await waitFor(() => expect(calls).toBe(1));
   });
 });

@@ -66,12 +66,18 @@ class FakeGitHub:
         pr_meta: PullRequestMeta | None = None,
         pr_diff: str = "",
         repo_meta: RepositoryMeta | None = None,
+        pulls: list[PullRequestMeta] | None = None,
         token: str | None = None,
     ) -> None:
         self.files = files or {}
         self.pr_meta = pr_meta
         self.pr_diff = pr_diff
         self.repo_meta = repo_meta
+        self.pulls = pulls or []
+        # What the last list_pull_requests call asked for, so a test can
+        # assert the state filter reached GitHub rather than only that the
+        # response looked right.
+        self.pulls_state: str | None = None
         # Records which token the caller constructed this with, so tests can
         # assert the acting identity (AUTH-5) rather than only the outcome.
         self.token = token
@@ -98,6 +104,17 @@ class FakeGitHub:
 
     def get_pull_request_diff(self, owner: str, repo: str, number: int) -> str:
         return self.pr_diff
+
+    def list_pull_requests(
+        self, owner: str, repo: str, *, state: str = "open", limit: int = 50
+    ) -> list[PullRequestMeta]:
+        self.pulls_state = state
+        pulls = (
+            self.pulls
+            if state == "all"
+            else [pull for pull in self.pulls if pull.state == state]
+        )
+        return pulls[:limit]
 
     def close(self) -> None:
         pass

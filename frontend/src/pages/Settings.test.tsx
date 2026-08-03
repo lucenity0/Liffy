@@ -8,7 +8,17 @@ import { setDotenvSecret } from "@/mocks/handlers";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { Settings } from "./Settings";
 
-const renderPage = () => renderWithProviders(<Settings />, { route: "/settings" });
+/**
+ * `route` carries the section, because the page reads it from the URL.
+ *
+ * The page is sectioned now — one long column holding review config, secrets
+ * and deployment values at equal weight was the thing being fixed — so a test
+ * asking about a setting has to say which section it lives in.
+ */
+const renderPage = (section?: string) =>
+  renderWithProviders(<Settings />, {
+    route: section ? `/settings?section=${section}` : "/settings",
+  });
 
 /** The row a setting's label belongs to, so assertions stay scoped to it. */
 const rowFor = (label: RegExp | string) =>
@@ -25,12 +35,18 @@ describe("Settings", () => {
       [...(effort as HTMLSelectElement).options].map((o) => o.value),
     ).toEqual(["low", "medium", "high", "xhigh", "max"]);
 
-    // A bool is a checkbox, an int is a text box.
-    expect(screen.getByLabelText(/post reviews to github/i)).toHaveAttribute(
-      "type",
-      "checkbox",
-    );
+    // An int is a text box.
     expect(screen.getByLabelText("Max tokens")).toHaveValue("24000");
+  });
+
+  it("renders a bool as a checkbox, in the section that owns it", async () => {
+    renderPage("github");
+
+    expect(
+      await screen.findByLabelText(/post reviews to github/i),
+    ).toHaveAttribute("type", "checkbox");
+    // And it is not also sitting in Review — one setting, one home.
+    expect(screen.queryByLabelText("Thinking effort")).toBeNull();
   });
 
   it("says where each value came from", async () => {
@@ -51,7 +67,7 @@ describe("Settings", () => {
   });
 
   it("renders read-only settings as disabled, with a reason", async () => {
-    renderPage();
+    renderPage("infrastructure");
 
     const control = await screen.findByLabelText("Database URL");
     expect(control).toBeDisabled();
@@ -63,8 +79,8 @@ describe("Settings", () => {
   });
 
   it("shows secrets as configured or not, and never as a value", async () => {
-    renderPage();
-    await screen.findByLabelText("Thinking effort");
+    renderPage("secrets");
+    await screen.findByText("Never sent to the browser");
 
     // "From .env", not "Configured": the badge names *where* the value lives,
     // which is the question this page exists to answer — and the one that
@@ -84,7 +100,7 @@ describe("Settings", () => {
 
   it("requires confirmation before enabling GitHub posting", async () => {
     const user = userEvent.setup();
-    renderPage();
+    renderPage("github");
 
     const toggle = await screen.findByLabelText(/post reviews to github/i);
     await user.click(toggle);
@@ -102,7 +118,7 @@ describe("Settings", () => {
 
   it("applies the change once the confirmation is accepted", async () => {
     const user = userEvent.setup();
-    renderPage();
+    renderPage("github");
 
     await user.click(await screen.findByLabelText(/post reviews to github/i));
     await user.click(
@@ -129,7 +145,7 @@ describe("Settings", () => {
       ),
     );
 
-    renderPage();
+    renderPage("github");
     const toggle = await screen.findByLabelText(/post reviews to github/i);
     await waitFor(() => expect(toggle).toBeChecked());
 
@@ -242,10 +258,15 @@ describe("Settings", () => {
     );
   });
 
+  /**
+   * Which secrets *matter* depends on the provider, and the two now live in
+   * different sections — so this also covers the thing sectioning could have
+   * broken: an unsaved provider draft has to survive moving between them.
+   */
   it("does not dress an irrelevant unset secret as a problem", async () => {
     const user = userEvent.setup();
-    renderPage();
-    await screen.findByLabelText("Provider");
+    renderPage("secrets");
+    await screen.findByText("Never sent to the browser");
 
     // Provider is `anthropic`, so the Claude Code token is genuinely not
     // needed — and on a host install it is empty for everyone.
@@ -258,7 +279,15 @@ describe("Settings", () => {
       within(rowFor("OpenAI API key")).getByText("Not configured"),
     ).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("Provider"), "openai");
+    // Over to Review to change the provider, then back — the draft is
+    // component state and the section is a URL param, so the switch must not
+    // discard it.
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    await user.selectOptions(
+      await screen.findByLabelText("Provider"),
+      "openai",
+    );
+    await user.click(screen.getByRole("button", { name: "Secrets" }));
 
     await waitFor(() =>
       expect(
@@ -275,8 +304,8 @@ describe("Settings", () => {
 
   it("connects the subscription token without leaving the page", async () => {
     const user = userEvent.setup();
-    renderPage();
-    await screen.findByLabelText("Provider");
+    renderPage("secrets");
+    await screen.findByText("Never sent to the browser");
 
     const row = rowFor("Claude Code OAuth token");
     await user.click(within(row).getByRole("button", { name: /connect/i }));
@@ -314,8 +343,8 @@ describe("Settings", () => {
      */
     const user = userEvent.setup();
     setDotenvSecret("claude_code_oauth_token");
-    renderPage();
-    await screen.findByLabelText("Provider");
+    renderPage("secrets");
+    await screen.findByText("Never sent to the browser");
 
     const row = rowFor("Claude Code OAuth token");
     await user.click(within(row).getByRole("button", { name: "Connect" }));
@@ -355,8 +384,8 @@ describe("Settings", () => {
 
   it("keeps a rejected token on the dialog instead of claiming success", async () => {
     const user = userEvent.setup();
-    renderPage();
-    await screen.findByLabelText("Provider");
+    renderPage("secrets");
+    await screen.findByText("Never sent to the browser");
 
     await user.click(
       within(rowFor("Claude Code OAuth token")).getByRole("button", {
@@ -377,8 +406,8 @@ describe("Settings", () => {
   });
 
   it("offers no connect action for credentials the page may not set", async () => {
-    renderPage();
-    await screen.findByLabelText("Provider");
+    renderPage("secrets");
+    await screen.findByText("Never sent to the browser");
 
     // `jwt_secret_key` signs sessions and `github_token` belongs to an
     // account; a settings page able to write either would be a hole.
@@ -439,6 +468,27 @@ describe("Settings", () => {
 
     expect(save).toBeEnabled();
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
+  });
+
+  it("gives Appearance its own section, with no Save button over it", async () => {
+    renderPage("appearance");
+
+    // It is here...
+    expect(
+      await screen.findByRole("region", { name: "Appearance" }),
+    ).toBeInTheDocument();
+    // ...and labelled as the one thing on this page that is not shared.
+    expect(screen.getByText("Stored in this browser")).toBeInTheDocument();
+    // No Save changes: every control in here has already saved by the time
+    // you let go of it, and a disabled Save above them reads as a failure.
+    expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
+  });
+
+  it("does not leave Appearance sitting on top of the review settings", async () => {
+    renderPage();
+
+    await screen.findByLabelText("Thinking effort");
+    expect(screen.queryByRole("region", { name: "Appearance" })).toBeNull();
   });
 
   it("surfaces a failed load with a retry", async () => {

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDiff } from "@/lib/diff";
+import { DEFAULT_THEME, THEMES } from "@/lib/themes";
 import type { ReviewCommentOut } from "@/types/api";
 
 /**
@@ -63,8 +64,10 @@ const monacoStub = {
 };
 
 vi.mock("./monacoSetup", () => ({
-  PAPER_THEME: "liffy-paper",
-  GRAPHITE_THEME: "liffy-graphite",
+  // The real one resolves the palette through a hidden probe, which needs
+  // layout jsdom does not do. The naming contract is what matters here.
+  ensureTheme: (theme: string) => `liffy-${theme}`,
+  monacoThemeName: (theme: string) => `liffy-${theme}`,
   setupMonaco: vi.fn(),
 }));
 
@@ -252,23 +255,26 @@ describe("MonacoDiff", () => {
 /**
  * Monaco is the one surface the CSS cascade cannot reach — it does not read
  * custom properties, so the theme has to be handed to it by name. That makes
- * this the only part of graphite mode that can be wrong while every other
- * pixel on the page is right, which is why it gets its own test.
+ * this the only part of a theme that can be wrong while every other pixel on
+ * the page is right, which is why it gets its own test.
  */
 describe("theme", () => {
   afterEach(() => {
-    document.documentElement.classList.remove("dark");
+    delete document.documentElement.dataset.theme;
   });
 
-  it("asks for the paper theme on a light page", () => {
-    render(<MonacoDiff file={file} comments={[]} />);
-    expect(captured.theme).toBe("liffy-paper");
-  });
+  it.each(THEMES.map((spec) => spec.id))(
+    "asks Monaco for the editor theme matching %s",
+    (id) => {
+      document.documentElement.dataset.theme = id;
 
-  it("asks for the graphite theme when <html> carries the dark class", () => {
-    document.documentElement.classList.add("dark");
+      render(<MonacoDiff file={file} comments={[]} />);
+      expect(captured.theme).toBe(`liffy-${id}`);
+    },
+  );
 
+  it("falls back to the default theme when the attribute is missing", () => {
     render(<MonacoDiff file={file} comments={[]} />);
-    expect(captured.theme).toBe("liffy-graphite");
+    expect(captured.theme).toBe(`liffy-${DEFAULT_THEME}`);
   });
 });

@@ -1,9 +1,12 @@
 import type {
+  ActivityOut,
+  ModelAnalyticsOut,
+  PullRequestOut,
   AnalyticsSummaryOut,
   EvalScoresOut,
   HelpIndexOut,
   HelpPassage,
-  RepoOut,
+  RepoListItem,
   RepoStatusOut,
   ReviewCommentOut,
   ReviewDetailOut,
@@ -19,23 +22,31 @@ import type {
  * explicit `Z` — see `ensureUtc` in lib/utils.ts for why that matters.
  */
 
-export const fixtureRepoIndexed: RepoOut = {
+export const fixtureRepoIndexed: RepoListItem = {
   id: "11111111-1111-1111-1111-111111111111",
   full_name: "lucenity0/Liffy",
   default_branch: "main",
   indexed_at: "2026-07-20T10:00:00Z",
   created_at: "2026-07-01T09:00:00Z",
+  review_count: 4,
+  last_review_at: "2026-07-26T14:12:00Z",
 };
 
-export const fixtureRepoIndexing: RepoOut = {
+/** Connected, never reviewed — the pair of zero states the table has to render. */
+export const fixtureRepoIndexing: RepoListItem = {
   id: "22222222-2222-2222-2222-222222222222",
   full_name: "lucenity0/portfolio",
   default_branch: "main",
   indexed_at: null,
   created_at: "2026-07-24T12:00:00Z",
+  review_count: 0,
+  last_review_at: null,
 };
 
-export const fixtureRepos: RepoOut[] = [fixtureRepoIndexed, fixtureRepoIndexing];
+export const fixtureRepos: RepoListItem[] = [
+  fixtureRepoIndexed,
+  fixtureRepoIndexing,
+];
 
 export const fixtureRepoStatusIndexed: RepoStatusOut = {
   id: fixtureRepoIndexed.id,
@@ -370,6 +381,20 @@ export const fixtureEvalNoComments: EvalScoresOut = {
  * finishes, ratings only when somebody clicks — and building it first is how
  * `0%` ends up on screen for a metric nobody has measured.
  */
+
+/**
+ * A week with work in it, for the dashboard's opening strip.
+ *
+ * Smaller than `fixtureAnalyticsSummary`'s totals on purpose: one is a window,
+ * the other is everything, and fixtures that matched would hide a page reading
+ * the wrong one.
+ */
+export const fixtureActivity: ActivityOut = {
+  days: 7,
+  reviews: 5,
+  findings: 18,
+  repositories: 2,
+};
 
 /** Reviews have run and been rated. Every metric has a value. */
 export const fixtureAnalyticsSummary: AnalyticsSummaryOut = {
@@ -790,3 +815,92 @@ export const fixtureHelpPassages: HelpPassage[] = [
     score: 4.6,
   },
 ];
+
+/**
+ * Pull requests for the review picker.
+ *
+ * Two open and one closed, so the state tabs have something to distinguish
+ * and the "total is known" path is exercised — the endpoint only reports a
+ * total when the page came back short, which three rows always are.
+ */
+export const fixturePullRequests: PullRequestOut[] = [
+  {
+    number: 253,
+    title: "Refactor repository indexing",
+    author: "lucenity0",
+    head_branch: "feature/indexing",
+    base_branch: "main",
+    state: "open",
+  },
+  {
+    number: 251,
+    title: "Add repository management",
+    author: "lucenity0",
+    head_branch: "feat/repositories",
+    base_branch: "main",
+    state: "open",
+  },
+  {
+    number: 246,
+    title: "Add Claude Code provider",
+    author: "lucenity0",
+    head_branch: "claude-code",
+    base_branch: "main",
+    state: "closed",
+  },
+];
+
+/**
+ * Per-model analytics.
+ *
+ * Two models, one of them entirely unrated — that is the case the table has
+ * to render as "no score" rather than 0%, and it only gets covered if a
+ * fixture contains it.
+ */
+export const fixtureModelAnalytics: ModelAnalyticsOut = {
+  models: [
+    {
+      model: "claude-opus-5",
+      reviews: 12,
+      avg_tokens: 82_400,
+      avg_comments: 3.8,
+      comments: 46,
+      rated_comments: 20,
+      useful_comments: 17,
+      useful_rate: 0.85,
+    },
+    {
+      model: "codex-5.3",
+      reviews: 4,
+      avg_tokens: 61_700,
+      avg_comments: 2.5,
+      comments: 10,
+      rated_comments: 0,
+      useful_comments: 0,
+      useful_rate: null,
+    },
+  ],
+  comparisons: [
+    {
+      pr_id: "cccccccc-1111-2222-3333-444444444444",
+      repo_full_name: "lucenity0/Liffy",
+      pr_number: 249,
+      reviews: [
+        {
+          review_id: fixtureReviewCompleted.id,
+          model: "claude-opus-5",
+          verdict: "request_changes",
+          comments: 3,
+          tokens_used: 86_208,
+        },
+        {
+          review_id: fixtureReviewApproved.id,
+          model: "codex-5.3",
+          verdict: "approve",
+          comments: 1,
+          tokens_used: 61_300,
+        },
+      ],
+    },
+  ],
+};

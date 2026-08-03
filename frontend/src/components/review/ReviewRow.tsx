@@ -59,8 +59,13 @@ export function ReviewRow({
           <div className="flex flex-wrap items-baseline gap-x-3">
             {/* font-hand here and nowhere else in the row: the summary is
                 the one part a model wrote. */}
+            {/* text-sm, not text-base: at base this sat at exactly the size
+                of the repo/PR line above it, so the row had two competing
+                first lines and no obvious entry point. Still font-hand —
+                it is the one part a model wrote — just no longer shouting
+                over the identifier you scan by. */}
             {review.summary && (
-              <p className="min-w-0 flex-1 truncate font-hand text-base text-ink-dim">
+              <p className="min-w-0 flex-1 truncate font-hand text-sm text-ink-dim">
                 {review.summary}
               </p>
             )}

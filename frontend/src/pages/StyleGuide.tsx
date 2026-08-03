@@ -16,7 +16,8 @@ import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { Modal } from "@/components/ui/Modal";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { contrastRatio, resolveColor } from "@/lib/colors";
-import { useTheme, type Theme } from "@/hooks/useTheme";
+import { useTheme } from "@/hooks/useTheme";
+import { THEMES, themeSpec, type ThemeId } from "@/lib/themes";
 import type {
   Category,
   IndexStatus,
@@ -46,7 +47,10 @@ const SURFACES = [
 const INKS = [
   ["--ink", "primary text"],
   ["--ink-dim", "secondary text"],
-  ["--ink-sub", "large / non-text only"],
+  // No longer "large / non-text only" — the ramp was spread so all three
+  // tiers clear AA on every surface. The table beside this prints the live
+  // ratios, so the claim is checkable rather than aspirational.
+  ["--ink-sub", "tertiary: meta, captions"],
   ["--oxide", "critical · failed"],
   ["--sage", "approve · completed"],
   ["--ochre", "warning · processing"],
@@ -65,21 +69,20 @@ const TOKENS = [...SURFACES, ...INKS].map(([token]) => token);
  * readout — a value edited in index.css shows its real ratio here
  * immediately, instead of drifting from a comment nobody re-measures.
  */
-function usePalette(theme: Theme) {
+function usePalette(theme: ThemeId) {
   // Scoped rather than ambient: asking for the palette *of a theme* makes the
   // memo key a real input instead of a stand-in for "the document changed",
-  // and it is the same mechanism the Monaco setup uses to build both themes.
+  // and it is the same mechanism the Monaco setup uses to build its themes.
   //
   // Read during render rather than in an effect — by the time `theme` has
-  // changed, useTheme has already flipped the class, so an effect would only
+  // changed, useTheme has already set the attribute, so an effect would only
   // paint the previous palette's numbers for a frame.
-  const scope = theme === "graphite" ? "dark" : "light";
   const hexes = useMemo(
     () =>
       Object.fromEntries(
-        TOKENS.map((token) => [token, resolveColor(token, "—", scope)]),
+        TOKENS.map((token) => [token, resolveColor(token, "—", theme)]),
       ),
-    [scope],
+    [theme],
   );
 
   const against = (token: string, surface: "--paper" | "--card") => {
@@ -153,27 +156,44 @@ export function StyleGuide() {
   const [loading, setLoading] = useState(false);
   const [broken, setBroken] = useState(false);
   const [value, setValue] = useState("");
-  const { theme, toggle } = useTheme();
+  const { theme, setTheme } = useTheme();
   const palette = usePalette(theme);
 
   return (
     <div className="flex flex-col gap-10 pb-16">
-      <header className="flex flex-col gap-2">
+      <header className="flex flex-col gap-3">
         <p className="label">Design system · dev only</p>
-        <div className="flex items-center gap-3">
-          <h1 className="font-hand text-2xl leading-tight text-ink">
-            {theme === "graphite" ? "Liffy in graphite" : "Liffy on paper"}
-          </h1>
-          <Button className="ml-auto" onClick={toggle}>
-            {theme === "graphite" ? "Switch to paper" : "Switch to graphite"}
-          </Button>
-        </div>
+        <h1 className="font-hand text-2xl leading-tight text-ink">
+          Liffy in {themeSpec(theme).label.toLowerCase()}
+        </h1>
         <p className="max-w-prose text-ink-dim">
           Notebook-style, matte, low-chrome. Monochrome paper carries the
-          structure; colour is reserved for things you triage by. Both palettes
-          review here — every swatch, badge map and Sheet composition on one
-          page, in either mode.
+          structure; colour is reserved for things you triage by. Every palette
+          reviews here — swatches, badge maps and Sheet compositions on one
+          page, in whichever theme is selected.
         </p>
+
+        {/* Every theme, not a two-way toggle: the ladder is the thing being
+            reviewed, and a palette that is only ever seen next to one other
+            palette is how the two drifted apart in the first place. */}
+        <div
+          role="group"
+          aria-label="Theme"
+          className="flex flex-wrap items-center gap-1.5 pt-1"
+        >
+          {THEMES.map((spec) => (
+            <Button
+              key={spec.id}
+              size="sm"
+              variant={spec.id === theme ? "primary" : "secondary"}
+              aria-pressed={spec.id === theme}
+              onClick={() => setTheme(spec.id)}
+              title={spec.note}
+            >
+              {spec.label}
+            </Button>
+          ))}
+        </div>
       </header>
 
       <Section title="Surfaces" note="warm paper, never #fff">

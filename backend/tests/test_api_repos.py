@@ -12,11 +12,14 @@ import app.models  # noqa: F401
 from app.api import repos as repos_api
 from app.database import Base, get_db
 from app.main import app
+from app.models.pull_request import PullRequest
 from app.models.repository import Repository
+from app.models.review import Review
 from app.models.user import User
 from app.services.github_service import (
     GitHubAuthError,
     GitHubRateLimitError,
+    PullRequestMeta,
     RepositoryMeta,
 )
 
@@ -430,3 +433,255 @@ def test_rate_limit_without_retry_after_omits_the_header(
 
     assert response.status_code == 429
     assert "retry-after" not in response.headers
+
+
+# ── The pull request picker ──────────────────────────────────────────────────
+#
+# Starting a review used to begin with reading a number off a GitHub URL. This
+# endpoint is what lets the app offer a list instead. It proxies rather than
+# stores: pull requests change constantly and a stale copy would be worse than
+# none.
+
+PULLS = [
+    PullRequestMeta(
+        number=253,
+        title="Refactor repository indexing",
+        author="octo",
+        base_branch="main",
+        head_branch="feature/indexing",
+        head_sha="a" * 40,
+        state="open",
+    ),
+    PullRequestMeta(
+        number=251,
+        title="Add repository management",
+        author="hubot",
+        base_branch="main",
+        head_branch="feat/repositories",
+        head_sha="b" * 40,
+        state="open",
+    ),
+    PullRequestMeta(
+        number=246,
+        title="Add Claude Code provider",
+        author="octo",
+        base_branch="main",
+        head_branch="claude-code",
+        head_sha="c" * 40,
+        state="closed",
+    ),
+]
+
+
+def _with_pulls(monkeypatch: pytest.MonkeyPatch) -> list[FakeGitHub]:
+    """Installs a GitHub stub carrying PULLS, and hands back what was built."""
+    built: list[FakeGitHub] = []
+
+    def factory(token=None):
+        gh = FakeGitHub(repo_meta=REPO_META, pulls=PULLS, token=token)
+        built.append(gh)
+        return gh
+
+    monkeypatch.setattr(repos_api, "GitHubClient", factory)
+    return built
+
+
+def test_lists_open_pull_requests(session_factory, caller, indexed, fake_github, monkeypatch):
+    repo = _connect(caller)
+    _with_pulls(monkeypatch)
+
+    response = client.get(f"/repos/{repo['id']}/pulls", headers=caller)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["number"] for item in body["items"]] == [253, 251]
+    assert body["items"][0]["head_branch"] == "feature/indexing"
+    assert body["items"][0]["base_branch"] == "main"
+
+
+def test_state_filter_reaches_github(session_factory, caller, indexed, fake_github, monkeypatch):
+    repo = _connect(caller)
+    built = _with_pulls(monkeypatch)
+
+    body = client.get(f"/repos/{repo['id']}/pulls?state=closed", headers=caller).json()
+
+    # Filtered at GitHub, not after the fact — otherwise "closed" would page
+    # through open pull requests to find them.
+    assert built[0].pulls_state == "closed"
+    assert [item["number"] for item in body["items"]] == [246]
+    assert body["state"] == "closed"
+
+
+def test_total_is_known_only_when_the_page_is_short(
+    session_factory, caller, indexed, fake_github, monkeypatch
+):
+    repo = _connect(caller)
+    _with_pulls(monkeypatch)
+
+    body = client.get(f"/repos/{repo['id']}/pulls", headers=caller).json()
+    # Two open pull requests and a 50-wide page, so this is provably all of
+    # them.
+    assert body["total"] == 2
+
+    # A full page means "at least 50", which is not a total. Reporting one
+    # would put a number on screen that the UI then presents as fact.
+    many = [
+        PullRequestMeta(
+            number=n,
+            title=f"PR {n}",
+            author="octo",
+            base_branch="main",
+            head_branch=f"branch-{n}",
+            head_sha="d" * 40,
+            state="open",
+        )
+        for n in range(1, 60)
+    ]
+    monkeypatch.setattr(
+        repos_api, "GitHubClient", lambda token=None: FakeGitHub(pulls=many, token=token)
+    )
+    body = client.get(f"/repos/{repo['id']}/pulls", headers=caller).json()
+    assert len(body["items"]) == 50
+    assert body["total"] is None
+
+
+def test_rejects_an_unknown_state(session_factory, caller, indexed, fake_github, monkeypatch):
+    repo = _connect(caller)
+    _with_pulls(monkeypatch)
+
+    response = client.get(f"/repos/{repo['id']}/pulls?state=merged", headers=caller)
+
+    assert response.status_code == 422
+
+
+def test_pulls_use_the_callers_token(session_factory, caller, indexed, fake_github, monkeypatch):
+    """The server-side PAT would list pull requests the caller cannot see."""
+    repo = _connect(caller)
+    with session_factory() as db:
+        user = db.scalars(select(User).where(User.github_id == 1)).one()
+        user.github_access_token = "gho_caller"
+        db.commit()
+
+    built = _with_pulls(monkeypatch)
+    client.get(f"/repos/{repo['id']}/pulls", headers=caller)
+
+    assert [gh.token for gh in built] == ["gho_caller"]
+
+
+def test_cannot_list_pulls_on_someone_elses_repo(
+    session_factory, caller, other, indexed, fake_github, monkeypatch
+):
+    repo = _connect(caller)
+    _with_pulls(monkeypatch)
+
+    response = client.get(f"/repos/{repo['id']}/pulls", headers=other)
+
+    assert response.status_code == 404
+
+
+def test_github_rate_limit_surfaces_as_429(
+    session_factory, caller, indexed, fake_github, monkeypatch
+):
+    repo = _connect(caller)
+
+    def factory(token=None):
+        raise GitHubRateLimitError("GitHub rate limit reached.", retry_after=30)
+
+    monkeypatch.setattr(repos_api, "GitHubClient", factory)
+
+    response = client.get(f"/repos/{repo['id']}/pulls", headers=caller)
+
+    # 429 with Retry-After says "wait", which is something the caller can act
+    # on; the 503 auth case says "reconnect", which is not.
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "30"
+
+
+def test_github_auth_failure_surfaces_as_503(
+    session_factory, caller, indexed, fake_github, monkeypatch
+):
+    repo = _connect(caller)
+
+    def factory(token=None):
+        raise GitHubAuthError("GitHub rejected the credentials.")
+
+    monkeypatch.setattr(repos_api, "GitHubClient", factory)
+
+    assert client.get(f"/repos/{repo['id']}/pulls", headers=caller).status_code == 503
+
+
+# ── Review history on the list ────────────────────────────────────────────────
+
+
+def _add_review(db, repo_id: uuid.UUID, *, number: int, created_at: datetime) -> None:
+    """One pull request and one review against ``repo_id``."""
+    pr = PullRequest(
+        repo_id=repo_id, github_pr_number=number, title="t", author="octo",
+        base_branch="main", head_branch="f", status="open",
+    )
+    db.add(pr)
+    db.flush()
+    db.add(Review(pr_id=pr.id, status="completed", summary="s", created_at=created_at))
+    db.flush()
+
+
+def test_list_reports_no_reviews_as_zero_and_none(
+    session_factory, caller, indexed, fake_github
+) -> None:
+    """A freshly connected repository, which is where every repository starts."""
+    _connect(caller)
+
+    listed = client.get("/repos", headers=caller).json()
+
+    assert listed[0]["review_count"] == 0
+    # None, not the connection date — nothing has reviewed this yet, and a
+    # timestamp here would render as a last review that never happened.
+    assert listed[0]["last_review_at"] is None
+
+
+def test_list_counts_reviews_without_duplicating_the_repository(
+    session_factory, caller, indexed, fake_github
+) -> None:
+    """Three reviews on one repository is one row reading 3.
+
+    Joining reviews onto the repository query directly returns the repository
+    once per review, so the page would list the same repository three times —
+    and each copy would claim a review count of 1.
+    """
+    connected = _connect(caller)
+    repo_id = uuid.UUID(connected["id"])
+
+    with session_factory() as db:
+        for i in range(3):
+            _add_review(
+                db, repo_id, number=i + 1,
+                created_at=datetime(2026, 7, i + 1, tzinfo=timezone.utc),
+            )
+        db.commit()
+
+    listed = client.get("/repos", headers=caller).json()
+
+    assert len(listed) == 1
+    assert listed[0]["review_count"] == 3
+    # The most recent, not the first or an arbitrary one.
+    assert listed[0]["last_review_at"].startswith("2026-07-03")
+
+
+def test_list_does_not_count_another_users_reviews(
+    session_factory, caller, other, indexed, fake_github
+) -> None:
+    """The subquery is unscoped by design; the join to Repository is the scope."""
+    theirs = _connect(other)
+    mine = _connect(caller, "octo/mine")
+
+    with session_factory() as db:
+        _add_review(
+            db, uuid.UUID(theirs["id"]), number=1,
+            created_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+        db.commit()
+
+    listed = client.get("/repos", headers=caller).json()
+
+    assert [r["id"] for r in listed] == [mine["id"]]
+    assert listed[0]["review_count"] == 0

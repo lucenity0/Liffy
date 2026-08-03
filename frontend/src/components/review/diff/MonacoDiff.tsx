@@ -10,7 +10,7 @@ import {
 import { Spinner } from "@/components/ui/Spinner";
 import { useTheme } from "@/hooks/useTheme";
 import type { ReviewCommentOut } from "@/types/api";
-import { GRAPHITE_THEME, PAPER_THEME, setupMonaco } from "./monacoSetup";
+import { ensureTheme, setupMonaco } from "./monacoSetup";
 
 const LINE_HEIGHT = 20;
 const MAX_HEIGHT = 560;
@@ -168,7 +168,7 @@ export default function MonacoDiff({
       height={height}
       language={languageForPath(file.path)}
       value={rendered.text}
-      theme={theme === "graphite" ? GRAPHITE_THEME : PAPER_THEME}
+      theme={ensureTheme(theme)}
       beforeMount={setupMonaco}
       onMount={onMount}
       loading={<Spinner size="md" label="Loading the diff" />}

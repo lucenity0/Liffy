@@ -1,9 +1,12 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { PixelSprite } from "./PixelSprite";
 
 /**
  * The zero state. The heading is set in font-hand because an empty page is
- * where Liffy is most obviously speaking to you rather than reporting data.
+ * where Liffy is most obviously speaking to you rather than reporting data —
+ * and, for the same reason, where the cat belongs. An empty screen is the one
+ * place with room for it and the one place that reads as cold without it.
  */
 export function EmptyState({
   icon,
@@ -12,13 +15,19 @@ export function EmptyState({
   action,
   className,
 }: {
-  icon?: ReactNode;
+  /** Overrides the cat. Pass `null` to show nothing at all. */
+  icon?: ReactNode | null;
   title: string;
   description?: string;
   /** A CTA. Rendered only when provided. */
   action?: ReactNode;
   className?: string;
 }) {
+  // Decorative: the heading below already says what the state is, so the
+  // sprite carries no label and stays out of the accessibility tree.
+  const mark =
+    icon === undefined ? <PixelSprite name="cat" cell={3} /> : icon;
+
   return (
     <div
       className={cn(
@@ -26,7 +35,7 @@ export function EmptyState({
         className,
       )}
     >
-      {icon && <div className="mb-1 text-ink-sub">{icon}</div>}
+      {mark && <div className="mb-1 text-ink-sub">{mark}</div>}
       <p className="font-hand text-lg leading-tight text-ink">{title}</p>
       {description && (
         <p className="max-w-prose text-sm text-ink-dim">{description}</p>

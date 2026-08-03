@@ -40,12 +40,31 @@
          and a colour preference is not worth a blank page. -->
     <script>
       (function () {
+        /* These pages have one light look and one dark one, so they read
+           only the *polarity* out of the app's preference — not which of the
+           five themes it names. That is deliberate: it means adding a theme
+           to the app never touches these two files. DARK lists the dark ids
+           because polarity is not derivable from the string alone. */
+        var DARK = { graphite: 1, blackboard: 1, carbon: 1 };
         try {
-          var stored = localStorage.getItem("liffy-theme");
-          if (stored === "graphite" || stored === "paper") {
-            document.documentElement.classList.add(
-              stored === "graphite" ? "dark" : "light",
-            );
+          var raw = localStorage.getItem("liffy-theme");
+          var id = null;
+          if (raw) {
+            if (raw.charAt(0) === "{") {
+              var p = JSON.parse(raw);
+              id =
+                p.mode === "system"
+                  ? window.matchMedia("(prefers-color-scheme: dark)").matches
+                    ? p.dark
+                    : p.light
+                  : p.theme;
+            } else {
+              /* Bare string: what older versions of the app wrote. */
+              id = raw;
+            }
+          }
+          if (id) {
+            document.documentElement.classList.add(DARK[id] ? "dark" : "light");
           }
         } catch (e) {
           /* The media query decides, then. */
@@ -93,23 +112,20 @@
  * the product are the same ink.
  * ==================================================================== */
 :root {
-  --paper: #f4f1ea;
-  --card: #faf8f3;
-  --recessed: #efebe2;
-  --rule: #ded8cb;
-  --rule-strong: #c9c1b0;
-  --shadow-edge: #c9c1b0;
-
+  --paper: #f0ece3;
+  --card: #fbf9f5;
+  --recessed: #e4dfd3;
+  --rule: #c5bca9;
+  --rule-strong: #a89e8b;
+  --shadow-edge: #bdb3a0;
   --ink: #2b2925;
-  --ink-dim: #6b6459;
-  --ink-sub: #8e8678;
-
+  --ink-dim: #524b3e;
+  --ink-sub: #696154;
   --oxide: #9a3f2b;
-  --sage: #4a6b4a;
-  --ochre: #7d6019;
-  --payne: #3f5a73;
-
-  --tint: 9%;
+  --sage: #456646;
+  --ochre: #775b17;
+  --payne: #3b5670;
+  --tint: 18%;
   --oxide-tint: color-mix(in oklab, var(--oxide) var(--tint), var(--card));
   --sage-tint: color-mix(in oklab, var(--sage) var(--tint), var(--card));
   --ochre-tint: color-mix(in oklab, var(--ochre) var(--tint), var(--card));
@@ -154,13 +170,13 @@
     --rule-strong: #5a5349;
     --shadow-edge: #0d0c0a;
     --ink: #e6e1d6;
-    --ink-dim: #9c9280;
-    --ink-sub: #786f60;
+    --ink-dim: #b2a898;
+    --ink-sub: #958c7c;
     --oxide: #dd8462;
     --sage: #7ba171;
     --ochre: #bd9433;
     --payne: #84a5c2;
-    --tint: 17%;
+    --tint: 18%;
     --grain-opacity: 0.05;
     --grain-blend: screen;
     --grid-opacity: 0.45;
@@ -175,13 +191,13 @@
   --rule-strong: #5a5349;
   --shadow-edge: #0d0c0a;
   --ink: #e6e1d6;
-  --ink-dim: #9c9280;
-  --ink-sub: #786f60;
+  --ink-dim: #b2a898;
+  --ink-sub: #958c7c;
   --oxide: #dd8462;
   --sage: #7ba171;
   --ochre: #bd9433;
   --payne: #84a5c2;
-  --tint: 17%;
+  --tint: 18%;
   --grain-opacity: 0.05;
   --grain-blend: screen;
   --grid-opacity: 0.45;
@@ -1664,15 +1680,16 @@ a { color: inherit; }
           <li>Indexing languages beyond Python</li>
           <li>In-app env settings configuration - avoid env(hopefully)</li>
           <li>Subscription based models - connect your pro plans! [claude/codex]</li>
+          <li>Filter and sort review list</li>
+          <li>Help page</li>
         </ul>
       </div>
       <div class="wip">
         <p class="lbl">Being built</p>
         <ul>
-          <li>Filter and sort review list</li>
           <li>Themes!</li>
-          <li>Mini Liffy - your personal helper bot - running completely on memory[no API key needed]</li>
           <li>Teams and Enterprise mode [in development]</li>
+          <li>Your Future Contributions !!</li>
         </ul>
       </div>
     </div>
@@ -2264,7 +2281,16 @@ function paintRail(rail, stage) {
           root.classList.toggle("dark", next);
           root.classList.toggle("light", !next);
           try {
-            localStorage.setItem("liffy-theme", next ? "graphite" : "paper");
+            /* Writes the app's format, preserving whatever it already held —
+               these pages know about polarity, so flipping here must not
+               silently reset someone's chosen theme on the other side. */
+            var raw = localStorage.getItem("liffy-theme");
+            var p = raw && raw.charAt(0) === "{" ? JSON.parse(raw) : {};
+            p.mode = "fixed";
+            p.light = p.light || "paper";
+            p.dark = p.dark || "blackboard";
+            p.theme = next ? p.dark : p.light;
+            localStorage.setItem("liffy-theme", JSON.stringify(p));
           } catch (e) {
             /* Session-only, then. */
           }

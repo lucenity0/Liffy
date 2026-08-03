@@ -500,6 +500,52 @@ class GitHubClient:
             state=data.get("state", ""),
         )
 
+    def list_pull_requests(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        state: str = "open",
+        limit: int = 50,
+    ) -> list[PullRequestMeta]:
+        """Pull requests on a repository, newest activity first.
+
+        Exists so the app can offer a *picker* instead of asking someone to
+        go and read a number off a GitHub URL. Deliberately one page: this
+        backs a chooser, not a browsing surface, and a repository with 900
+        closed pull requests should not turn one click into nine API calls.
+
+        `head_sha` is populated here — the list endpoint returns the same
+        `head` object the single-PR endpoint does — but the diff is not
+        fetched: that is per-PR and only wanted for the one eventually
+        chosen.
+        """
+        if state not in {"open", "closed", "all"}:
+            raise ValueError(f"unsupported pull request state: {state!r}")
+
+        data = self._get(
+            f"/repos/{owner}/{repo}/pulls",
+            params={
+                "state": state,
+                "sort": "updated",
+                "direction": "desc",
+                "per_page": max(1, min(limit, 100)),
+            },
+        ).json()
+
+        return [
+            PullRequestMeta(
+                number=int(item["number"]),
+                title=item.get("title") or "",
+                author=(item.get("user") or {}).get("login", ""),
+                base_branch=(item.get("base") or {}).get("ref", ""),
+                head_branch=(item.get("head") or {}).get("ref", ""),
+                head_sha=(item.get("head") or {}).get("sha", ""),
+                state=item.get("state", ""),
+            )
+            for item in data
+        ]
+
     def get_pull_request_diff(self, owner: str, repo: str, number: int) -> str:
         response = self._get(
             f"/repos/{owner}/{repo}/pulls/{number}",

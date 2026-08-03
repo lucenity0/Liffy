@@ -1,10 +1,14 @@
-import { Link, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
+import { ButtonLink } from "@/components/ui/Button";
+import { PixelSprite } from "@/components/ui/PixelSprite";
 
 export function NotFound() {
   const { pathname } = useLocation();
 
   return (
     <div className="flex flex-col items-start gap-4 py-16">
+      {/* Decorative — "404" and the heading below both already say it. */}
+      <PixelSprite name="cat" cell={4} className="text-ink-sub" />
       <p className="label">404</p>
       <h1 className="font-hand text-2xl leading-tight text-ink">
         Nothing filed here
@@ -12,12 +16,12 @@ export function NotFound() {
       <p className="text-ink-dim">
         No page matches <code className="font-code text-ink">{pathname}</code>.
       </p>
-      <Link
-        to="/"
-        className="mt-2 border border-rule bg-card px-3 py-1.5 text-sm text-ink shadow-hard hover:border-rule-strong"
-      >
+      {/* ButtonLink rather than a hand-rolled <Link> wearing button classes:
+          the inlined copy drifted from the primitive and stopped picking up
+          token changes. */}
+      <ButtonLink to="/" className="mt-2">
         Go to dashboard
-      </Link>
+      </ButtonLink>
     </div>
   );
 }

@@ -22,8 +22,12 @@ export type BadgeVariant = "tint" | "outline" | "solid";
 export type BadgeSize = "sm" | "md";
 
 const TONE: Record<BadgeTone, Record<BadgeVariant, string>> = {
+  // bg-neutral-tint, not bg-recessed: Sheet.Header and an active Sheet.Row
+  // are both --recessed, so a neutral badge sitting on either had no fill of
+  // its own at all. --neutral-tint is the token that exists for exactly this
+  // and had never been wired up to anything.
   neutral: {
-    tint: "border-rule bg-recessed text-ink-dim",
+    tint: "border-rule bg-neutral-tint text-ink-dim",
     outline: "border-rule bg-transparent text-ink-dim",
     solid: "border-ink-dim bg-ink-dim text-paper",
   },
@@ -48,7 +52,7 @@ const TONE: Record<BadgeTone, Record<BadgeVariant, string>> = {
     solid: "border-payne bg-payne text-paper",
   },
   ink: {
-    tint: "border-rule-strong bg-recessed text-ink",
+    tint: "border-rule-strong bg-neutral-tint text-ink",
     outline: "border-rule-strong bg-transparent text-ink",
     solid: "border-ink bg-ink text-paper",
   },

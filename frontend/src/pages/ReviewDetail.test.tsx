@@ -29,6 +29,22 @@ function renderDetail(reviewId: string) {
   );
 }
 
+/**
+ * The page is a tabbed workspace now, so most assertions live behind one.
+ *
+ * Waits for the strip before clicking: the tabs only mount once the review
+ * has loaded and its status is `completed`, so a click fired against the
+ * skeleton would race.
+ */
+async function goToTab(
+  name: "Summary" | "Files" | "Comments" | "Changes",
+  user = userEvent.setup(),
+) {
+  await user.click(
+    await screen.findByRole("tab", { name: new RegExp(`^${name}`) }),
+  );
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -53,28 +69,48 @@ describe("ReviewDetail — completed", () => {
     expect(screen.getByText("Request changes")).toBeInTheDocument();
   });
 
-  it("groups comments by file, alphabetically, with the file's worst severity on the header", async () => {
+  /**
+   * Findings are listed worst-first across the whole review rather than
+   * grouped by file. The Comments tab answers "what did it find"; the Files
+   * tab is where the same findings sit next to their code, so grouping them
+   * by file in both places was the same answer twice.
+   */
+  it("lists every finding worst-first, with a filter per severity present", async () => {
     renderDetail(fixtureReviewCompleted.id);
+    await goToTab("Comments");
 
-    await screen.findByText(fixtureReviewCompleted.summary!);
-    // Scoped: the diff viewer renders <details> per file too, and both stacks
-    // expose the group role.
     const comments = screen.getByRole("region", { name: "Comments" });
-    const groups = within(comments).getAllByRole("group");
+    const cards = within(comments).getAllByRole("article");
+    expect(cards).toHaveLength(fixtureReviewCompleted.comments.length);
 
-    expect(groups).toHaveLength(2);
-    expect(within(groups[0]).getByText("setup-mac.sh")).toBeInTheDocument();
-    expect(within(groups[1]).getByText("src/lib/diff.ts")).toBeInTheDocument();
-    // The critical one is in diff.ts, and its group header says so.
-    expect(
-      within(groups[1]).getAllByText("Critical").length,
-    ).toBeGreaterThanOrEqual(1);
+    // Critical sorts first regardless of which file it is in — the fixture's
+    // critical lives in src/lib/diff.ts, which sorts *after* setup-mac.sh.
+    expect(within(cards[0]).getByText("Critical")).toBeInTheDocument();
+    expect(within(cards[0]).getByText(/src\/lib\/diff\.ts/)).toBeInTheDocument();
+
+    // "All", plus only the severities this review actually contains — a
+    // "Critical 0" button leading to an empty list is a dead control.
+    expect(screen.getByRole("button", { name: /^All/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^critical/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^warning/i })).toBeNull();
+  });
+
+  it("narrows to one severity when its filter is pressed", async () => {
+    const user = userEvent.setup();
+    renderDetail(fixtureReviewCompleted.id);
+    await goToTab("Comments", user);
+
+    await user.click(screen.getByRole("button", { name: /^critical/i }));
+
+    const comments = screen.getByRole("region", { name: "Comments" });
+    const cards = within(comments).getAllByRole("article");
+    expect(cards).toHaveLength(1);
+    expect(within(cards[0]).getByText("Critical")).toBeInTheDocument();
   });
 
   it("shows a suggestion block only for the comments that have one", async () => {
     renderDetail(fixtureReviewCompleted.id);
-
-    await screen.findByText(fixtureReviewCompleted.summary!);
+    await goToTab("Comments");
 
     const withSuggestion = fixtureReviewCompleted.comments.find(
       (c) => c.suggestion,
@@ -90,21 +126,42 @@ describe("ReviewDetail — completed", () => {
 
   it("says so plainly when Liffy had nothing to flag", async () => {
     renderDetail(fixtureReviewApproved.id);
+    await goToTab("Comments");
 
-    expect(await screen.findByText(/nothing to flag/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nothing flagged/i)).toBeInTheDocument();
     expect(
-      within(screen.getByRole("region", { name: "Comments" })).queryByRole("group"),
+      within(screen.getByRole("region", { name: "Comments" })).queryByRole("article"),
     ).toBeNull();
   });
 });
 
 describe("ReviewDetail — in flight", () => {
-  it("shows the reading panel for a processing review", async () => {
+  /**
+   * The panel says what the worker is doing, and every state in it is derived
+   * from something the API proves. The pipeline fetches the diff *before* it
+   * inserts the row, so anything in `processing` has provably finished
+   * fetching — that is the one step allowed to read "complete".
+   */
+  it("shows the pipeline for a processing review", async () => {
     renderDetail(fixtureReviewProcessing.id);
 
-    expect(await screen.findByText(/liffy is reading the diff/i)).toBeInTheDocument();
+    const panel = await screen.findByRole("region", { name: "Review progress" });
+    expect(within(panel).getByText("Fetch")).toBeInTheDocument();
+    expect(within(panel).getByText("complete")).toBeInTheDocument();
+    // Retrieval and review are reported together — the worker records one
+    // status for both, so neither is claimed to be further along.
+    expect(within(panel).getAllByText("running")).toHaveLength(2);
     // Nothing to summarize yet.
-    expect(screen.queryByText("Summary")).toBeNull();
+    expect(screen.queryByRole("tab", { name: /^Summary/ })).toBeNull();
+  });
+
+  it("claims nothing has started while the review is still queued", async () => {
+    renderDetail(fixtureReviewPending.id);
+
+    const panel = await screen.findByRole("region", { name: "Review progress" });
+    // No worker has touched it, so not even Fetch may read complete.
+    expect(within(panel).queryByText("complete")).toBeNull();
+    expect(within(panel).getAllByText("waiting").length).toBeGreaterThan(0);
   });
 
   it("distinguishes queued from reading", async () => {
@@ -130,7 +187,7 @@ describe("ReviewDetail — in flight", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(screen.getByText(/liffy is reading the diff/i)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Review progress" })).toBeInTheDocument();
 
     // One poll interval later the worker has finished — no refresh, no click.
     await act(async () => {
@@ -143,7 +200,7 @@ describe("ReviewDetail — in flight", () => {
     });
     expect(calls).toBe(2);
     expect(screen.getByText(fixtureReviewCompleted.summary!)).toBeInTheDocument();
-    expect(screen.queryByText(/liffy is reading the diff/i)).toBeNull();
+    expect(screen.queryByRole("region", { name: "Review progress" })).toBeNull();
   });
 
   it("disables Re-review while the worker still has it", async () => {
@@ -156,27 +213,32 @@ describe("ReviewDetail — in flight", () => {
 });
 
 describe("ReviewDetail — the overview", () => {
-  it("shows what the PR does and what changed where, not just a paragraph", async () => {
+  it("shows what the PR does on the summary, and what changed where on its own tab", async () => {
     /**
      * A paragraph gets skimmed. A short list of what the change *does* and a
      * table of what changed where gets read — and it carries the review even
      * when it found nothing worth commenting on, which is a common and correct
      * outcome that used to leave this panel looking empty.
+     *
+     * The two now live apart: the short list stays on Summary, the file table
+     * moved to Changes so it no longer sits between the reader and the code.
      */
+    const user = userEvent.setup();
     renderDetail(fixtureReviewCompleted.id);
 
-    expect(await screen.findByText("Changes")).toBeInTheDocument();
+    expect(await screen.findByText("What changed")).toBeInTheDocument();
     expect(
       screen.getByText(/adds a token bucket in front of the review trigger/i),
     ).toBeInTheDocument();
-    expect(screen.getByText("2 files reviewed")).toBeInTheDocument();
+
+    await goToTab("Changes", user);
     expect(screen.getByText("backend/app/api/reviews.py")).toBeInTheDocument();
     expect(
       screen.getByText(/applies the new limiter to the trigger route/i),
     ).toBeInTheDocument();
   });
 
-  it("renders a prose-only review exactly as before", async () => {
+  it("renders a prose-only review without a page of empty headings", async () => {
     /**
      * Null means the model was never asked or answered only prose — every
      * review written before this landed. It must not render as a page of
@@ -194,8 +256,9 @@ describe("ReviewDetail — the overview", () => {
     renderDetail(fixtureReviewCompleted.id);
 
     await screen.findByText(/diff-hunk parser/i);
-    expect(screen.queryByText("Changes")).toBeNull();
-    expect(screen.queryByText(/files reviewed/)).toBeNull();
+    expect(screen.queryByText("What changed")).toBeNull();
+    // "Review focus" only earns its space when there is something to plot.
+    expect(screen.queryByText("Review focus")).toBeNull();
   });
 });
 
@@ -293,15 +356,15 @@ describe("ReviewDetail — re-review", () => {
 
 describe("ReviewDetail — rating comments", () => {
   /**
-   * Groups sort by file path, so `setup-mac.sh` comes before
-   * `src/lib/diff.ts` — card 0 is the unrated comment, card 1 the one the
-   * fixture already rated 1. Both initial states are asserted below rather
-   * than assumed, so a fixture change fails here instead of silently
-   * inverting what the test means.
+   * Findings sort worst-first, so the critical one in `src/lib/diff.ts` is
+   * card 0 and the info in `setup-mac.sh` is card 1. The fixture rates the
+   * diff.ts comment 1 and leaves the other unrated, so this returns
+   * [alreadyRated, unrated] — the reverse of the old file-sorted order.
+   * Both initial states are asserted at the call sites rather than assumed,
+   * so a fixture change fails there instead of silently inverting the test.
    */
-  async function cards() {
-    await screen.findByText(fixtureReviewCompleted.summary!);
-    // Scoped: the diff viewer renders its own stack of the same comments.
+  async function cards(user?: ReturnType<typeof userEvent.setup>) {
+    await goToTab("Comments", user);
     const comments = screen.getByRole("region", { name: "Comments" });
     return within(comments).getAllByRole("article");
   }
@@ -310,7 +373,7 @@ describe("ReviewDetail — rating comments", () => {
     const user = userEvent.setup();
     const { queryClient } = renderDetail(fixtureReviewCompleted.id);
 
-    const [unrated, alreadyRated] = await cards();
+    const [alreadyRated, unrated] = await cards(user);
     const helpful = within(unrated).getByRole("button", { name: "Helpful" });
     expect(helpful).toHaveAttribute("aria-pressed", "false");
     expect(
@@ -320,9 +383,9 @@ describe("ReviewDetail — rating comments", () => {
     await user.click(helpful);
 
     await waitFor(() => expect(helpful).toHaveAttribute("aria-pressed", "true"));
-    // The page never went back to a skeleton — the same review is still
-    // mounted around the button that was clicked.
-    expect(screen.getByText(fixtureReviewCompleted.summary!)).toBeInTheDocument();
+    // The page never went back to a skeleton — the same tab is still mounted
+    // around the button that was clicked, with the other card still beside it.
+    expect(within(alreadyRated).getByRole("button", { name: "Helpful" })).toBeInTheDocument();
 
     // And it is still pressed once `onSettled`'s invalidation has refetched,
     // which is the difference between an optimistic write and a real one.
@@ -387,7 +450,7 @@ describe("ReviewDetail — rating comments", () => {
     const user = userEvent.setup();
     const { queryClient } = renderDetail(fixtureReviewCompleted.id);
 
-    const [unrated] = await cards();
+    const [, unrated] = await cards(user);
     const helpful = within(unrated).getByRole("button", { name: "Helpful" });
 
     await user.click(helpful);
@@ -418,7 +481,15 @@ describe("ReviewDetail — approval score", () => {
    * a skeleton first, and the Sheet itself mounts before its query resolves —
    * so every assertion inside it has to be a `find`, not a `get`.
    */
-  const rating = () => screen.findByRole("region", { name: "Rating" });
+  /**
+   * The score moved onto the Comments tab, next to the ratings that feed it —
+   * rating a comment and watching the rate move were otherwise on opposite
+   * ends of the page, and would now be on different tabs entirely.
+   */
+  const rating = async () => {
+    await goToTab("Comments");
+    return screen.findByRole("region", { name: "Rating" });
+  };
 
   it("shows the approval rate for a rated review", async () => {
     withScores(fixtureEvalRated);
@@ -526,7 +597,7 @@ describe("ReviewDetail — approval score", () => {
     );
     renderDetail(fixtureReviewProcessing.id);
 
-    await screen.findByText(/liffy is reading/i);
+    await screen.findByRole("region", { name: "Review progress" });
     expect(screen.queryByRole("region", { name: "Rating" })).not.toBeInTheDocument();
     expect(fetched).toBe(0);
   });
@@ -548,7 +619,8 @@ describe("ReviewDetail — approval score", () => {
     expect(await within(await rating()).findByText("100%")).toBeInTheDocument();
 
     const comments = screen.getByRole("region", { name: "Comments" });
-    const [unrated] = within(comments).getAllByRole("article");
+    // Worst-first: card 0 is the already-rated critical, card 1 the unrated.
+    const [, unrated] = within(comments).getAllByRole("article");
     await user.click(within(unrated).getByRole("button", { name: "Not helpful" }));
 
     const region = await rating();
@@ -570,8 +642,11 @@ describe("ReviewDetail — approval score", () => {
         "Couldn't load the rating for this review.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText(fixtureReviewCompleted.summary!)).toBeInTheDocument();
+    // The findings themselves are untouched by a failed score fetch.
     expect(screen.getByRole("region", { name: "Comments" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Comments" })).getAllByRole("article"),
+    ).toHaveLength(fixtureReviewCompleted.comments.length);
   });
 });
 

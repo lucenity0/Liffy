@@ -58,26 +58,27 @@ Tests sit next to what they test, as `Foo.test.tsx`.
 
 A notebook: matte paper tones, hairline rules, and a faint CSS-only grain —
 no `#fff`, no `#000`, no blurred shadows. Type is GitHub's Monaspace,
-self-hosted, in three roles: **Radon** (the handwriting cut) for the wordmark,
-page headings and Liffy's review prose; **Neon** for UI and tables; **Argon**
-for code, diffs and file paths. The conceptual move is that the LLM's verdict
-is the handwriting in the margin.
+self-hosted, in two faces: **Argon** (the humanist cut) for the wordmark, page
+headings, Liffy's review prose *and* code, diffs and file paths; **Neon** for
+UI, chrome and tables. The conceptual move is that the LLM's verdict is the
+handwriting in the margin.
 
 `src/index.css` is the whole system, organised deliberately:
 
-1. `:root` — the raw palette, hand-written so it is always emitted. A dark
-   mode would override this block and nothing else.
+1. The raw palette — hand-written so it is always emitted, one block per
+   theme. A theme overrides these values and nothing else; the `color-mix()`
+   tints and diff washes reference them through `var()` and re-resolve on
+   their own.
 2. `@theme` — namespace resets (`--color-*: initial`) plus theme-invariant
    scales. It must come *first* of the two theme blocks: Tailwind applies them
    in source order, so a reset placed last would wipe every alias below.
 3. `@theme inline` — semantic aliases. `inline` is load-bearing: plain
-   `@theme` substitutes at `:root`, so a future `.dark` would never propagate.
+   `@theme` substitutes at `:root`, so a theme block would never propagate.
 
 There is a DEV-only `/_styleguide` route with every swatch, the type ramp, all
-four badge maps and every component state on one page.
-
-Light mode only for now, but the token structure means a dark "graphite" theme
-is a drop-in rather than a refactor.
+four badge maps and every component state on one page — and it resolves hexes
+and WCAG ratios live out of the browser, so the contrast audit is a standing
+readout rather than a comment nobody re-measures.
 
 ## Things that will bite
 

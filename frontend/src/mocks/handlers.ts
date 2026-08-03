@@ -1,9 +1,12 @@
 import { http, HttpResponse } from "msw";
 import {
+  fixtureActivity,
   fixtureAnalyticsSummary,
   fixtureHelpPassages,
   fixtureHelpTopics,
   fixtureRepoIndexed,
+  fixtureModelAnalytics,
+  fixturePullRequests,
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
   fixtureRepos,
@@ -146,6 +149,22 @@ export const handlers = [
       { status: 202 },
     ),
   ),
+
+  /**
+   * Filters by state for real, like the reviews handler does — a stub that
+   * accepted `state` and ignored it would make a broken tab look working.
+   */
+  http.get("*/analytics/models", () => HttpResponse.json(fixtureModelAnalytics)),
+
+  http.get("*/repos/:repoId/pulls", ({ request }) => {
+    const state = new URL(request.url).searchParams.get("state") ?? "open";
+    const items =
+      state === "all"
+        ? fixturePullRequests
+        : fixturePullRequests.filter((pull) => pull.state === state);
+    // Always short of a page here, so the total is genuinely knowable.
+    return HttpResponse.json({ items, state, total: items.length });
+  }),
 
   http.get("*/repos/:repoId/status", ({ params }) => {
     if (params.repoId === fixtureRepoIndexed.id) {
@@ -307,6 +326,13 @@ export const handlers = [
   http.get("*/analytics/summary", () =>
     HttpResponse.json(fixtureAnalyticsSummary),
   ),
+
+  // Echoes the window back rather than hardcoding 7, so a page asking for a
+  // month and rendering a week's figures fails here instead of on screen.
+  http.get("*/analytics/activity", ({ request }) => {
+    const days = Number(new URL(request.url).searchParams.get("days") ?? 7);
+    return HttpResponse.json({ ...fixtureActivity, days });
+  }),
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   // Happy-path defaults. The interesting auth cases (a refresh that 401s,

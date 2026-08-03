@@ -13,6 +13,8 @@ export const keys = {
     all: ["repos"] as const,
     list: () => [...keys.repos.all, "list"] as const,
     status: (repoId: string) => [...keys.repos.all, repoId, "status"] as const,
+    pulls: (repoId: string, state: string) =>
+      [...keys.repos.all, repoId, "pulls", state] as const,
   },
   reviews: {
     all: ["reviews"] as const,
@@ -41,12 +43,18 @@ export const keys = {
   analytics: {
     all: ["analytics"] as const,
     summary: () => [...keys.analytics.all, "summary"] as const,
+    // Keyed by the window: a 7-day and a 30-day answer are different data,
+    // and sharing one entry would serve whichever loaded last.
+    activity: (days: number) => [...keys.analytics.all, "activity", days] as const,
   },
   /**
    * One document, not a list — there is no per-key query, because the page
    * renders every setting at once and a PATCH can change the provenance of a
    * key it did not name.
    */
+  analyticsModels: {
+    all: ["analytics", "models"] as const,
+  },
   settings: {
     all: ["settings"] as const,
   },

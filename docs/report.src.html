@@ -39,23 +39,7 @@
  * comments are the ones measured there, against --paper.
  * ==================================================================== */
 :root {
-  --paper: #f4f1ea;
-  --card: #faf8f3;
-  --recessed: #efebe2;
-  --rule: #ded8cb;
-  --rule-strong: #c9c1b0;
-  --shadow-edge: #c9c1b0;
-
-  --ink: #2b2925;      /* 12.9:1 */
-  --ink-dim: #6b6459;  /*  5.2:1 */
-  --ink-sub: #8e8678;  /*  3.2:1 — large text and non-text only */
-
-  --oxide: #9a3f2b;    /* critical · request_changes · failed */
-  --sage: #4a6b4a;     /* approve · completed · indexed */
-  --ochre: #7d6019;    /* warning · processing */
-  --payne: #3f5a73;    /* info · comment */
-
-  --tint: 9%;
+  __PALETTE_LIGHT__
   --oxide-tint: color-mix(in oklab, var(--oxide) var(--tint), var(--card));
   --sage-tint: color-mix(in oklab, var(--sage) var(--tint), var(--card));
   --ochre-tint: color-mix(in oklab, var(--ochre) var(--tint), var(--card));
@@ -81,46 +65,14 @@
  * media query in both directions, so both are named everywhere. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not(.light) {
-    --paper: #1d1b18;
-    --card: #28251f;
-    --recessed: #141311;
-    --rule: #423d36;
-    --rule-strong: #5a5349;
-    --shadow-edge: #0d0c0a;
-
-    --ink: #e6e1d6;
-    --ink-dim: #9c9280;
-    --ink-sub: #786f60;
-
-    --oxide: #dd8462;
-    --sage: #7ba171;
-    --ochre: #bd9433;
-    --payne: #84a5c2;
-
-    --tint: 17%;
+    __PALETTE_DARK__
     --grain-opacity: 0.05;
     --grain-blend: screen;
   }
 }
 :root[data-theme="dark"],
 :root.dark {
-  --paper: #1d1b18;
-  --card: #28251f;
-  --recessed: #141311;
-  --rule: #423d36;
-  --rule-strong: #5a5349;
-  --shadow-edge: #0d0c0a;
-
-  --ink: #e6e1d6;
-  --ink-dim: #9c9280;
-  --ink-sub: #786f60;
-
-  --oxide: #dd8462;
-  --sage: #7ba171;
-  --ochre: #bd9433;
-  --payne: #84a5c2;
-
-  --tint: 17%;
+  __PALETTE_DARK__
   --grain-opacity: 0.05;
   --grain-blend: screen;
 }

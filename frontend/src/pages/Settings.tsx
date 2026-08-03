@@ -1,5 +1,15 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Appearance } from "@/components/settings/Appearance";
+import { SettingsNav } from "@/components/settings/SettingsNav";
+import {
+  EDITABLE_GROUP,
+  fileReadOnly,
+  SECTIONS,
+  unfiled,
+} from "@/lib/settingsSections";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Modal } from "@/components/ui/Modal";
 import { Sheet } from "@/components/ui/Sheet";
@@ -17,12 +27,12 @@ import {
   useUpdateSettings,
 } from "@/hooks/useSettings";
 import { normalizeApiError } from "@/lib/errors";
-import type { EditableSetting, SecretSetting } from "@/types/api";
+import type {
+  EditableSetting,
+  ReadOnlySetting,
+  SecretSetting,
+} from "@/types/api";
 
-const GROUPS = [
-  { id: "review_model", title: "Review model" },
-  { id: "github_posting", title: "GitHub posting" },
-] as const;
 
 /** A pending change, held until the confirm dialog is answered. */
 interface PendingChange {
@@ -66,6 +76,10 @@ const CONFIRM_COPY: Record<string, { title: string; body: string }> = {
 export function Settings() {
   const settings = useSettings();
   const save = useUpdateSettings();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const section =
+    SECTIONS.find((s) => s.id === searchParams.get("section")) ?? SECTIONS[0];
 
   /** Only keys the user has actually touched, so a save sends nothing else. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -161,28 +175,58 @@ export function Settings() {
     ? (drafts[providerSetting.key] ?? String(providerSetting.value))
     : "";
 
+  const editableGroup = EDITABLE_GROUP[section.id];
+  const editableRows = editableGroup
+    ? data.editable
+        .filter((s) => s.group === editableGroup)
+        .filter(
+          (s) => s.applies_to.length === 0 || s.applies_to.includes(provider),
+        )
+    : [];
+
+  /** This section's read-only rows, bucketed into its sub-groups. */
+  const readOnlyByGroup = new Map<string, ReadOnlySetting[]>();
+  for (const setting of data.read_only) {
+    const filed = fileReadOnly(setting);
+    if (filed.section !== section.id) continue;
+    const bucket = readOnlyByGroup.get(filed.group);
+    if (bucket) bucket.push(setting);
+    else readOnlyByGroup.set(filed.group, [setting]);
+  }
+
+  const stragglers = unfiled(data.read_only);
+
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-start gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="font-hand text-2xl leading-tight text-ink">Settings</h1>
-          <p className="max-w-prose text-base text-ink-dim">
+      <PageHeader
+        title="Settings"
+        description={
+          <>
             What Liffy uses to run a review. Anything that needs a restart is
             shown here but set in <span className="font-code">backend/.env</span>.
-          </p>
-        </div>
-        <div className="ml-auto flex items-center gap-3">
-          {dirty && <span className="label text-ink-dim">Unsaved</span>}
-          <Button
-            variant="primary"
-            disabled={!dirty}
-            loading={save.isPending}
-            onClick={onSave}
-          >
-            Save changes
-          </Button>
-        </div>
-      </header>
+          </>
+        }
+        actions={
+          /* Hidden on Appearance, which saves on press — a disabled "Save
+             changes" over controls that have already saved reads as a
+             failure. It comes back the moment there is a real draft, so
+             edits made in another section are never stranded behind a
+             button that disappeared. */
+          section.scope === "server" || dirty ? (
+            <>
+              {dirty && <span className="label text-ink-dim">Unsaved</span>}
+              <Button
+                variant="primary"
+                disabled={!dirty}
+                loading={save.isPending}
+                onClick={onSave}
+              >
+                Save changes
+              </Button>
+            </>
+          ) : undefined
+        }
+      />
 
       {apiError && !fieldError && (
         <p role="alert" className="text-base text-oxide">
@@ -190,73 +234,147 @@ export function Settings() {
         </p>
       )}
 
-      {GROUPS.map((group) => {
-        const rows = data.editable
-          .filter((s) => s.group === group.id)
-          .filter(
-            (s) => s.applies_to.length === 0 || s.applies_to.includes(provider),
-          );
-        if (rows.length === 0) return null;
-        return (
-          <Sheet key={group.id}>
-            <Sheet.Header title={group.title} />
-            {rows.map((setting) => (
-              <EditableSettingRow
-                key={setting.key}
-                setting={setting}
-                value={valueOf(setting)}
-                disabled={save.isPending}
-                error={
-                  fieldError === setting.key ? apiError!.message : undefined
-                }
-                onChange={(next) => request(setting, next)}
-              />
-            ))}
-          </Sheet>
-        );
-      })}
-
-      <Sheet>
-        <Sheet.Header
-          title="Secrets"
-          actions={<span className="label text-ink-dim">Never sent to the browser</span>}
-        />
-        {data.secrets.map((secret) => (
-          <SecretSettingRow
-            key={secret.key}
-            // Only credentials the backend marks connectable get the action —
-            // the rest stay report-only, which is what keeps `jwt_secret_key`
-            // out of reach of a settings request.
-            onConnect={
-              secret.connectable ? () => setConnecting(secret) : undefined
-            }
-            onDisconnect={
-              secret.connectable
-                ? () => disconnect.mutate(secret.key)
-                : undefined
-            }
-            setting={secret}
-            // Every secret stays listed — the page's job is answering "where
-            // is this configured?" for everything. But an unset key belonging
-            // to a provider you did not pick is not a problem, and should not
-            // be dressed as one.
-            relevant={
-              secret.applies_to.length === 0 ||
-              secret.applies_to.includes(provider)
-            }
+      {/* Local nav beside the content. Below `lg` it stacks above rather
+          than shrinking into a column too narrow to read — the brief is
+          explicit that a tiny two-column layout is worse than none. */}
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+        <div className="w-full shrink-0 lg:sticky lg:top-14 lg:w-48">
+          <SettingsNav
+            active={section.id}
+            onSelect={(id, group) => {
+              const params = new URLSearchParams(searchParams);
+              if (id === "review") params.delete("section");
+              else params.set("section", id);
+              setSearchParams(params, { replace: true });
+              if (group) {
+                // The sub-item scrolls to its group inside the section it
+                // belongs to, so selecting one always lands somewhere real
+                // even when the section was not already open.
+                requestAnimationFrame(() =>
+                  document
+                    .getElementById(`settings-${id}-${group}`)
+                    ?.scrollIntoView({ block: "start", behavior: "smooth" }),
+                );
+              }
+            }}
           />
-        ))}
-      </Sheet>
+        </div>
 
-      <Sheet>
-        <Sheet.Header
-          title="Infrastructure"
-          actions={<span className="label text-ink-dim">Read-only</span>}
-        />
-        {data.read_only.map((setting) => (
-          <ReadOnlySettingRow key={setting.key} setting={setting} />
-        ))}
-      </Sheet>
+        <div className="flex min-w-0 flex-1 flex-col gap-6">
+          <div className="flex flex-col gap-1">
+            <h2 className="font-hand text-lg leading-tight text-ink">
+              {section.label}
+            </h2>
+            <p className="text-sm text-ink-dim">{section.description}</p>
+          </div>
+
+          {/* Its own section, not a card on top of Review. It shares nothing
+              with the rest of the page — no draft, no PATCH, no provenance —
+              and sitting above the review settings it read as one more thing
+              the Save button was holding. */}
+          {section.id === "appearance" && <Appearance />}
+
+          {editableGroup && (
+            <Sheet>
+              <Sheet.Header title={section.label} />
+              {editableRows.length === 0 ? (
+                <Sheet.Body>
+                  <p className="text-base text-ink-dim">
+                    Nothing to configure here for the selected provider.
+                  </p>
+                </Sheet.Body>
+              ) : (
+                editableRows.map((setting) => (
+                  <EditableSettingRow
+                    key={setting.key}
+                    setting={setting}
+                    value={valueOf(setting)}
+                    disabled={save.isPending}
+                    error={
+                      fieldError === setting.key ? apiError!.message : undefined
+                    }
+                    onChange={(next) => request(setting, next)}
+                  />
+                ))
+              )}
+            </Sheet>
+          )}
+
+          {section.id === "secrets" && (
+            <Sheet>
+              <Sheet.Header
+                title="Secrets"
+                actions={
+                  <span className="label text-ink-dim">
+                    Never sent to the browser
+                  </span>
+                }
+              />
+              {data.secrets.map((secret) => (
+                <SecretSettingRow
+                  key={secret.key}
+                  // Only credentials the backend marks connectable get the
+                  // action — the rest stay report-only, which is what keeps
+                  // `jwt_secret_key` out of reach of a settings request.
+                  onConnect={
+                    secret.connectable ? () => setConnecting(secret) : undefined
+                  }
+                  onDisconnect={
+                    secret.connectable
+                      ? () => disconnect.mutate(secret.key)
+                      : undefined
+                  }
+                  setting={secret}
+                  // Every secret stays listed — the page's job is answering
+                  // "where is this configured?" for everything. But an unset
+                  // key belonging to a provider you did not pick is not a
+                  // problem, and should not be dressed as one.
+                  relevant={
+                    secret.applies_to.length === 0 ||
+                    secret.applies_to.includes(provider)
+                  }
+                />
+              ))}
+            </Sheet>
+          )}
+
+          {section.groups?.map((group) => {
+            const rows = readOnlyByGroup.get(group.id) ?? [];
+            if (rows.length === 0) return null;
+            return (
+              <Sheet
+                key={group.id}
+                id={`settings-${section.id}-${group.id}`}
+                className="scroll-mt-16"
+              >
+                <Sheet.Header
+                  title={group.label}
+                  actions={<span className="label text-ink-dim">Read-only</span>}
+                />
+                {rows.map((setting) => (
+                  <ReadOnlySettingRow key={setting.key} setting={setting} />
+                ))}
+              </Sheet>
+            );
+          })}
+
+          {/* Nothing is allowed to go missing. A key the backend adds that
+              this page has no home for would otherwise vanish silently —
+              the worst failure for a page whose job is answering "where is
+              this configured?". */}
+          {section.id === "infrastructure" && stragglers.length > 0 && (
+            <Sheet>
+              <Sheet.Header
+                title="Other"
+                actions={<span className="label text-ink-dim">Read-only</span>}
+              />
+              {stragglers.map((setting) => (
+                <ReadOnlySettingRow key={setting.key} setting={setting} />
+              ))}
+            </Sheet>
+          )}
+        </div>
+      </div>
 
       {pending && (
         <Modal

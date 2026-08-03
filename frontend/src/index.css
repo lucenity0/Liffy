@@ -1,8 +1,19 @@
 @import "tailwindcss";
 @import "./styles/fonts.css";
 
-/* Graphite mode rides on `.dark` on <html>. Everything the dark theme
-   overrides lives in the .dark block below and nowhere else. */
+/* Two attributes carry the theme, and they answer different questions.
+ *
+ *   <html data-theme="graphite" class="dark">
+ *
+ * `data-theme` picks the palette — one block per theme below, each
+ * overriding only what it changes. `.light`/`.dark` carries the *polarity*,
+ * which is a different fact: `color-scheme` needs it for native controls,
+ * this variant needs it, and a component that must branch on "is this a dark
+ * theme" needs it without enumerating theme names. Five themes, two
+ * polarities; conflating them would mean rewriting every consumer each time
+ * a theme is added.
+ *
+ * The boot script in index.html sets both before first paint. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ==================================================================== *
@@ -14,73 +25,128 @@
  *
  * Contrast ratios are measured against --paper.
  *
- * `.light` is here so the palette is addressable in *both* directions, not
- * just downward into graphite. Monaco has to build a light theme and a dark
- * theme in one pass, from whichever mode the page happens to have booted in,
- * and a subtree can only opt into a class — there is no way to un-apply the
- * `.dark` sitting on <html>. Without this, booting in graphite produced a
- * "paper" Monaco theme built out of graphite values.
+ * Every theme is addressable by name, not just the one the document is
+ * currently wearing. Monaco has to build its theme from literal hex, and the
+ * style guide prints every palette at once — both resolve values by mounting
+ * a hidden probe carrying `data-theme`, because a subtree can only opt *into*
+ * an attribute and there is no way to un-apply the one sitting on <html>.
+ * Without addressable-by-name, booting in graphite produced a "paper" Monaco
+ * theme built out of graphite values.
  * ==================================================================== */
 :root,
-.light {
-  /* Surfaces — warm paper, never #fff */
-  --paper: #f4f1ea; /* page */
-  --card: #faf8f3; /* raised leaf */
-  --recessed: #efebe2; /* sheet headers, table headers, footers */
-  --rule: #ded8cb; /* hairline: every divider and border */
-  --rule-strong: #c9c1b0; /* hover borders */
+[data-theme="paper"] {
+  /* Native form controls, scrollbars and the UA's own colours, none of which
+     read custom properties. Declared by the palette rather than by a
+     polarity class, so a theme carries its own answer and the boot script
+     has one less thing to get right. Unlayered, so it beats @layer base. */
+  color-scheme: light;
+
+  /* Surfaces — warm paper, never #fff.
+     Retuned: the original set spanned only ~4% lightness, so a Sheet sat on
+     the page at 1.06:1 behind a 1.26:1 hairline and the whole surface stack
+     read as one flat field. Ratios in comments are against --paper. */
+  --paper: #f0ece3; /* page */
+  --card: #fbf9f5; /* 1.12:1  raised leaf */
+  --recessed: #e4dfd3; /* 1.13:1  sheet headers, table headers, footers */
+  --rule: #c5bca9; /* 1.60:1  hairline: every divider and border */
+  --rule-strong: #a89e8b; /* 2.25:1  hover borders */
 
   /* The hard shadow's colour, split out from --rule-strong because the two
-     have to move in opposite directions under graphite: hover borders must
-     lighten against a dark page, a shadow must stay darker than it. On
-     paper they happen to be the same value. */
-  --shadow-edge: #c9c1b0;
+     have to move in opposite directions under a dark theme: hover borders
+     must lighten against a dark page, a shadow must stay darker than it. */
+  --shadow-edge: #bdb3a0; /* 1.76:1 */
 
-  /* Inks — soft black, never #000 */
-  --ink: #2b2925; /* 12.9:1  primary text */
-  --ink-dim: #6b6459; /*  5.2:1  secondary text, passes AA body */
-  --ink-sub: #8e8678; /*  3.2:1  LARGE TEXT AND NON-TEXT ONLY */
+  /* Inks — soft black, never #000.
+     Three tiers, and all three are now AA body text.
+     --ink-sub used to sit at 3.2:1 and be annotated LARGE TEXT AND NON-TEXT
+     ONLY, which roughly twenty call sites ignored — timestamps, model names,
+     figure captions, file paths, all at 10–12.5px. The choice was to move
+     every one of them onto --ink-dim, flattening the ramp to two tiers, or to
+     spread the ramp so the third tier is honestly usable. This is the second.
+     Ratios below are the *worst* of the three surfaces, not the best. */
+  --ink: #2b2925; /* 10.9:1  primary text */
+  --ink-dim: #524b3e; /*  6.5:1  secondary text */
+  --ink-sub: #696154; /*  4.6:1  tertiary: meta, captions, timestamps */
 
-  /* Semantic inks — desaturated, matte. All clear AA on paper and card. */
-  --oxide: #9a3f2b; /* 6.0:1  critical · request_changes · failed */
-  --sage: #4a6b4a; /* 5.3:1  approve · completed · indexed */
-  --ochre: #7d6019; /* 5.2:1  warning · processing */
-  --payne: #3f5a73; /* 6.4:1  info · comment */
+  /* Semantic inks — desaturated, matte. All clear AA on paper and card.
+     Nudged a step darker alongside --paper so the ratios hold. */
+  --oxide: #9a3f2b; /* 5.7:1  critical · request_changes · failed */
+  --sage: #456646; /* 5.5:1  approve · completed · indexed */
+  --ochre: #775b17; /* 5.4:1  warning · processing */
+  --payne: #3b5670; /* 6.5:1  info · comment */
 
-  /* How much ink goes into a wash. A variable rather than a literal because
-     graphite needs roughly double: the same oklab chroma separation that
-     reads clearly at L≈0.92 is barely legible at L≈0.31, so a percentage
-     tuned on light paper does not carry over. The formulas stay written
-     once; only these numbers move. */
-  --tint-mix: 9%;
-  --diff-add-mix: 12%;
-  --diff-del-mix: 10%;
+  /* How much ink goes into a wash.
+     These used to be 9/12/10 here and 18/22/20 under graphite, on the theory
+     that chroma reading well at L≈0.92 needs doubling at L≈0.31. Measuring
+     the two side by side says otherwise: light was simply under-tuned. At 9%
+     the four tints sat 1.13–1.15:1 off the card and the add/remove washes
+     landed 1.02:1 apart — the same failure the graphite comment describes,
+     just never fixed on this side. Matched to graphite, both themes now sit
+     at dE 0.033–0.035 between add and remove. Kept as variables because a
+     custom theme moves them. */
+  --tint-mix: 18%;
+  --diff-add-mix: 22%;
+  --diff-del-mix: 20%;
 
   /* Tint washes — BACKGROUNDS ONLY, never text. */
   --oxide-tint: color-mix(in oklab, var(--oxide) var(--tint-mix), var(--card));
   --sage-tint: color-mix(in oklab, var(--sage) var(--tint-mix), var(--card));
   --ochre-tint: color-mix(in oklab, var(--ochre) var(--tint-mix), var(--card));
   --payne-tint: color-mix(in oklab, var(--payne) var(--tint-mix), var(--card));
-  --neutral-tint: var(--recessed);
+
+  /* Its own value, not `var(--recessed)`.
+     Aliased, a neutral badge inside a Sheet.Header or on an active row —
+     both --recessed — had 1.00:1 of background differentiation and no shape
+     at all. That hit every "Pending" status, every "Not configured" secret
+     and all six category badges. Sits 1.17:1 off the card and 1.08:1 off
+     recessed, so it reads on either. */
+  --neutral-tint: #ece7dc;
 
   /* Diff washes reuse the same two inks, so the diff is not a 2nd palette. */
   --diff-add: color-mix(in oklab, var(--sage) var(--diff-add-mix), var(--card));
   --diff-del: color-mix(in oklab, var(--oxide) var(--diff-del-mix), var(--card));
+
+  /* The chrome plane — the nav rail, and anything else that is furniture
+     rather than page.
+     A fourth surface rather than a reuse of --recessed, because the three
+     page surfaces span ~4% lightness by design (they are leaves of the same
+     paper) and a nav rail has to read as a different *material*, not a
+     slightly different sheet. On paper that means an inked rail with paper
+     drawn on it — the inversion is the point, and it is what stops the
+     chrome from dissolving into the page the way a bg-card top bar did.
+     Under a dark theme it steps away from --paper in the other direction. */
+  --chrome: #2b2925; /* rail fill — the ink colour, used as a surface */
+  --chrome-ink: #f0ece3; /* 12.3:1 on chrome */
+  --chrome-ink-dim: #a49b8a; /*  5.3:1 on chrome */
+  --chrome-rule: #524a40; /*  1.67:1 hairlines within the rail */
+  --chrome-active: #3b3730; /*  1.23:1 the current nav item */
 
   /* Raw-CSS-only constants — deliberately not theme variables. */
   --grain-opacity: 0.032;
   --grain-blend: multiply; /* darkens the paper — see .dark */
   --grid-opacity: 0.5;
   --grain-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-  --rule-step: 28px; /* grid pitch; the prose block matches it exactly */
+  /* Grid pitch, and the prose block matches it exactly.
+     24px, down from 28. At 28 the review prose was set 15px/28 — 1.87
+     leading, against 1.6 everywhere else — which is what made the one thing
+     on the page you actually read feel oversized and loose. Tightening the
+     pitch fixes the prose without breaking the mechanic: the lines still
+     land on the graph paper, and a 24px grid reads more like engineering
+     paper than a school exercise book. */
+  --rule-step: 24px;
 }
 
 /* ==================================================================== *
- * 1b. GRAPHITE — the dark palette.
+ * 1b. GRAPHITE — the warm dark palette.
  *
- * Source order is load-bearing: `:root` and `.dark` are both (0,1,0), and
- * <html class="dark"> matches both, so this block only wins by sitting
- * second. Never move it above :root.
+ * Source order is load-bearing: `:root` and `[data-theme=…]` are both
+ * (0,1,0), and <html data-theme="graphite"> matches both, so this block only
+ * wins by sitting second. Never move a theme block above :root. The same
+ * applies to every theme added below it.
+ *
+ * A theme block overrides only what it changes; everything it omits — the
+ * color-mix() derivations, --grain-url, --rule-step — falls through from
+ * :root, which is why those live there and not repeated here.
  *
  * A structural inversion, not a lightness flip — card stays the lightest
  * of the three surfaces and recessed the darkest, so elevation still reads
@@ -92,9 +158,7 @@
  * Only the raw values live here. The color-mix() tints and diff washes in
  * :root reference these through var(), so they re-resolve on their own.
  * ==================================================================== */
-.dark {
-  /* Native form controls, scrollbars and the UA's own colours. Unlayered,
-     so this beats the `html { color-scheme: light }` in @layer base. */
+[data-theme="graphite"] {
   color-scheme: dark;
 
   --paper: #1d1b18;
@@ -109,23 +173,37 @@
      elevation. Same mechanism, opposite direction. */
   --shadow-edge: #0d0c0a;
 
-  --ink: #e6e1d6; /* 13.2:1 */
-  --ink-dim: #9c9280; /*  5.6:1 */
-  --ink-sub: #786f60; /*  3.5:1  LARGE TEXT AND NON-TEXT ONLY */
+  /* Same three-tier spread as paper. Solved against --card here rather than
+     --paper: card is the *lightest* surface under a dark theme, so it is the
+     one that binds for a light ink — the mirror of paper, where --recessed
+     binds because it is the darkest. */
+  --ink: #e6e1d6; /* 11.7:1 */
+  --ink-dim: #b2a898; /*  6.5:1 */
+  --ink-sub: #958c7c; /*  4.6:1 */
 
   --oxide: #dd8462; /*  6.2:1 */
   --sage: #7ba171; /*  5.9:1 */
   --ochre: #bd9433; /*  6.1:1 */
   --payne: #84a5c2; /*  6.7:1 */
 
-  /* Roughly double the light-mode mix. At 9% and 12% the add and remove
-     washes came out as the same warm brown — the hue separation is
-     technically still there in oklab, but eyes do not resolve it down at
-     this lightness. These were picked by looking at the diff block on
-     /_styleguide, not by arithmetic. */
-  --tint-mix: 18%;
-  --diff-add-mix: 22%;
-  --diff-del-mix: 20%;
+  /* Its own value here too, and *lighter* than the card rather than darker:
+     card is already the lightest of the three surfaces under a dark theme,
+     so a neutral chip reads as lifted off it. 1.17:1 off card, 1.42:1 off
+     recessed. */
+  --neutral-tint: #34302a;
+
+  /* The rail steps below --paper here, where on paper it steps far above it.
+     Same intent both ways: chrome is a different material from the page. */
+  --chrome: #151310;
+  --chrome-ink: #e6e1d6; /* 14.2:1 */
+  --chrome-ink-dim: #948a78; /*  5.4:1 */
+  --chrome-rule: #403a32; /*  1.65:1 */
+  --chrome-active: #242019; /*  1.14:1 */
+
+  /* The mix ratios are no longer overridden here — :root now carries the
+     same 18/22/20 this block introduced, because measuring the two themes
+     against each other showed light needed them just as much. Left as a
+     note rather than a duplicate declaration. */
 
   /* Multiply on a dark base is invisible. Screen lifts the noise instead,
      and needs more of it to read as texture rather than dirt. */
@@ -135,6 +213,158 @@
      ~37/255 off --paper down here, so the same alpha that reads as a grid on
      light paper reads as nothing at all on graphite. */
   --grid-opacity: 0.45;
+}
+
+/* ==================================================================== *
+ * 1c. BLACKBOARD — slate and chalk. The default.
+ *
+ * The material pair paper never had. Graphite is pencil on dark paper,
+ * which is the same substance twice; a blackboard is a different surface
+ * with a different mark on it, and every texture already in this file has a
+ * chalk reading — the graph grid becomes faint chalk rules, the grain
+ * becomes dust. Cooler than graphite by design: slate is blue-grey, and
+ * that is what separates the two dark themes at a glance rather than by
+ * name.
+ *
+ * The four semantic inks are chalk colours, which is a real constraint
+ * rather than a conceit — chalk ships in roughly this palette.
+ * ==================================================================== */
+[data-theme="blackboard"] {
+  color-scheme: dark;
+
+  --paper: #12171a;
+  --card: #1b2226; /* 1.12:1 — still the lightest of the three */
+  --recessed: #090c0e;
+  --rule: #3e4a52; /* 1.78:1 */
+  --rule-strong: #55636c; /* 2.66:1 */
+  --shadow-edge: #05080a;
+
+  --ink: #e8e9e4; /* 14.8:1  chalk, not white */
+  --ink-dim: #b3b8b4; /*  9.0:1 */
+  --ink-sub: #93999a; /*  6.2:1 */
+
+  --oxide: #e2846a; /* 6.7:1 */
+  --sage: #84b184; /* 7.4:1 */
+  --ochre: #d0ab52; /* 8.3:1 */
+  --payne: #88b4d4; /* 8.2:1 */
+
+  --neutral-tint: #2a333a;
+  --tint-mix: 20%;
+  --diff-add-mix: 24%;
+  --diff-del-mix: 22%;
+
+  --chrome: #0b0f11;
+  --chrome-ink: #e8e9e4;
+  --chrome-ink-dim: #8d9599;
+  --chrome-rule: #313d44;
+  --chrome-active: #192126;
+
+  /* Chalk dust, not paper grain: coarser and lifted rather than multiplied,
+     and a touch stronger than graphite's because slate is flatter. */
+  --grain-blend: screen;
+  --grain-opacity: 0.05;
+  --grid-opacity: 0.4;
+}
+
+/* ==================================================================== *
+ * 1d. CARBON — near-black, for OLED and for maximum contrast.
+ *
+ * The deep end of the dark ladder. Its constraint is the opposite of every
+ * other theme's: with --paper at #0b0b0b there is almost no room *below*
+ * the page, so --recessed is true black and the whole surface stack is
+ * pushed upward instead. That is why --card sits further off the page here
+ * than anywhere else — it is the only direction left.
+ * ==================================================================== */
+[data-theme="carbon"] {
+  color-scheme: dark;
+
+  --paper: #0b0b0b;
+  --card: #1c1c1c; /* 1.13:1 */
+  --recessed: #000000; /* true black — the floor */
+  --rule: #434343; /* 1.71:1 */
+  --rule-strong: #585858; /* 2.42:1 */
+  --shadow-edge: #000000;
+
+  --ink: #ededed; /* 16.6:1 */
+  --ink-dim: #b0b0b0; /*  9.0:1 */
+  --ink-sub: #8e8e8e; /*  5.9:1 */
+
+  --oxide: #e08a6c;
+  --sage: #82ab7d;
+  --ochre: #c9a33f;
+  --payne: #8aacc8;
+
+  --neutral-tint: #2c2c2c;
+  --tint-mix: 20%;
+  --diff-add-mix: 24%;
+  --diff-del-mix: 22%;
+
+  --chrome: #000000;
+  --chrome-ink: #ededed;
+  --chrome-ink-dim: #8e8e8e;
+  --chrome-rule: #313131;
+  --chrome-active: #181818;
+
+  --grain-blend: screen;
+  /* Less than the other dark themes. The point of carbon is that black is
+     black — visible noise over it is the one thing that would undo it. */
+  --grain-opacity: 0.03;
+  --grid-opacity: 0.3;
+}
+
+/* ==================================================================== *
+ * 1e. BOND — bright office paper. The high-contrast light theme.
+ *
+ * This is where WCAG 1.4.11's 3.0:1 for non-text actually lands. Paper's
+ * hairlines sit at 1.60:1 and are meant to; pushing them to 3.0 would turn
+ * every divider into an outline and make the whole thing a different
+ * design. So the accessible answer is a theme rather than a compromise —
+ * `prefers-contrast: more` selects this one, and Paper keeps its character.
+ *
+ * Cooler and flatter than paper on purpose: this is bond paper under an
+ * office light, not a notebook.
+ * ==================================================================== */
+[data-theme="bond"] {
+  color-scheme: light;
+
+  --paper: #f2f2ef;
+  --card: #ffffff; /* the one place #fff is right */
+  --recessed: #e5e5e1;
+  --rule: #98988f; /* 2.73:1 — clears 1.4.11 */
+  --rule-strong: #6b6b64; /* 4.94:1 */
+  --shadow-edge: #88887f;
+
+  --ink: #16161a; /* 17.4:1 */
+  --ink-dim: #44444a; /*  9.3:1 */
+  --ink-sub: #5e5e64; /*  6.2:1 */
+
+  /* Darker than paper's, so they clear AA against white by a wide margin
+     rather than by the two decimal places paper needs. */
+  --oxide: #8c2f1c; /* 8.0:1 */
+  --sage: #2f5a34; /* 7.7:1 */
+  --ochre: #6a4e0c; /* 7.5:1 */
+  --payne: #2c4a63; /* 9.0:1 */
+
+  --neutral-tint: #dededd;
+  /* Stronger washes than paper: mixed against pure white, the same
+     percentage loses the chroma that separates a tinted badge from a
+     neutral one. */
+  --tint-mix: 26%;
+  --diff-add-mix: 26%;
+  --diff-del-mix: 24%;
+
+  --chrome: #16161a;
+  --chrome-ink: #fbfbfa;
+  --chrome-ink-dim: #a6a6a2;
+  --chrome-rule: #3c3c42;
+  --chrome-active: #26262c;
+
+  /* No texture. Grain and a grid are exactly the low-contrast decoration
+     someone choosing a high-contrast theme is trying to get away from —
+     the prefers-contrast block at the end of this file removes them for
+     everyone, and this theme does not wait to be asked. */
+  --grain-opacity: 0;
+  --grid-opacity: 0;
 }
 
 /* ==================================================================== *
@@ -207,6 +437,12 @@
   --color-recessed: var(--recessed);
   --color-rule: var(--rule);
   --color-rule-strong: var(--rule-strong);
+
+  --color-chrome: var(--chrome);
+  --color-chrome-ink: var(--chrome-ink);
+  --color-chrome-ink-dim: var(--chrome-ink-dim);
+  --color-chrome-rule: var(--chrome-rule);
+  --color-chrome-active: var(--chrome-active);
 
   --color-ink: var(--ink);
   --color-ink-dim: var(--ink-dim);
@@ -364,15 +600,52 @@
   opacity: var(--grid-opacity);
 }
 
+/* The chrome plane, as a local palette scope.
+ *
+ * Rebinding the surface and ink tokens rather than restyling anything: the
+ * semantic utilities compile to `var(--ink)` and friends *inline* — that is
+ * what `@theme inline` buys — so they resolve against whichever element they
+ * land on. Redefine the tokens on the rail and every component dropped into
+ * it re-themes with no chrome-aware variant, no prop, and no second copy of
+ * Button. The rail's Button, UserMenu dropdown and ThemeToggle are the same
+ * components the page uses.
+ *
+ * --ink-sub collapses onto --chrome-ink-dim deliberately: the three-tier ink
+ * ramp earns its keep in a page of dense tables, and a nav rail has no third
+ * tier of meaning to express. */
+@utility chrome-surface {
+  --paper: var(--chrome);
+  --card: var(--chrome);
+  --recessed: var(--chrome-active);
+  --rule: var(--chrome-rule);
+  --rule-strong: var(--chrome-rule);
+  --ink: var(--chrome-ink);
+  --ink-dim: var(--chrome-ink-dim);
+  --ink-sub: var(--chrome-ink-dim);
+
+  background-color: var(--chrome);
+  color: var(--chrome-ink);
+}
+
 /* Where the grid stops being texture and becomes literal: Liffy's review
    prose, whose line-height is pinned to the same pitch, so its lines land
    on the grid rather than drifting against it. */
 @utility prose-hand {
   font-family: var(--font-hand);
-  font-size: var(--text-md);
+  /* text-base, not text-md: the model's prose is the most-read text in the
+     app and was the largest, which inverted the hierarchy — it sat above
+     body copy while every heading around it stayed smaller. 14px on the
+     24px rule is 1.71 leading, close to the 1.6 body and still visibly
+     airier, which is the distinction worth keeping. */
+  font-size: var(--text-base);
   line-height: var(--rule-step);
   color: var(--ink);
-  max-width: var(--container-prose);
+  /* No max-width. It used to cap at --container-prose (68ch), which at 14px
+     Argon is ~590px — so the review summary wrapped less than two thirds of
+     the way across its own panel and left a third of it empty. The panel is
+     already the thing bounding the measure; capping again inside it just
+     produced a column floating in a box. Anything that genuinely wants a
+     reading column still has `max-w-prose` to ask for one. */
   text-wrap: pretty;
 }
 

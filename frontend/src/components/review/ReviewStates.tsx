@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
 import { Sheet } from "@/components/ui/Sheet";
-import { Spinner } from "@/components/ui/Spinner";
 import { formatRelative } from "@/lib/utils";
 import type { ReviewDetailOut } from "@/types/api";
 
@@ -12,39 +11,6 @@ import type { ReviewDetailOut } from "@/types/api";
  * is not, so this panel replaces itself. A refresh button would imply the
  * page is stuck when it is simply waiting.
  */
-export function ReviewInFlight({ review }: { review: ReviewDetailOut }) {
-  const queued = review.status === "pending";
-
-  return (
-    <Sheet>
-      <Sheet.Header title={queued ? "Queued" : "Reading"} />
-      <Sheet.Body className="flex items-start gap-3 py-8">
-        <Spinner size="md" label="" className="mt-1" />
-        <div className="flex flex-col gap-1">
-          <p className="font-hand text-lg leading-tight text-ink">
-            {queued
-              ? "Waiting for a worker to pick this up…"
-              : "Liffy is reading the diff…"}
-          </p>
-          <p className="text-sm text-ink-dim">
-            {/* No "under a minute" here any more.
-
-                That number came from the §8.1 target, which is measured on the
-                API providers. `claude_code` and `codex` drive a local CLI: on a
-                real pull request the CLI alone measured 241s, after roughly two
-                minutes of diff fetch and retrieval. Promising a minute turned a
-                perfectly healthy six-minute review into "this is broken", and
-                the person watching it had no way to tell the difference. */}
-            {queued
-              ? "This page updates itself the moment it starts."
-              : `Retrieving context from the index and writing comments, started ${formatRelative(review.created_at)}. A large diff takes a few minutes — longer on the subscription providers, which run the model through a local CLI.`}
-          </p>
-        </div>
-      </Sheet.Body>
-    </Sheet>
-  );
-}
-
 export function ReviewFailed({ review }: { review: ReviewDetailOut }) {
   /**
    * The worker writes the reason onto the row now, so show it.

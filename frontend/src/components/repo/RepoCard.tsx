@@ -45,7 +45,7 @@ export function RepoCard({
       <Sheet.Body className="flex flex-1 flex-col gap-3">
         <div className="flex flex-col gap-0.5">
           <Link
-            to={`/repos/${repo.id}`}
+            to={`/repositories/${repo.id}`}
             className="font-code text-md leading-tight break-all text-ink underline-offset-4 hover:underline"
           >
             {repo.full_name}

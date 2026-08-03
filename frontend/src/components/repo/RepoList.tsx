@@ -1,42 +1,85 @@
 import { useState } from "react";
-import { Button } from "@/components/ui/Button";
+import { Link } from "react-router-dom";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Modal } from "@/components/ui/Modal";
+import { SectionHeader } from "@/components/ui/PageHeader";
 import { Sheet } from "@/components/ui/Sheet";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useRepos } from "@/hooks/useRepos";
 import { useRepoStatus } from "@/hooks/useRepoStatus";
 import { useDisconnectRepo, useTriggerIndex } from "@/hooks/useRepoMutations";
-import type { RepoOut } from "@/types/api";
+import type { RepoListItem, RepoOut } from "@/types/api";
 import { ConnectRepoModal } from "./ConnectRepoModal";
 import { RepoCard } from "./RepoCard";
 
+/** A snapshot, not the whole list — /repositories is where everything lives. */
+const SNAPSHOT = 4;
+
 /**
- * The Repositories section: its own header, its own four states, and one card
- * per connected repo.
+ * Sorts by most recently reviewed, untouched repositories last.
+ *
+ * This is what makes the section "top repositories" rather than "the first
+ * four repositories". Sorted here rather than by the endpoint, which stays
+ * ordered by connection date because the Repositories table is already read
+ * in that order and would silently reshuffle.
+ *
+ * A repository nobody has reviewed sorts to the bottom rather than to the
+ * top: `null` is "never", and treating it as an unknown that might be recent
+ * would put brand-new connections above active work every time.
+ */
+function byRecentReview(a: RepoListItem, b: RepoListItem): number {
+  if (a.last_review_at === b.last_review_at) return 0;
+  if (a.last_review_at === null) return 1;
+  if (b.last_review_at === null) return -1;
+  return b.last_review_at.localeCompare(a.last_review_at);
+}
+
+/**
+ * The four repositories Liffy has worked with most recently.
+ *
+ * Not "the repositories" — that is `/repositories`, and this section carrying
+ * the same name was half of what made the dashboard read as a truncated copy
+ * of it. Sorted by last review and capped at four: cards read well at three
+ * and fall apart at thirty, and the dashboard's job is "what is happening",
+ * not repository management.
  */
 export function RepoList() {
   const repos = useRepos();
   const [connecting, setConnecting] = useState(false);
   const onConnect = () => setConnecting(true);
 
+  const all = repos.data ?? [];
+  const shown = [...all].sort(byRecentReview).slice(0, SNAPSHOT);
+
   return (
-    <section className="flex flex-col gap-3">
-      <header className="flex items-center gap-3">
-        <h2 className="label text-ink">Repositories</h2>
-        {repos.data && (
-          <span
-            data-numeric
-            className="rounded-full bg-rule px-1.5 py-px text-2xs text-ink-dim"
-          >
-            {repos.data.length}
-          </span>
-        )}
-        <Button variant="primary" onClick={onConnect} className="ml-auto">
-          Connect repository
-        </Button>
-      </header>
+    <section id="top-repositories" className="flex scroll-mt-16 flex-col gap-3">
+      <SectionHeader
+        title="Top repositories"
+        count={repos.data ? all.length : undefined}
+        actions={
+          <>
+            {all.length > 0 && (
+              <ButtonLink to="/repositories" variant="ghost">
+                All repositories →
+              </ButtonLink>
+            )}
+            {/* Secondary, not primary: one filled button per page, and on the
+                dashboard this is a section action sitting on bare paper — a
+                solid dark block floating on the grid with no sheet behind it
+                read as the loudest thing on a page it does not lead. */}
+            <Button variant="secondary" onClick={onConnect}>
+              Connect repository
+            </Button>
+          </>
+        }
+      />
+      {all.length > 0 && (
+        <p className="text-sm text-ink-dim">
+          The repositories Liffy has worked with most recently.
+        </p>
+      )}
 
       {repos.isPending && <CardSkeletons />}
 
@@ -58,17 +101,29 @@ export function RepoList() {
         </Sheet>
       )}
 
-      {repos.data && repos.data.length > 0 && (
-        <ul aria-label="Repositories" className="grid gap-4 sm:grid-cols-2">
-          {repos.data.map((repo) => (
-            // `grid` on the item, so the single card child stretches to the
-            // row height and its footer pins to the bottom — two cards with
-            // different amounts of metadata still line up.
-            <li key={repo.id} className="grid">
-              <RepoCardWithStatus repo={repo} />
-            </li>
-          ))}
-        </ul>
+      {shown.length > 0 && (
+        <>
+          <ul aria-label="Repositories" className="grid gap-4 sm:grid-cols-2">
+            {shown.map((repo) => (
+              // `grid` on the item, so the single card child stretches to the
+              // row height and its footer pins to the bottom — two cards with
+              // different amounts of metadata still line up.
+              <li key={repo.id} className="grid">
+                <RepoCardWithStatus repo={repo} />
+              </li>
+            ))}
+          </ul>
+          {all.length > shown.length && (
+            <p className="text-sm text-ink-dim">
+              Showing {shown.length} of {all.length}.{" "}
+              <Link to="/repositories" className="underline underline-offset-4">
+                All repositories
+              </Link>
+              .
+            </p>
+          )}
+
+        </>
       )}
 
       {connecting && (

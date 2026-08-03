@@ -33,7 +33,7 @@ function Stage({
   children?: React.ReactNode;
 }) {
   return (
-    <li className="flex min-w-0 flex-1 flex-col gap-2 rounded border border-rule bg-recessed p-3">
+    <li className="flex min-w-0 flex-1 flex-col gap-2 rounded-sheet border border-rule bg-recessed p-3">
       <div className="flex items-baseline gap-2">
         <span data-numeric className="text-2xs text-ink-sub">
           {String(index).padStart(2, "0")}
@@ -78,7 +78,7 @@ function HowItWorks() {
         point is the *relationship* between the three panels, and a reader
         comparing them wants all three on screen at once.
       */}
-      <div className="grid gap-2 rounded border border-rule bg-recessed p-3 text-2xs leading-relaxed lg:grid-cols-3">
+      <div className="grid gap-2 rounded-sheet border border-rule bg-recessed p-3 text-2xs leading-relaxed lg:grid-cols-3">
         <div>
           <div className="mb-1 text-ink-sub">the diff</div>
           <div className="text-ink-dim">
@@ -145,7 +145,7 @@ function Indexing() {
         />
       </ol>
 
-      <div className="flex flex-col gap-2 rounded border border-rule bg-recessed p-3">
+      <div className="flex flex-col gap-2 rounded-sheet border border-rule bg-recessed p-3">
         <div className="flex items-baseline justify-between text-2xs text-ink-sub">
           <span>vector store · 4,062 chunks</span>
           <span>5 nearest → sent to the model</span>

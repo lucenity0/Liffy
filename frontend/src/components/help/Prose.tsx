@@ -32,7 +32,7 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
       return (
         <code
           key={key}
-          className="rounded border border-rule bg-recessed px-1 py-px text-[0.9em]"
+          className="rounded-chip border border-rule bg-recessed px-1 py-px text-[0.9em]"
         >
           {part.slice(1, -1)}
         </code>

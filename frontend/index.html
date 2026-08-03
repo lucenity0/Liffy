@@ -5,41 +5,110 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f4f1ea" />
+    <!-- The default theme's --paper. The boot script below rewrites this as
+         soon as it knows which theme is actually active. -->
+    <meta name="theme-color" content="#12171a" />
     <meta
       name="description"
       content="Liffy — a self-hosted AI code reviewer for your pull requests."
     />
 
     <!-- Blocking on purpose. The theme has to be on <html> before the first
-         paint, or the page renders light and then snaps to graphite — so this
-         runs here rather than in the app, which mounts too late to help.
-         `liffy-theme` is also read by src/hooks/useTheme.ts; keep them
-         in step. Wrapped in try/catch because localStorage throws outright
-         when storage is partitioned or blocked, and a colour preference is
-         not worth a blank page. -->
+         paint, or the page renders in one palette and snaps to another — so
+         this runs here rather than in the app, which mounts too late to help.
+
+         This is the one place that cannot import src/lib/themes.ts: it has to
+         execute before any module loads. THEMES below is therefore a
+         duplicate, and a deliberate one — it needs only id -> polarity and
+         id -> theme-colour, not the labels or notes. Adding a theme means
+         adding it here, in src/lib/themes.ts, and as a [data-theme] block in
+         src/index.css. The storage format is documented on ThemePrefs in
+         src/hooks/useTheme.ts; this reader must stay compatible with it,
+         including the bare "paper"/"graphite" strings older versions and the
+         docs pages write.
+
+         Wrapped in try/catch because localStorage throws outright when
+         storage is partitioned or blocked, and a colour preference is not
+         worth a blank page. -->
     <script>
       (function () {
-        try {
-          var stored = localStorage.getItem("liffy-theme");
-          var graphite =
-            stored === "graphite" ||
-            (stored !== "paper" &&
-              window.matchMedia("(prefers-color-scheme: dark)").matches);
+        var THEMES = {
+          paper: { polarity: "light", color: "#f0ece3" },
+          bond: { polarity: "light", color: "#f2f2ef" },
+          graphite: { polarity: "dark", color: "#1d1b18" },
+          blackboard: { polarity: "dark", color: "#12171a" },
+          carbon: { polarity: "dark", color: "#0b0b0b" },
+        };
+        var DEFAULT = "blackboard";
 
-          if (graphite) {
-            document.documentElement.classList.add("dark");
-            var meta = document.querySelector('meta[name="theme-color"]');
-            if (meta) meta.setAttribute("content", "#1d1b18");
+        var id = DEFAULT;
+        var custom = null;
+        try {
+          var raw = localStorage.getItem("liffy-theme");
+          if (raw) {
+            if (THEMES[raw]) {
+              // Bare string: what older versions and the docs pages write.
+              id = raw;
+            } else {
+              var p = JSON.parse(raw);
+              custom = p.custom || null;
+              var pick =
+                p.mode === "system"
+                  ? window.matchMedia("(prefers-color-scheme: dark)").matches
+                    ? p.dark
+                    : p.light
+                  : p.theme;
+              if (THEMES[pick]) id = pick;
+              else if (pick === "custom" && custom) id = "custom";
+            }
           }
         } catch (e) {
-          /* Light it is. */
+          /* The default it is. */
         }
+
+        var root = document.documentElement;
+        var polarity = THEMES[id] ? THEMES[id].polarity : "dark";
+        var color = THEMES[id] ? THEMES[id].color : null;
+
+        /* The custom palette has to be in the document before the attribute
+           starts matching, or the first paint is an unstyled page. Its values
+           live in storage rather than in index.css, so this writes the rule
+           out here and the app's applyCustomTheme replaces the same element
+           afterwards. It restates deriveTokens' output, not its logic — the
+           tokens are stored already resolved. */
+        if (id === "custom" && custom) {
+          polarity = custom.seeds.polarity === "light" ? "light" : "dark";
+          color = custom.seeds.surface;
+          var body = "";
+          for (var key in custom.tokens) {
+            if (Object.prototype.hasOwnProperty.call(custom.tokens, key)) {
+              body += "--" + key + ":" + custom.tokens[key] + ";";
+            }
+          }
+          var style = document.createElement("style");
+          style.id = "liffy-custom-theme";
+          style.textContent =
+            '[data-theme="custom"]{color-scheme:' + polarity + ";" + body + "}";
+          document.head.appendChild(style);
+        }
+
+        root.setAttribute("data-theme", id);
+        root.classList.add(polarity);
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta && color) meta.setAttribute("content", color);
       })();
     </script>
 
-    <!-- The two faces above the fold. `crossorigin` is required on font
-         preloads even same-origin, or the browser fetches them twice. -->
+    <!-- The two faces above the fold: Neon sets the chrome, Argon sets the
+         wordmark, every heading and all of Liffy's prose. `crossorigin` is
+         required on font preloads even same-origin, or the browser fetches
+         them twice.
+
+         These are the only two faces that exist — styles/fonts.css declares
+         Neon, Argon and the metric-matched local() fallback, and nothing
+         else. This used to point at MonaspaceRadonVar.woff2, which is not in
+         public/fonts: every load fired a 404 *and* left Argon unpreloaded, so
+         the face carrying most of the page swapped in after first paint. -->
     <link
       rel="preload"
       href="/fonts/MonaspaceNeonVar.woff2"
@@ -49,7 +118,7 @@
     />
     <link
       rel="preload"
-      href="/fonts/MonaspaceRadonVar.woff2"
+      href="/fonts/MonaspaceArgonVar.woff2"
       as="font"
       type="font/woff2"
       crossorigin

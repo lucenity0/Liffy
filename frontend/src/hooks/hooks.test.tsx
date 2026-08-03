@@ -17,7 +17,8 @@ import { useReviews } from "./useReviews";
 import { useCommentFeedback } from "./useCommentFeedback";
 import { useConnectRepo, useDisconnectRepo } from "./useRepoMutations";
 import { useTriggerReview } from "./useReviewMutations";
-import { THEME_KEY, useTheme } from "./useTheme";
+import { parsePrefs, resolveTheme, THEME_KEY, useTheme } from "./useTheme";
+import { DEFAULT_THEME, themeSpec } from "@/lib/themes";
 import { useDebouncedValue } from "./useDebouncedValue";
 import type { QueryClient } from "@tanstack/react-query";
 import type { ReviewDetailOut } from "@/types/api";
@@ -500,46 +501,68 @@ describe("useCommentFeedback", () => {
 
 describe("useTheme", () => {
   beforeEach(() => {
-    document.documentElement.classList.remove("dark");
+    const root = document.documentElement;
+    delete root.dataset.theme;
+    root.classList.remove("dark", "light");
     localStorage.clear();
   });
 
   it("reads the initial theme off <html>, where the boot script put it", () => {
-    document.documentElement.classList.add("dark");
+    document.documentElement.dataset.theme = "graphite";
 
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("graphite");
+    expect(result.current.polarity).toBe("dark");
   });
 
-  it("toggling flips the class, the meta colour and localStorage together", () => {
+  it("setting a theme moves the attribute, both classes, the meta colour and storage", () => {
     const meta = document.createElement("meta");
     meta.setAttribute("name", "theme-color");
-    meta.setAttribute("content", "#f4f1ea");
     document.head.appendChild(meta);
+    const root = document.documentElement;
 
     const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe("paper");
+    act(() => result.current.setTheme("paper"));
 
-    act(() => result.current.toggle());
-
-    expect(result.current.theme).toBe("graphite");
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(meta.getAttribute("content")).toBe("#1d1b18");
+    expect(root.dataset.theme).toBe("paper");
+    expect(root.classList.contains("light")).toBe(true);
+    expect(root.classList.contains("dark")).toBe(false);
+    expect(meta.getAttribute("content")).toBe(themeSpec("paper").color);
     // Persisted, so the boot script can apply it before the next first paint.
-    expect(localStorage.getItem(THEME_KEY)).toBe("graphite");
+    expect(parsePrefs(localStorage.getItem(THEME_KEY))).toMatchObject({
+      mode: "fixed",
+      theme: "paper",
+    });
 
-    act(() => result.current.toggle());
+    act(() => result.current.setTheme("graphite"));
 
-    expect(result.current.theme).toBe("paper");
-    expect(document.documentElement.classList.contains("dark")).toBe(false);
-    expect(meta.getAttribute("content")).toBe("#f4f1ea");
+    expect(root.dataset.theme).toBe("graphite");
+    expect(root.classList.contains("dark")).toBe(true);
+    expect(root.classList.contains("light")).toBe(false);
+    expect(meta.getAttribute("content")).toBe(themeSpec("graphite").color);
 
     meta.remove();
   });
 
   /**
+   * The toggle is a *polarity* flip, not a two-name swap: it has to land on
+   * whichever theme was last chosen on the other side, or picking a
+   * non-default theme would be undone by the next click of the toggle.
+   */
+  it("toggling returns to the theme last used on the other side", () => {
+    const { result } = renderHook(() => useTheme());
+
+    act(() => result.current.setTheme("paper"));
+    act(() => result.current.setTheme("graphite"));
+    act(() => result.current.toggle());
+
+    expect(result.current.theme).toBe("paper");
+    expect(result.current.polarity).toBe("light");
+  });
+
+  /**
    * The reason this hook is an external store rather than component state:
-   * TopBar, the style guide and the Monaco diff each call it independently,
+   * the nav, the style guide and the Monaco diff each call it independently,
    * and a flip in one has to reach the others.
    */
   it("notifies every subscriber, not just the one that flipped it", () => {
@@ -563,5 +586,37 @@ describe("useTheme", () => {
 
     expect(result.current.theme).toBe("graphite");
     setItem.mockRestore();
+  });
+
+  /**
+   * The key predates the theme ladder and held a bare "paper"/"graphite".
+   * Anyone who had already chosen a side must keep it rather than being moved
+   * onto the new default because the storage format changed under them — and
+   * the generated docs pages still write bare strings today.
+   */
+  describe("parsePrefs", () => {
+    it("reads a legacy bare theme name as a pinned choice", () => {
+      expect(parsePrefs("paper")).toMatchObject({
+        mode: "fixed",
+        theme: "paper",
+      });
+    });
+
+    it("falls back to the defaults for absent, malformed or unknown values", () => {
+      for (const raw of [null, "", "{", "not-a-theme", '{"theme":"chartreuse"}']) {
+        expect(parsePrefs(raw)).toMatchObject({
+          mode: "fixed",
+          theme: DEFAULT_THEME,
+        });
+      }
+    });
+
+    it("keeps the two sides independent under system mode", () => {
+      const prefs = parsePrefs(
+        JSON.stringify({ mode: "system", light: "paper", dark: "graphite" }),
+      );
+      expect(resolveTheme(prefs, true)).toBe("graphite");
+      expect(resolveTheme(prefs, false)).toBe("paper");
+    });
   });
 });

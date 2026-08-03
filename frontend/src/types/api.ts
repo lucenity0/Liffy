@@ -45,6 +45,43 @@ export interface RepoOut {
   created_at: string;
 }
 
+/**
+ * A repository as the list returns it, with how much reviewing has happened.
+ *
+ * The two extra fields are computed by the list query and are on `GET /repos`
+ * only — `POST /repos` still answers a bare `RepoOut`, deliberately, because
+ * reconnecting an existing repository would otherwise report a review count of
+ * zero for a repository with a hundred reviews behind it. Same split as
+ * `ReviewListItem`.
+ */
+export interface RepoListItem extends RepoOut {
+  /** Every review, including failed ones — attempts, not successes. */
+  review_count: number;
+  /** Null on a repository nothing has reviewed. Never the connection date. */
+  last_review_at: string | null;
+}
+
+/** One pull request, as much as the review picker needs to identify it. */
+export interface PullRequestOut {
+  number: number;
+  title: string;
+  author: string;
+  head_branch: string;
+  base_branch: string;
+  state: string;
+}
+
+export interface PullRequestListOut {
+  items: PullRequestOut[];
+  state: string;
+  /**
+   * Null when the page came back full, because the count is then genuinely
+   * unknown without paging the rest — a tab reading "OPEN 50" on a repo with
+   * 200 open pull requests is worse than one reading "OPEN".
+   */
+  total: number | null;
+}
+
 export interface RepoStatusOut {
   id: string;
   full_name: string;
@@ -284,6 +321,61 @@ export interface TokenEfficiencyPoint {
  * no 404 and no empty-account error, so the page's job is per-tile unknown
  * handling rather than a whole-page empty state.
  */
+export interface ModelPerformanceRow {
+  model: string;
+  reviews: number;
+  avg_tokens: number | null;
+  avg_comments: number;
+  comments: number;
+  rated_comments: number;
+  useful_comments: number;
+  /**
+   * Null rather than 0 when nothing has been rated. A model nobody voted on
+   * has no score — rendering that as zero ranks it below one people actively
+   * disliked.
+   */
+  useful_rate: number | null;
+}
+
+export interface ModelComparisonReview {
+  review_id: string;
+  model: string;
+  verdict: Verdict | null;
+  comments: number;
+  tokens_used: number | null;
+}
+
+/** One pull request two or more different models both reviewed. */
+export interface ModelComparisonRow {
+  pr_id: string;
+  repo_full_name: string;
+  pr_number: number;
+  reviews: ModelComparisonReview[];
+}
+
+export interface ModelAnalyticsOut {
+  models: ModelPerformanceRow[];
+  comparisons: ModelComparisonRow[];
+}
+
+/**
+ * `GET /analytics/activity` — what happened over a recent window.
+ *
+ * Counts, not rates. The dashboard's opening question is "has anything been
+ * happening", which a percentage cannot answer: an 88% approval rate reads
+ * identically on a busy week and on a dead one.
+ */
+export interface ActivityOut {
+  /** Echoed back from the request. Render the heading from this, not a constant. */
+  days: number;
+  /** Every review created in the window, failed ones included. */
+  reviews: number;
+  /** Comments on those reviews — counted through the review, not their own clock. */
+  findings: number;
+  /** Repositories with a review in the window, not repositories connected. */
+  repositories: number;
+}
+
 export interface AnalyticsSummaryOut {
   reviews_total: number;
   reviews_completed: number;

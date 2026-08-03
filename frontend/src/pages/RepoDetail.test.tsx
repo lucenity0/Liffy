@@ -21,11 +21,11 @@ function renderDetail(repoId: string) {
   return renderWithProviders(
     <>
       <Routes>
-        <Route path="/repos/:repoId" element={<RepoDetail />} />
+        <Route path="/repositories/:repoId" element={<RepoDetail />} />
       </Routes>
       <PathProbe />
     </>,
-    { route: `/repos/${repoId}` },
+    { route: `/repositories/${repoId}` },
   );
 }
 
@@ -83,7 +83,13 @@ describe("RepoDetail", () => {
       ),
     );
 
+    const user = userEvent.setup();
     renderDetail(fixtureRepoIndexed.id);
+
+    // The pointer lives on the Reviews tab, not the Overview — Overview shows
+    // a short recent list and sends you here rather than carrying two
+    // different "see the rest" affordances.
+    await user.click(await screen.findByRole("tab", { name: /^Reviews/ }));
 
     const link = await screen.findByRole("link", {
       name: /all reviews for this repository/i,

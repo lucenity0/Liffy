@@ -324,6 +324,9 @@ describe("Reviews", () => {
     const repoPicker = screen.getByRole("combobox", { name: /repository/i });
     await waitFor(() => expect(repoPicker).not.toBeDisabled());
     await user.selectOptions(repoPicker, fixtureRepoIndexed.full_name);
+    // The pull request is a list now; 58 is not in it, so this takes the
+    // documented way back to the box.
+    await user.click(screen.getByRole("button", { name: /enter a number instead/i }));
     await user.type(screen.getByRole("textbox", { name: /pull request/i }), "58");
     await user.click(screen.getByRole("button", { name: "Start review" }));
 

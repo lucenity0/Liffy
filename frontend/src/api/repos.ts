@@ -1,5 +1,10 @@
 import { apiClient } from "./client";
-import type { IndexAccepted, RepoOut, RepoStatusOut } from "@/types/api";
+import type {
+  IndexAccepted,
+  PullRequestListOut,
+  RepoOut,
+  RepoStatusOut,
+} from "@/types/api";
 
 export async function listRepos(): Promise<RepoOut[]> {
   const { data } = await apiClient.get<RepoOut[]>("/repos");
@@ -23,5 +28,16 @@ export async function triggerIndex(repoId: string): Promise<IndexAccepted> {
 
 export async function getRepoStatus(repoId: string): Promise<RepoStatusOut> {
   const { data } = await apiClient.get<RepoStatusOut>(`/repos/${repoId}/status`);
+  return data;
+}
+
+export async function listPullRequests(
+  repoId: string,
+  state: "open" | "closed" | "all",
+): Promise<PullRequestListOut> {
+  const { data } = await apiClient.get<PullRequestListOut>(
+    `/repos/${repoId}/pulls`,
+    { params: { state } },
+  );
   return data;
 }

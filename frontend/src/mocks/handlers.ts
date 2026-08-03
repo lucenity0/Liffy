@@ -4,6 +4,7 @@ import {
   fixtureHelpPassages,
   fixtureHelpTopics,
   fixtureRepoIndexed,
+  fixturePullRequests,
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
   fixtureRepos,
@@ -146,6 +147,20 @@ export const handlers = [
       { status: 202 },
     ),
   ),
+
+  /**
+   * Filters by state for real, like the reviews handler does — a stub that
+   * accepted `state` and ignored it would make a broken tab look working.
+   */
+  http.get("*/repos/:repoId/pulls", ({ request }) => {
+    const state = new URL(request.url).searchParams.get("state") ?? "open";
+    const items =
+      state === "all"
+        ? fixturePullRequests
+        : fixturePullRequests.filter((pull) => pull.state === state);
+    // Always short of a page here, so the total is genuinely knowable.
+    return HttpResponse.json({ items, state, total: items.length });
+  }),
 
   http.get("*/repos/:repoId/status", ({ params }) => {
     if (params.repoId === fixtureRepoIndexed.id) {

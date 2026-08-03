@@ -4,6 +4,7 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
 import { useRepos } from "@/hooks/useRepos";
+import { PullRequestPicker } from "./PullRequestPicker";
 import { useTriggerReview } from "@/hooks/useReviewMutations";
 import { normalizeApiError } from "@/lib/errors";
 import {
@@ -24,17 +25,20 @@ import {
  * either one on its own. The request body is still `{owner, repo, pr_number}`
  * — the split happens on submit.
  *
- * The redesign asks for a searchable pull-request picker here — open/closed
- * counts, titles, head → base branches. **That needs a backend endpoint that
- * does not exist.** Nothing enumerates a repository's pull requests: the API
- * offers `POST /reviews/trigger` taking a number, and no GitHub proxy behind
- * it. Rather than fabricate a list, the half that *is* real landed — the
- * repository comes from the ones Liffy has actually indexed — and the pull
- * request stays a number until there is something to list.
+ * Both fields are pickers now, over `GET /repos` and `GET /repos/{id}/pulls`.
+ * Starting a review used to mean typing a repository name from memory and
+ * reading a pull request number off a GitHub URL.
+ *
+ * Both keep a way back to typing. The repository endpoint accepts anything
+ * Liffy can reach, not only what is connected; and the pull request list is a
+ * live GitHub proxy, so it can rate-limit or fail on a repository the
+ * caller's token cannot enumerate. "The picker is broken so you cannot start
+ * a review" would be worse than the typing it replaced.
  */
 
 /** Sentinel for "not one of the connected repositories". */
 const CUSTOM = "__custom__";
+
 export function TriggerReviewForm({
   onClose,
   onQueued,
@@ -51,9 +55,14 @@ export function TriggerReviewForm({
   const [attempted, setAttempted] = useState(false);
   /** Escape hatch out of the picker, for a repository not connected here. */
   const [custom, setCustom] = useState(false);
+  /** Same, for the pull request: the list is a live GitHub proxy and can
+   *  fail on a repository the caller's token cannot enumerate. */
+  const [typedPr, setTypedPr] = useState(false);
 
   const repos = useRepos();
   const connected = repos.data ?? [];
+  /** The connected repository currently chosen, if it is one of ours. */
+  const selectedRepo = connected.find((repo) => repo.full_name === fullName);
 
   const trigger = useTriggerReview();
   const serverError = trigger.error ? normalizeApiError(trigger.error) : null;
@@ -181,26 +190,46 @@ export function TriggerReviewForm({
           }
         </Field>
 
-        <Field
-          label="Pull request"
-          hint="The number from the PR's URL."
-          error={numberInvalid ? "A pull request number is a whole number above zero." : null}
-          required
-        >
-          {(props) => (
-            <Input
-              {...props}
-              // type="number" would let a browser hand us "1e3" and "1.5";
-              // inputMode gets the numeric keypad without the loopholes.
-              inputMode="numeric"
-              name="pr_number"
-              placeholder="58"
-              value={prNumber}
-              onChange={(event) => setPrNumber(event.target.value)}
-              className="w-28"
-            />
-          )}
-        </Field>
+        {/* The picker needs a repository id, which only exists for one Liffy
+            has connected — an arbitrary `owner/name` typed into the box above
+            has nothing to list. */}
+        {selectedRepo && !typedPr ? (
+          <Field label="Pull request" required>
+            {() => (
+              <PullRequestPicker
+                repoId={selectedRepo.id}
+                value={prNumber === "" ? null : Number(prNumber)}
+                onChange={(number) => setPrNumber(String(number))}
+                onFallback={() => setTypedPr(true)}
+              />
+            )}
+          </Field>
+        ) : (
+          <Field
+            label="Pull request"
+            hint="The number from the PR's URL."
+            error={
+              numberInvalid
+                ? "A pull request number is a whole number above zero."
+                : null
+            }
+            required
+          >
+            {(props) => (
+              <Input
+                {...props}
+                // type="number" would let a browser hand us "1e3" and "1.5";
+                // inputMode gets the numeric keypad without the loopholes.
+                inputMode="numeric"
+                name="pr_number"
+                placeholder="58"
+                value={prNumber}
+                onChange={(event) => setPrNumber(event.target.value)}
+                className="w-28"
+              />
+            )}
+          </Field>
+        )}
 
         {serverError && serverError.kind !== "validation" && (
           <ErrorNote error={trigger.error} />

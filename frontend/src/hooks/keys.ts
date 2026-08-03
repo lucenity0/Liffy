@@ -13,6 +13,8 @@ export const keys = {
     all: ["repos"] as const,
     list: () => [...keys.repos.all, "list"] as const,
     status: (repoId: string) => [...keys.repos.all, repoId, "status"] as const,
+    pulls: (repoId: string, state: string) =>
+      [...keys.repos.all, repoId, "pulls", state] as const,
   },
   reviews: {
     all: ["reviews"] as const,

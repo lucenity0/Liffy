@@ -1,4 +1,5 @@
 import type {
+  PullRequestOut,
   AnalyticsSummaryOut,
   EvalScoresOut,
   HelpIndexOut,
@@ -788,5 +789,39 @@ export const fixtureHelpPassages: HelpPassage[] = [
     related: [],
     figure: "",
     score: 4.6,
+  },
+];
+
+/**
+ * Pull requests for the review picker.
+ *
+ * Two open and one closed, so the state tabs have something to distinguish
+ * and the "total is known" path is exercised — the endpoint only reports a
+ * total when the page came back short, which three rows always are.
+ */
+export const fixturePullRequests: PullRequestOut[] = [
+  {
+    number: 253,
+    title: "Refactor repository indexing",
+    author: "lucenity0",
+    head_branch: "feature/indexing",
+    base_branch: "main",
+    state: "open",
+  },
+  {
+    number: 251,
+    title: "Add repository management",
+    author: "lucenity0",
+    head_branch: "feat/repositories",
+    base_branch: "main",
+    state: "open",
+  },
+  {
+    number: 246,
+    title: "Add Claude Code provider",
+    author: "lucenity0",
+    head_branch: "claude-code",
+    base_branch: "main",
+    state: "closed",
   },
 ];

@@ -10,7 +10,13 @@ from app.database import get_db
 from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
 from app.models.user import User
-from app.schemas.repo import RepoConnectRequest, RepoOut, RepoStatusOut
+from app.schemas.repo import (
+    PullRequestListOut,
+    PullRequestOut,
+    RepoConnectRequest,
+    RepoOut,
+    RepoStatusOut,
+)
 from app.services.github_service import (
     GitHubAuthError,
     GitHubClient,
@@ -173,4 +179,70 @@ def repo_status(
         chunk_count=int(chunk_count or 0),
         last_index_failed_files=repo.last_index_failed_files,
         last_indexed_files_seen=repo.last_indexed_files_seen,
+    )
+
+
+# How many pull requests one page holds. A picker, not a browser: this is
+# meant to cover "the one I just opened", and anything older is reachable by
+# number. Also the boundary that makes `total` knowable — see below.
+_PULLS_PAGE = 50
+
+
+@router.get("/{repo_id}/pulls", response_model=PullRequestListOut)
+def list_repo_pulls(
+    repo_id: uuid.UUID,
+    state: str = "open",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> PullRequestListOut:
+    """Pull requests on a connected repository, for the review picker.
+
+    Exists so starting a review does not begin with reading a number off a
+    GitHub URL. Proxied rather than stored: pull requests change constantly
+    and Liffy has no business holding a stale copy of them, so nothing here
+    touches the database beyond the ownership check.
+
+    Acts as the caller, like every other repository route — the server-side
+    PAT would let someone list pull requests on a repository their own token
+    cannot see.
+    """
+    if state not in {"open", "closed", "all"}:
+        raise HTTPException(
+            status_code=422, detail="state must be open, closed or all"
+        )
+
+    repo = _get_repo_or_404(db, repo_id, user)
+    owner, name = repo.full_name.split("/", 1)
+
+    try:
+        with GitHubClient(token=user.github_access_token) as gh:
+            pulls = gh.list_pull_requests(owner, name, state=state, limit=_PULLS_PAGE)
+    # Same ordering as connect_repo: rate limit is the more specific error and
+    # has to be caught before the auth case it inherits from.
+    except GitHubRateLimitError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(status_code=429, detail=str(exc), headers=headers) from exc
+    except GitHubAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except GitHubError as exc:
+        raise HTTPException(status_code=502, detail=f"GitHub error: {exc}") from exc
+
+    return PullRequestListOut(
+        items=[
+            PullRequestOut(
+                number=pull.number,
+                title=pull.title,
+                author=pull.author,
+                head_branch=pull.head_branch,
+                base_branch=pull.base_branch,
+                state=pull.state,
+            )
+            for pull in pulls
+        ],
+        state=state,
+        # Only when the page came back short, which is the only case where it
+        # is provably the whole set. A full page means "at least 50", and
+        # reporting that as a total would be a number the UI then shows as
+        # fact.
+        total=len(pulls) if len(pulls) < _PULLS_PAGE else None,
     )

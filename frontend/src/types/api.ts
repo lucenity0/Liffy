@@ -45,6 +45,27 @@ export interface RepoOut {
   created_at: string;
 }
 
+/** One pull request, as much as the review picker needs to identify it. */
+export interface PullRequestOut {
+  number: number;
+  title: string;
+  author: string;
+  head_branch: string;
+  base_branch: string;
+  state: string;
+}
+
+export interface PullRequestListOut {
+  items: PullRequestOut[];
+  state: string;
+  /**
+   * Null when the page came back full, because the count is then genuinely
+   * unknown without paging the rest — a tab reading "OPEN 50" on a repo with
+   * 200 open pull requests is worse than one reading "OPEN".
+   */
+  total: number | null;
+}
+
 export interface RepoStatusOut {
   id: string;
   full_name: string;

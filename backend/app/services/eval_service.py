@@ -551,3 +551,207 @@ def summarize(db: Session, *, user_id: uuid.UUID) -> AnalyticsSummary:
         ],
         flagged_reviews_total=int(flagged_total or 0),
     )
+
+
+@dataclass(frozen=True)
+class ModelPerformanceRow:
+    """One model's record, over the caller's completed reviews.
+
+    ``useful_rate`` is null rather than zero when nothing has been rated. A
+    model whose comments nobody has voted on has not scored 0% — it has no
+    score, and rendering the two the same way would rank an unrated model
+    below one people actively disliked. ``rated_comments`` travels with the
+    rate everywhere so a percentage off n=1 is visible as such.
+
+    Averages are per *review*, not per comment, because that is the unit
+    someone chooses a model in: "what does one review by this model cost me,
+    and how much does it find".
+    """
+
+    model: str
+    reviews: int
+    avg_tokens: int | None
+    avg_comments: float
+    comments: int
+    rated_comments: int
+    useful_comments: int
+    useful_rate: float | None
+
+
+def model_performance(db: Session, *, user_id: uuid.UUID) -> list[ModelPerformanceRow]:
+    """Per-model totals across the caller's completed reviews.
+
+    Only ``completed`` reviews count. A failed run has no comments and often
+    no token figure, so folding it in would drag every average toward zero for
+    whichever model happened to be selected when the CLI was missing.
+
+    Reviews written before ``model_used`` existed carry null and are skipped
+    rather than bucketed under "unknown": a row labelled unknown invites
+    comparison against the named ones, and it is not one model.
+    """
+    scoped = (
+        select(Review.id.label("review_id"), Review.model_used, Review.tokens_used)
+        .select_from(Review)
+        .join(PullRequest, Review.pr_id == PullRequest.id)
+        .join(Repository, PullRequest.repo_id == Repository.id)
+        .where(
+            Repository.user_id == user_id,
+            Review.status == "completed",
+            Review.model_used.is_not(None),
+        )
+    ).subquery()
+
+    # Comment and rating totals per review, as a subquery joined on rather
+    # than counted in the same pass: one query with both joins would multiply
+    # the token figure by the comment count.
+    #
+    # Ratings are rows in comment_feedback, not a column on the comment, so
+    # this outer-joins them — and counts `distinct` comment ids for the same
+    # reason `_rating_totals` does: the join fans out, and a comment rated by
+    # two people would otherwise be counted twice.
+    comment_counts = (
+        select(
+            ReviewComment.review_id,
+            func.count(distinct(ReviewComment.id)).label("comments"),
+            func.count(CommentFeedback.id).label("rated"),
+            func.coalesce(
+                func.sum(case((CommentFeedback.rating == 1, 1), else_=0)), 0
+            ).label("useful"),
+        )
+        .select_from(ReviewComment)
+        .outerjoin(CommentFeedback, CommentFeedback.comment_id == ReviewComment.id)
+        .group_by(ReviewComment.review_id)
+        .subquery()
+    )
+
+    rows = db.execute(
+        select(
+            scoped.c.model_used,
+            func.count(scoped.c.review_id),
+            func.avg(scoped.c.tokens_used),
+            func.coalesce(func.sum(comment_counts.c.comments), 0),
+            func.coalesce(func.sum(comment_counts.c.rated), 0),
+            func.coalesce(func.sum(comment_counts.c.useful), 0),
+        )
+        .select_from(scoped)
+        .outerjoin(comment_counts, comment_counts.c.review_id == scoped.c.review_id)
+        .group_by(scoped.c.model_used)
+    ).all()
+
+    out: list[ModelPerformanceRow] = []
+    for model, reviews, avg_tokens, comments, rated, useful in rows:
+        reviews = int(reviews)
+        comments = int(comments or 0)
+        rated = int(rated or 0)
+        useful = int(useful or 0)
+        out.append(
+            ModelPerformanceRow(
+                model=str(model),
+                reviews=reviews,
+                avg_tokens=int(avg_tokens) if avg_tokens is not None else None,
+                avg_comments=round(comments / reviews, 1) if reviews else 0.0,
+                comments=comments,
+                rated_comments=rated,
+                useful_comments=useful,
+                useful_rate=(useful / rated) if rated else None,
+            )
+        )
+    # Busiest first: the model you actually use is the one you came to read
+    # about, and a model with two reviews should not head the table.
+    out.sort(key=lambda row: (-row.reviews, row.model))
+    return out
+
+
+@dataclass(frozen=True)
+class ModelComparisonReview:
+    review_id: uuid.UUID
+    model: str
+    verdict: str | None
+    comments: int
+    tokens_used: int | None
+
+
+@dataclass(frozen=True)
+class ModelComparisonRow:
+    """One pull request two or more different models both reviewed.
+
+    Representable because ``POST /reviews/{id}/trigger`` creates a *new* row
+    against the same ``pr_id`` rather than replacing the old one — so changing
+    the model and re-reviewing leaves both results side by side. That is the
+    only way this table gets data; there is nothing that runs two models on
+    purpose.
+    """
+
+    pr_id: uuid.UUID
+    repo_full_name: str
+    pr_number: int
+    reviews: list[ModelComparisonReview]
+
+
+def model_comparisons(
+    db: Session, *, user_id: uuid.UUID, limit: int = 10
+) -> list[ModelComparisonRow]:
+    """Pull requests reviewed by more than one model, newest first."""
+    comment_counts = (
+        select(
+            ReviewComment.review_id,
+            func.count(ReviewComment.id).label("comments"),
+        )
+        .group_by(ReviewComment.review_id)
+        .subquery()
+    )
+
+    rows = db.execute(
+        select(
+            Review.pr_id,
+            Repository.full_name,
+            PullRequest.github_pr_number,
+            Review.id,
+            Review.model_used,
+            Review.verdict,
+            Review.tokens_used,
+            Review.created_at,
+            func.coalesce(comment_counts.c.comments, 0),
+        )
+        .select_from(Review)
+        .join(PullRequest, Review.pr_id == PullRequest.id)
+        .join(Repository, PullRequest.repo_id == Repository.id)
+        .outerjoin(comment_counts, comment_counts.c.review_id == Review.id)
+        .where(
+            Repository.user_id == user_id,
+            Review.status == "completed",
+            Review.model_used.is_not(None),
+        )
+        .order_by(Review.created_at.desc())
+    ).all()
+
+    grouped: dict[uuid.UUID, ModelComparisonRow] = {}
+    for pr_id, full_name, number, review_id, model, verdict, tokens, _created, comments in rows:
+        entry = grouped.get(pr_id)
+        if entry is None:
+            entry = ModelComparisonRow(
+                pr_id=pr_id,
+                repo_full_name=full_name,
+                pr_number=int(number),
+                reviews=[],
+            )
+            grouped[pr_id] = entry
+        entry.reviews.append(
+            ModelComparisonReview(
+                review_id=review_id,
+                model=str(model),
+                verdict=verdict,
+                comments=int(comments or 0),
+                tokens_used=int(tokens) if tokens is not None else None,
+            )
+        )
+
+    # Two *different* models, not two reviews. Re-running the same model twice
+    # is a retry, and putting it in a comparison table would invite reading it
+    # as disagreement between models.
+    comparable = [
+        row
+        for row in grouped.values()
+        if len({review.model for review in row.reviews}) > 1
+    ]
+    return comparable[:limit]

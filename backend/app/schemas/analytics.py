@@ -125,3 +125,61 @@ class AnalyticsSummaryOut(BaseModel):
     # and it can lag a rating by up to a week. Everything else here is live.
     flagged_reviews: list[FlaggedReview]
     flagged_reviews_total: int
+
+
+class ModelPerformanceRowOut(BaseModel):
+    """One model's record over the caller's completed reviews.
+
+    ``useful_rate`` is null rather than 0.0 when nothing has been rated. A
+    model nobody has voted on has not scored zero — it has no score, and a
+    table that renders the two the same way ranks an unrated model below one
+    people actively disliked. ``rated_comments`` travels with the rate so a
+    percentage off n=1 is visible as such.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    model: str
+    reviews: int
+    avg_tokens: int | None
+    avg_comments: float
+    comments: int
+    rated_comments: int
+    useful_comments: int
+    useful_rate: float | None
+
+
+class ModelComparisonReviewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    review_id: uuid.UUID
+    model: str
+    verdict: str | None
+    comments: int
+    tokens_used: int | None
+
+
+class ModelComparisonRowOut(BaseModel):
+    """One pull request that two or more different models both reviewed."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    pr_id: uuid.UUID
+    repo_full_name: str
+    pr_number: int
+    reviews: list[ModelComparisonReviewOut]
+
+
+class ModelAnalyticsOut(BaseModel):
+    """The Models tab.
+
+    Separate from ``/analytics/summary`` rather than folded into it: the
+    summary is loaded on every visit to Analytics, and these two aggregates
+    scan every completed review and every rating to answer a question only
+    one of the tabs asks.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    models: list[ModelPerformanceRowOut]
+    comparisons: list[ModelComparisonRowOut]

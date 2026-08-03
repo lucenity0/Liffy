@@ -12,8 +12,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.user import User
-from app.schemas.analytics import AnalyticsSummaryOut
-from app.services.eval_service import AnalyticsSummary, summarize
+from app.schemas.analytics import AnalyticsSummaryOut, ModelAnalyticsOut
+from app.services.eval_service import (
+    AnalyticsSummary,
+    model_comparisons,
+    model_performance,
+    summarize,
+)
 
 router = APIRouter()
 
@@ -37,3 +42,21 @@ def analytics_summary(
     and a stale dashboard during a demo is worse than a slow one.
     """
     return summarize(db, user_id=user.id)
+
+
+@router.get("/models", response_model=ModelAnalyticsOut)
+def analytics_models(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ModelAnalyticsOut:
+    """Per-model performance, and pull requests two models both reviewed.
+
+    Its own route rather than more of ``/summary``: both aggregates scan every
+    completed review and every rating, and only one of the Analytics tabs asks
+    for them. Folding them in would make the tab nobody opened pay for the one
+    they did.
+    """
+    return ModelAnalyticsOut(
+        models=model_performance(db, user_id=user.id),
+        comparisons=model_comparisons(db, user_id=user.id),
+    )

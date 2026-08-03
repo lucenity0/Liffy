@@ -305,6 +305,43 @@ export interface TokenEfficiencyPoint {
  * no 404 and no empty-account error, so the page's job is per-tile unknown
  * handling rather than a whole-page empty state.
  */
+export interface ModelPerformanceRow {
+  model: string;
+  reviews: number;
+  avg_tokens: number | null;
+  avg_comments: number;
+  comments: number;
+  rated_comments: number;
+  useful_comments: number;
+  /**
+   * Null rather than 0 when nothing has been rated. A model nobody voted on
+   * has no score — rendering that as zero ranks it below one people actively
+   * disliked.
+   */
+  useful_rate: number | null;
+}
+
+export interface ModelComparisonReview {
+  review_id: string;
+  model: string;
+  verdict: Verdict | null;
+  comments: number;
+  tokens_used: number | null;
+}
+
+/** One pull request two or more different models both reviewed. */
+export interface ModelComparisonRow {
+  pr_id: string;
+  repo_full_name: string;
+  pr_number: number;
+  reviews: ModelComparisonReview[];
+}
+
+export interface ModelAnalyticsOut {
+  models: ModelPerformanceRow[];
+  comparisons: ModelComparisonRow[];
+}
+
 export interface AnalyticsSummaryOut {
   reviews_total: number;
   reviews_completed: number;

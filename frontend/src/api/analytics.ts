@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { AnalyticsSummaryOut, EvalScoresOut } from "@/types/api";
+import type { ModelAnalyticsOut, AnalyticsSummaryOut, EvalScoresOut } from "@/types/api";
 
 /**
  * Reads of computed evaluation scores — report §8.1's numbers, as opposed to
@@ -33,5 +33,10 @@ export async function getReviewEval(reviewId: string): Promise<EvalScoresOut> {
   const { data } = await apiClient.get<EvalScoresOut>(
     `/reviews/${reviewId}/eval`,
   );
+  return data;
+}
+
+export async function getModelAnalytics(): Promise<ModelAnalyticsOut> {
+  const { data } = await apiClient.get<ModelAnalyticsOut>("/analytics/models");
   return data;
 }

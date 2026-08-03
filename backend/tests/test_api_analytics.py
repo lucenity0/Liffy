@@ -480,3 +480,175 @@ def test_flagged_reviews_capped_and_total_reported(db) -> None:
     # Worst first, so a truncated list keeps the ones most worth inspecting.
     rates = [f["approval_rate"] for f in body["flagged_reviews"]]
     assert rates == sorted(rates)
+
+
+# ── GET /analytics/models ────────────────────────────────────────────────────
+#
+# Per-model aggregation. The failure mode here is not an exception — it is a
+# join that fans out and produces plausible-looking numbers, so these assert
+# exact values rather than shapes.
+
+
+def _models(headers) -> dict:
+    response = client.get("/analytics/models", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _with_model(db, user: User, model: str, **kwargs) -> Review:
+    review = _make_review(db, user, **kwargs)
+    review.model_used = model
+    db.flush()
+    return review
+
+
+def test_models_empty_account(db, factory):
+    user = seed_user(db, github_id=1, username="octo")
+    db.commit()
+
+    body = _models(auth_headers(user))
+
+    assert body["models"] == []
+    assert body["comparisons"] == []
+
+
+def test_averages_are_per_review_not_per_comment(db, factory):
+    user = seed_user(db, github_id=1, username="octo")
+    _with_model(db, user, "opus", tokens=100, comments=[("logic_error", "critical")])
+    _with_model(
+        db, user, "opus", tokens=200,
+        comments=[("security", "warning"), ("performance", "info")],
+    )
+    db.commit()
+
+    row = _models(auth_headers(user))["models"][0]
+
+    assert row["model"] == "opus"
+    assert row["reviews"] == 2
+    assert row["comments"] == 3
+    # Per review, which is the unit a model is chosen in — 150 tokens a
+    # review, 1.5 comments a review. A join that fanned out over comments
+    # would report the token average as 166 (100 + 200 + 200) / 3.
+    assert row["avg_tokens"] == 150
+    assert row["avg_comments"] == 1.5
+
+
+def test_useful_rate_is_null_when_nothing_is_rated(db, factory):
+    user = seed_user(db, github_id=1, username="octo")
+    _with_model(db, user, "opus", tokens=10, comments=[("logic_error", "critical")])
+    db.commit()
+
+    row = _models(auth_headers(user))["models"][0]
+
+    # Not 0.0. A model nobody voted on has no score; rendering that as zero
+    # ranks it below one people actively disliked.
+    assert row["useful_rate"] is None
+    assert row["rated_comments"] == 0
+
+
+def test_useful_rate_counts_ratings_not_comments(db, factory):
+    user = seed_user(db, github_id=1, username="octo")
+    review = _with_model(
+        db, user, "opus", tokens=10,
+        comments=[("logic_error", "critical"), ("security", "warning")],
+    )
+    _rate(db, review, user, [1, -1])
+    db.commit()
+
+    row = _models(auth_headers(user))["models"][0]
+
+    assert row["rated_comments"] == 2
+    assert row["useful_comments"] == 1
+    assert row["useful_rate"] == 0.5
+
+
+def test_a_comment_rated_twice_is_counted_once_in_the_total(db, factory):
+    """The feedback join fans out; `comments` must not follow it."""
+    user = seed_user(db, github_id=1, username="octo")
+    other = seed_user(db, github_id=2, username="hubot")
+    review = _with_model(
+        db, user, "opus", tokens=10, comments=[("logic_error", "critical")]
+    )
+    _rate(db, review, user, [1])
+    _rate(db, review, other, [1])
+    db.commit()
+
+    row = _models(auth_headers(user))["models"][0]
+
+    assert row["comments"] == 1
+    assert row["avg_comments"] == 1.0
+
+
+def test_failed_and_unlabelled_reviews_are_excluded(db, factory):
+    user = seed_user(db, github_id=1, username="octo")
+    _with_model(db, user, "opus", tokens=100, comments=[("logic_error", "critical")])
+    # Failed: no comments and usually no tokens, so counting it would drag
+    # every average toward zero for whichever model was selected at the time.
+    _with_model(db, user, "opus", status="failed")
+    # Written before model_used existed. Skipped rather than bucketed under
+    # "unknown", which would invite comparison against the named models.
+    _make_review(db, user, tokens=999, comments=[("security", "warning")])
+    db.commit()
+
+    rows = _models(auth_headers(user))["models"]
+
+    assert len(rows) == 1
+    assert rows[0]["reviews"] == 1
+    assert rows[0]["avg_tokens"] == 100
+
+
+def test_models_are_scoped_to_the_caller(db, factory):
+    """The widest read in the codebase; one missing join leaks other accounts."""
+    mine = seed_user(db, github_id=1, username="octo")
+    theirs = seed_user(db, github_id=2, username="hubot")
+    _with_model(db, mine, "opus", tokens=100, comments=[("logic_error", "critical")])
+    _with_model(db, theirs, "codex", tokens=999, comments=[("security", "warning")])
+    db.commit()
+
+    rows = _models(auth_headers(mine))["models"]
+
+    assert [row["model"] for row in rows] == ["opus"]
+
+
+def test_busiest_model_first(db, factory):
+    user = seed_user(db, github_id=1, username="octo")
+    _with_model(db, user, "codex", tokens=10)
+    _with_model(db, user, "opus", tokens=10)
+    _with_model(db, user, "opus", tokens=10)
+    db.commit()
+
+    assert [row["model"] for row in _models(auth_headers(user))["models"]] == [
+        "opus",
+        "codex",
+    ]
+
+
+def test_comparison_needs_two_different_models_on_one_pr(db, factory):
+    """Re-running the same model is a retry, not a disagreement."""
+    user = seed_user(db, github_id=1, username="octo")
+
+    # Same PR, two models — this is what re-reviewing after switching model
+    # leaves behind, and the only way this table gets data.
+    first = _with_model(db, user, "opus", tokens=100, comments=[("logic_error", "critical")])
+    second = Review(
+        pr_id=first.pr_id, status="completed", summary="s", verdict="approve",
+        tokens_used=60, created_at=T0,
+    )
+    second.model_used = "codex"
+    db.add(second)
+
+    # Same PR, same model twice: a retry, and must not appear.
+    retried = _with_model(db, user, "opus", tokens=10)
+    again = Review(
+        pr_id=retried.pr_id, status="completed", summary="s", verdict="comment",
+        tokens_used=10, created_at=T0,
+    )
+    again.model_used = "opus"
+    db.add(again)
+    db.commit()
+
+    comparisons = _models(auth_headers(user))["comparisons"]
+
+    assert len(comparisons) == 1
+    assert sorted(r["model"] for r in comparisons[0]["reviews"]) == ["codex", "opus"]
+    assert comparisons[0]["pr_number"] > 0

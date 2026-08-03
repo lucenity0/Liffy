@@ -4,6 +4,7 @@ import {
   fixtureHelpPassages,
   fixtureHelpTopics,
   fixtureRepoIndexed,
+  fixtureModelAnalytics,
   fixturePullRequests,
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
@@ -152,6 +153,8 @@ export const handlers = [
    * Filters by state for real, like the reviews handler does — a stub that
    * accepted `state` and ignored it would make a broken tab look working.
    */
+  http.get("*/analytics/models", () => HttpResponse.json(fixtureModelAnalytics)),
+
   http.get("*/repos/:repoId/pulls", ({ request }) => {
     const state = new URL(request.url).searchParams.get("state") ?? "open";
     const items =

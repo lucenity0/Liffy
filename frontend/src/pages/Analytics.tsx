@@ -1,10 +1,13 @@
+import { useSearchParams } from "react-router-dom";
 import { ButtonLink } from "@/components/ui/Button";
+import { TabPanel, Tabs, type TabSpec } from "@/components/ui/Tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Sheet } from "@/components/ui/Sheet";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { CategoryDistribution } from "@/components/analytics/CategoryDistribution";
+import { ModelsPanel } from "@/components/analytics/ModelsPanel";
 import { FlaggedReviews } from "@/components/analytics/FlaggedReviews";
 import { FigureTile, MetricTile } from "@/components/analytics/MetricTile";
 import { SeverityCalibration } from "@/components/analytics/SeverityCalibration";
@@ -25,8 +28,17 @@ import type { AnalyticsSummaryOut } from "@/types/api";
  * The charts (category distribution, severity calibration, the token-
  * efficiency trend, flagged reviews) are #201, on top of this.
  */
+type TabId = "overview" | "models";
+
+const TABS: TabSpec<TabId>[] = [
+  { id: "overview", label: "Overview" },
+  { id: "models", label: "Models" },
+];
+
 export function Analytics() {
   const summary = useAnalyticsSummary();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: TabId = searchParams.get("tab") === "models" ? "models" : "overview";
 
   return (
     <div className="flex flex-col gap-6">
@@ -35,15 +47,36 @@ export function Analytics() {
         description="How Liffy is performing against the quality targets it was built to meet."
       />
 
-      {summary.isPending ? (
-        <TileSkeletons />
-      ) : summary.isError ? (
-        // In place of the page body — the shell, its nav and the theme toggle
-        // are chrome and stay put.
-        <ErrorNote error={summary.error} onRetry={() => summary.refetch()} />
-      ) : (
-        <Summary data={summary.data} />
-      )}
+      <Tabs
+        tabs={TABS}
+        active={tab}
+        idPrefix="analytics"
+        onChange={(next) => {
+          const params = new URLSearchParams(searchParams);
+          if (next === "overview") params.delete("tab");
+          else params.set("tab", next);
+          setSearchParams(params, { replace: true });
+        }}
+      />
+
+      <TabPanel id="overview" active={tab} idPrefix="analytics">
+        {summary.isPending ? (
+          <TileSkeletons />
+        ) : summary.isError ? (
+          // In place of the page body — the shell, its nav and the theme
+          // toggle are chrome and stay put.
+          <ErrorNote error={summary.error} onRetry={() => summary.refetch()} />
+        ) : (
+          <Summary data={summary.data} />
+        )}
+      </TabPanel>
+
+      <TabPanel id="models" active={tab} idPrefix="analytics">
+        {/* Gated on the tab being open: the aggregates behind it scan every
+            completed review and every rating, and the Overview tab is the
+            one most visits stop at. */}
+        <ModelsPanel active={tab === "models"} />
+      </TabPanel>
     </div>
   );
 }

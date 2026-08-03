@@ -1,4 +1,5 @@
 import type {
+  ModelAnalyticsOut,
   PullRequestOut,
   AnalyticsSummaryOut,
   EvalScoresOut,
@@ -825,3 +826,58 @@ export const fixturePullRequests: PullRequestOut[] = [
     state: "closed",
   },
 ];
+
+/**
+ * Per-model analytics.
+ *
+ * Two models, one of them entirely unrated — that is the case the table has
+ * to render as "no score" rather than 0%, and it only gets covered if a
+ * fixture contains it.
+ */
+export const fixtureModelAnalytics: ModelAnalyticsOut = {
+  models: [
+    {
+      model: "claude-opus-5",
+      reviews: 12,
+      avg_tokens: 82_400,
+      avg_comments: 3.8,
+      comments: 46,
+      rated_comments: 20,
+      useful_comments: 17,
+      useful_rate: 0.85,
+    },
+    {
+      model: "codex-5.3",
+      reviews: 4,
+      avg_tokens: 61_700,
+      avg_comments: 2.5,
+      comments: 10,
+      rated_comments: 0,
+      useful_comments: 0,
+      useful_rate: null,
+    },
+  ],
+  comparisons: [
+    {
+      pr_id: "cccccccc-1111-2222-3333-444444444444",
+      repo_full_name: "lucenity0/Liffy",
+      pr_number: 249,
+      reviews: [
+        {
+          review_id: fixtureReviewCompleted.id,
+          model: "claude-opus-5",
+          verdict: "request_changes",
+          comments: 3,
+          tokens_used: 86_208,
+        },
+        {
+          review_id: fixtureReviewApproved.id,
+          model: "codex-5.3",
+          verdict: "approve",
+          comments: 1,
+          tokens_used: 61_300,
+        },
+      ],
+    },
+  ],
+};

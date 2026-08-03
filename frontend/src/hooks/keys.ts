@@ -49,6 +49,9 @@ export const keys = {
    * renders every setting at once and a PATCH can change the provenance of a
    * key it did not name.
    */
+  analyticsModels: {
+    all: ["analytics", "models"] as const,
+  },
   settings: {
     all: ["settings"] as const,
   },

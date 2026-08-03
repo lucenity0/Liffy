@@ -1003,6 +1003,7 @@ a { color: inherit; }
 }
 .pill.ok { color: var(--sage); }
 .pill.crit { color: var(--oxide); }
+.pill.warn { color: var(--ochre); }
 .pill.info { color: var(--payne); }
 .pill.none { color: var(--ink-sub); }
 
@@ -1145,6 +1146,137 @@ a { color: inherit; }
 .state .wip li::before { content: "\00B7\00B7"; color: var(--ochre); letter-spacing: 0.08em; }
 
 /* ==================================================================== *
+ * Self-review workspace — real reviews Liffy wrote about this repo.
+ *
+ * A reduced copy of the product's own review screen: a pull-request
+ * picker down the left, a tabbed workspace on the right. Every number,
+ * every comment and every diff hunk is pulled from the database of a
+ * live instance — including a failed run, because a proof section with
+ * no failures in it reads as a brochure.
+ *
+ * Two planes live in .sr-stage, side by side, and it slides between
+ * them: the workspace, and the GitHub screenshots showing the same
+ * review posted onto the pull request itself.
+ *
+ * Progressive enhancement: the markup ships with #252's summary open,
+ * so with JavaScript off the section is still a real review, readable.
+ * ==================================================================== */
+.sr { border: 1px solid var(--rule); background: var(--card); box-shadow: 4px 4px 0 var(--shadow-edge); }
+.sr-stage { position: relative; overflow: hidden; }
+.sr-plane { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
+@media (max-width: 48rem) { .sr-plane { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .sr-plane, .sr-gh { transition: none; } }
+.sr[data-view="github"] .sr-plane { transform: translateX(-100%); }
+
+/* --- the pull-request picker -------------------------------------- */
+.sr-list { border-right: 1px solid var(--rule); background: var(--recessed); display: flex; flex-direction: column; }
+@media (max-width: 48rem) { .sr-list { border-right: 0; border-bottom: 1px solid var(--rule); flex-direction: row; overflow-x: auto; } }
+.sr-item {
+  appearance: none; display: block; width: 100%; text-align: left; font: inherit;
+  cursor: pointer; background: none; border: 0;
+  border-bottom: 1px solid var(--rule); border-left: 2px solid transparent;
+  padding: 0.6rem 0.8rem; color: var(--ink-dim);
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+@media (max-width: 48rem) { .sr-item { width: auto; flex: none; border-bottom: 0; border-left: 0; border-top: 2px solid transparent; } }
+.sr-item:hover { background: var(--card); color: var(--ink); }
+.sr-item[aria-selected="true"] { background: var(--card); color: var(--ink); border-left-color: var(--ink); }
+@media (max-width: 48rem) { .sr-item[aria-selected="true"] { border-left-color: transparent; border-top-color: var(--ink); } }
+.sr-item-t { display: flex; align-items: baseline; gap: 0.4rem; font-family: var(--f-ui); font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-sub); }
+.sr-item-t .right { margin-left: auto; font-variant-numeric: tabular-nums; }
+.sr-item-n { display: block; margin-top: 0.24rem; font-size: 0.8rem; line-height: 1.4; text-wrap: pretty; }
+.sr-item.bad .sr-item-t { color: var(--oxide); }
+
+/* --- the workspace ------------------------------------------------ */
+.sr-work { display: flex; flex-direction: column; min-width: 0; }
+.sr-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 0.75rem; align-items: center; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--rule); font-family: var(--f-ui); font-size: 0.64rem; color: var(--ink-sub); }
+.sr-meta b { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 400; }
+.sr-tabs { display: flex; gap: 0.15rem; padding: 0 0.5rem; border-bottom: 1px solid var(--rule); background: var(--recessed); }
+.sr-tab {
+  appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
+  font-family: var(--f-ui); font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-sub); padding: 0.55rem 0.6rem; cursor: pointer; transition: color 0.12s, border-color 0.12s;
+}
+.sr-tab:hover { color: var(--ink); }
+.sr-tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.sr-tab .n { font-variant-numeric: tabular-nums; color: var(--ink-sub); margin-left: 0.3rem; }
+
+/* Fixed height so a long review scrolls inside its own pane rather than
+   stretching the section — the point is that there is more than fits. */
+.sr-body { height: 24rem; overflow-y: auto; overscroll-behavior: contain; padding: 0.9rem; min-width: 0; }
+@media (max-width: 40rem) { .sr-body { height: 20rem; padding: 0.7rem; } }
+.sr-body h4 { font-family: var(--f-ui); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-sub); margin: 0 0 0.5rem; font-weight: 400; }
+.sr-body p { margin: 0 0 0.7rem; font-size: 0.86rem; line-height: 1.65; text-wrap: pretty; }
+.sr-sev { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 0.8rem 0; }
+.sr-sev div { background: var(--card); padding: 0.55rem 0.7rem; }
+.sr-sev .v { display: block; font-family: var(--f-display); font-size: 1.3rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.sr-sev .k { font-family: var(--f-ui); font-size: 0.58rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-sub); }
+.sr-sev .crit .v { color: var(--ink-sub); }
+.sr-sev .warn .v { color: var(--ochre); }
+.sr-sev .info .v { color: var(--payne); }
+
+/* --- a reviewed file: only the hunk the comment landed on ---------- */
+.sr-file { border: 1px solid var(--rule); margin-bottom: 0.9rem; }
+.sr-file-h { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; padding: 0.45rem 0.6rem; background: var(--recessed); border-bottom: 1px solid var(--rule); font-family: var(--f-ui); font-size: 0.64rem; color: var(--ink-sub); overflow-wrap: anywhere; }
+.sr-file-h .right { margin-left: auto; font-variant-numeric: tabular-nums; flex: none; }
+.sr-file .diff { padding: 0.4rem 0; }
+.sr-elide { font-family: var(--f-ui); font-size: 0.6rem; color: var(--ink-sub); padding: 0.25rem 0.85rem; background: var(--recessed); border-block: 1px solid var(--rule); }
+
+/* --- an inline comment, in Liffy's severity colours ---------------- */
+.sr-note { margin: 0.5rem 0.6rem 0.6rem; border: 1px solid var(--rule-strong); background: var(--recessed); padding: 0.6rem 0.7rem; }
+.sr-note.warn { border-color: var(--ochre); background: var(--ochre-tint); }
+.sr-note.info { border-color: var(--payne); background: var(--payne-tint); }
+.sr-note.crit { border-color: var(--oxide); background: var(--oxide-tint); }
+.sr-note-h { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.4rem; }
+.sr-note p { margin: 0; font-size: 0.82rem; line-height: 1.6; }
+.sr-note p + p { margin-top: 0.5rem; }
+.sr-note code { font-size: 0.92em; }
+
+/* --- the vote ------------------------------------------------------ */
+.sr-vote { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.6rem; padding-top: 0.55rem; border-top: 1px solid color-mix(in oklab, var(--ink) 12%, transparent); }
+.sr-vote .lbl { margin: 0; margin-right: auto; }
+.sr-v {
+  appearance: none; background: var(--card); border: 1px solid var(--rule-strong);
+  color: var(--ink-sub); cursor: pointer; font: inherit; font-size: 0.8rem;
+  line-height: 1; padding: 0.25rem 0.5rem;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.15s, border-color 0.15s, background 0.15s;
+}
+.sr-v:hover { color: var(--ink); border-color: var(--ink); }
+.sr-v[aria-pressed="true"].up { color: var(--sage); border-color: var(--sage); background: var(--sage-tint); }
+.sr-v[aria-pressed="true"].down { color: var(--oxide); border-color: var(--oxide); background: var(--oxide-tint); }
+.sr-v.pop { transform: scale(1.28); }
+@media (prefers-reduced-motion: reduce) { .sr-v { transition: none; } .sr-v.pop { transform: none; } }
+
+/* --- the failed run ------------------------------------------------ */
+.sr-fail { border: 1px solid var(--oxide); background: var(--oxide-tint); padding: 0.8rem; }
+.sr-fail pre { margin: 0.6rem 0 0; font-family: var(--f-ui); font-size: 0.72rem; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+
+/* --- the footer control that swipes to GitHub ---------------------- */
+.sr-cta { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.65rem 0.9rem; border-top: 1px solid var(--rule); background: var(--recessed); }
+.sr-cta .lbl { margin: 0; margin-right: auto; }
+.sr-go {
+  appearance: none; font-family: var(--f-ui); font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase;
+  background: var(--ink); color: var(--card); border: 1px solid var(--ink); cursor: pointer;
+  padding: 0.4rem 0.7rem; display: inline-flex; align-items: center; gap: 0.4rem; transition: opacity 0.15s;
+}
+.sr-go:hover { opacity: 0.84; }
+.sr-go.ghost { background: none; color: var(--ink); }
+
+/* --- the GitHub plane ---------------------------------------------- */
+.sr-gh {
+  position: absolute; inset: 0; left: 100%; width: 100%;
+  display: flex; flex-direction: column; background: var(--card);
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sr[data-view="github"] .sr-gh { transform: translateX(-100%); }
+.sr-gh-body { flex: 1 1 auto; min-height: 0; background: var(--recessed); display: flex; align-items: center; justify-content: center; padding: 0.75rem; }
+.sr-shot { max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid var(--rule); display: block; }
+.sr-gh-cap { padding: 0.6rem 0.9rem; border-top: 1px solid var(--rule); font-size: 0.82rem; line-height: 1.55; color: var(--ink-dim); text-wrap: pretty; min-height: 3.4rem; }
+.sr-dots { display: flex; gap: 0.3rem; align-items: center; }
+.sr-dot { width: 0.5rem; height: 0.5rem; padding: 0; border: 1px solid var(--rule-strong); background: none; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.sr-dot[aria-current="true"] { background: var(--ink); border-color: var(--ink); }
+
+/* ==================================================================== *
  * Closing band — full-bleed inversion, the one place the page flips.
  * ==================================================================== */
 .band {
@@ -1205,7 +1337,6 @@ a { color: inherit; }
   padding-right: 2.25rem;
 }
 .ticker-run i { font-style: normal; color: color-mix(in oklab, var(--band-ink) 52%, var(--band-bg)); }
-.ticker-run .todo { color: color-mix(in oklab, var(--ochre) 70%, var(--band-ink)); }
 @media (prefers-reduced-motion: no-preference) {
   .ticker-run { animation: run 72s linear infinite; }
 }
@@ -1565,6 +1696,124 @@ a { color: inherit; }
   </section>
 
   <!-- ================================================================ -->
+  <!-- SELF-REVIEW — real runs against this repository                  -->
+  <!--                                                                  -->
+  <!-- Everything here comes out of a live instance's database: the      -->
+  <!-- token counts, the timings, the comments, the diff hunks, and the  -->
+  <!-- failure text. Nothing is written for the page. The review data    -->
+  <!-- lives in REVIEWS in the script at the bottom; the markup below is -->
+  <!-- #252's summary rendered statically so the section still reads     -->
+  <!-- without JavaScript.                                              -->
+  <!-- ================================================================ -->
+  <section class="pg sec ruled" id="itself">
+    <div class="sec-hd">
+      <p class="lbl">// receipts</p>
+      <h2 class="h2">Liffy reviews its own codebase</h2>
+      <p class="p">The first repository we connected was this one. What follows is not a
+        mock-up &mdash; it is Liffy's own review screen, carrying real reviews out of a running
+        instance: the comments it left, the lines it left them on, and one run that failed.</p>
+    </div>
+
+    <div class="sr" id="sr" data-view="work">
+      <div class="frame-bar">
+        <span>lucenity0/Liffy</span>
+        <span class="right" id="sr-count">4 of 13 reviews</span>
+      </div>
+
+      <div class="sr-stage">
+        <div class="sr-plane">
+
+          <!-- the pull-request picker -->
+          <div class="sr-list" role="tablist" aria-label="Pull requests Liffy reviewed">
+            <button class="sr-item" type="button" role="tab" data-pr="252" aria-selected="true">
+              <span class="sr-item-t"><span>#252</span><span class="right">4</span></span>
+              <span class="sr-item-n">The theme ladder</span>
+            </button>
+            <button class="sr-item" type="button" role="tab" data-pr="249" aria-selected="false">
+              <span class="sr-item-t"><span>#249</span><span class="right">3</span></span>
+              <span class="sr-item-n">Help, with lexical search</span>
+            </button>
+            <button class="sr-item" type="button" role="tab" data-pr="247" aria-selected="false">
+              <span class="sr-item-t"><span>#247</span><span class="right">3</span></span>
+              <span class="sr-item-n">Codex effort control</span>
+            </button>
+            <button class="sr-item bad" type="button" role="tab" data-pr="241" aria-selected="false">
+              <span class="sr-item-t"><span>#241</span><span class="right">&#10007;</span></span>
+              <span class="sr-item-n">A run that failed</span>
+            </button>
+          </div>
+
+          <!-- the workspace -->
+          <div class="sr-work">
+            <div class="sr-meta" id="sr-meta">
+              <span class="pill ok">completed</span>
+              <span class="pill none">comment</span>
+              <span>claude-opus-5</span>
+              <span><b>409,804</b> tokens</span>
+              <span><b>101</b> files</span>
+              <span>+9,148 &minus;1,570</span>
+              <span><b>3m 01s</b></span>
+            </div>
+
+            <div class="sr-tabs" role="tablist" aria-label="Review sections">
+              <button class="sr-tab" type="button" role="tab" data-tab="summary" aria-selected="true">Summary</button>
+              <button class="sr-tab" type="button" role="tab" data-tab="files" aria-selected="false">Files<span class="n" id="sr-nf">4</span></button>
+              <button class="sr-tab" type="button" role="tab" data-tab="comments" aria-selected="false">Comments<span class="n" id="sr-nc">4</span></button>
+            </div>
+
+            <div class="sr-body" id="sr-body">
+              <h4>Review summary</h4>
+              <p>A very large PR: a five-theme ladder with a custom-theme editor, a chrome/rail
+                restructure replacing the top bar, a tabbed review workspace, new analytics
+                endpoints, review history on <code>GET /repos</code>, and a GitHub pull-request
+                picker. The backend additions are well-scoped to the caller and the aggregate
+                queries correctly avoid join fan-out. Documentation and tests are unusually
+                thorough. A handful of small issues below: one dead prop expression, one
+                theme-store update that does not notify subscribers, and a render-phase DOM
+                mutation in the theme editor.</p>
+              <div class="sr-sev">
+                <div class="crit"><span class="v">0</span><span class="k">critical</span></div>
+                <div class="warn"><span class="v">3</span><span class="k">warning</span></div>
+                <div class="info"><span class="v">1</span><span class="k">info</span></div>
+              </div>
+            </div>
+
+            <div class="sr-cta">
+              <p class="lbl" id="sr-cta-lbl">it posted this to the pull request</p>
+              <button class="sr-go" type="button" id="sr-open">
+                peek at that
+                <svg width="13" height="9" viewBox="0 0 14 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 5h11M8.5 1.5 12 5 8.5 8.5"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- the GitHub plane: the same reviews, posted -->
+        <div class="sr-gh" id="sr-gh" aria-hidden="true">
+          <div class="frame-bar">
+            <span>github.com/lucenity0/Liffy</span>
+            <span class="right" id="sr-gh-n">1 / 6</span>
+          </div>
+          <div class="sr-gh-body">
+            <img class="sr-shot" id="sr-shot" alt="" loading="lazy" />
+          </div>
+          <p class="sr-gh-cap" id="sr-cap"></p>
+          <div class="sr-cta">
+            <button class="sr-go ghost" type="button" id="sr-back">&larr; back to the review</button>
+            <div class="sr-dots" id="sr-dots" role="tablist" aria-label="Screenshots"></div>
+            <button class="sr-go" type="button" id="sr-next">next &rarr;</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="p small dim" style="margin-top:1rem">Every figure above is read out of a running
+      instance's database &mdash; four of the thirteen reviews on it. The failed run is included
+      on purpose: it is the same instance, on a day the model provider was not installed.</p>
+  </section>
+
+
+  <!-- ================================================================ -->
   <!-- STEPS                                                            -->
   <!-- ================================================================ -->
   <section class="pg sec ruled">
@@ -1659,7 +1908,7 @@ a { color: inherit; }
   <section class="pg sec ruled">
     <div class="sec-hd">
       <p class="lbl">// where it stands</p>
-      <h2 class="h2">Thirteen of fifteen steps run today</h2>
+      <h2 class="h2">All fifteen steps run today</h2>
       <p class="p">Liffy is a student project built in the open. This is the real state of
         it, not a roadmap written to look finished.</p>
     </div>
@@ -1675,21 +1924,23 @@ a { color: inherit; }
           <li>Background queue and a dashboard to watch it</li>
           <li>Four interchangeable model providers</li>
           <li>Rating comments up or down</li>
-          <li>Scoring the system against those ratings</li>
+          <li>A weekly job that scores reviews against those ratings</li>
           <li>Posting reviews back to the PR itself</li>
           <li>Indexing languages beyond Python</li>
-          <li>In-app env settings configuration - avoid env(hopefully)</li>
-          <li>Subscription based models - connect your pro plans! [claude/codex]</li>
-          <li>Filter and sort review list</li>
-          <li>Help page</li>
+          <li>Settings in the app, so nobody edits a .env by hand</li>
+          <li>Subscription models &mdash; bring a Claude or Codex plan</li>
+          <li>Filter and sort the review list, and pick a PR from it</li>
+          <li>Per-model performance analytics</li>
+          <li>Five themes and a customiser for them</li>
+          <li>A help page that files its own bug reports</li>
         </ul>
       </div>
       <div class="wip">
-        <p class="lbl">Being built</p>
+        <p class="lbl">Not built</p>
         <ul>
-          <li>Themes!</li>
-          <li>Teams and Enterprise mode [in development]</li>
-          <li>Your Future Contributions !!</li>
+          <li>Teams and organisation accounts</li>
+          <li>Reviewing anything that is not a GitHub pull request</li>
+          <li>Your future contributions</li>
         </ul>
       </div>
     </div>
@@ -1729,8 +1980,8 @@ a { color: inherit; }
         <span><i>11</i>Check the answer, pin it to real lines</span>
         <span><i>12</i>File it permanently</span>
         <span><i>13</i>It appears on screen</span>
-        <span class="todo"><i>14</i>You rate the comment &mdash; being built</span>
-        <span class="todo"><i>15</i>The score updates &mdash; being built</span>
+        <span><i>14</i>You rate the comment</span>
+        <span><i>15</i>The score updates</span>
         <span><i>01</i>Someone opens a pull request</span>
         <span><i>02</i>GitHub knocks on Liffy&rsquo;s door</span>
         <span><i>03</i>Liffy verifies the knock is really GitHub</span>
@@ -1744,8 +1995,8 @@ a { color: inherit; }
         <span><i>11</i>Check the answer, pin it to real lines</span>
         <span><i>12</i>File it permanently</span>
         <span><i>13</i>It appears on screen</span>
-        <span class="todo"><i>14</i>You rate the comment &mdash; being built</span>
-        <span class="todo"><i>15</i>The score updates &mdash; being built</span>
+        <span><i>14</i>You rate the comment</span>
+        <span><i>15</i>The score updates</span>
       </div>
     </div>
   </div>
@@ -2252,6 +2503,386 @@ function paintRail(rail, stage) {
       setTimeout(function () { btn.textContent = "copy"; }, 2200);
     }
   });
+})();
+
+/* -------------------------------------------------------------------- *
+ * Self-review workspace.
+ *
+ * REVIEWS is a transcription of four rows out of a live instance's
+ * database — reviews, review_comments, and the stored raw_diff. The
+ * hunks are the real ones, trimmed to the lines around each comment;
+ * `cut` marks where lines were dropped so nothing reads as contiguous
+ * when it is not. #249 and #247 carry comments without hunks because
+ * only #252's diff was transcribed — an empty `diff` renders the file
+ * header and the comment, and invents nothing to fill the gap.
+ *
+ * The markup ships with #252's summary already rendered, so everything
+ * below is enhancement: without it the section is still a real review.
+ * -------------------------------------------------------------------- */
+(function () {
+  var root = document.getElementById("sr");
+  if (!root) return;
+
+  var REVIEWS = {
+    "252": {
+      title: "The theme ladder",
+      meta: ['<span class="pill ok">completed</span>', '<span class="pill none">comment</span>',
+             "claude-opus-5", "<b>409,804</b> tokens", "<b>101</b> files", "+9,148 &minus;1,570", "<b>3m 01s</b>"],
+      sev: [0, 3, 1],
+      summary: "A very large PR: a five-theme ladder with a custom-theme editor, a chrome/rail " +
+        "restructure replacing the top bar, a tabbed review workspace, new analytics endpoints, " +
+        "review history on GET /repos, and a GitHub pull-request picker. The backend additions are " +
+        "well-scoped to the caller and the aggregate queries correctly avoid join fan-out. " +
+        "Documentation and tests are unusually thorough. A handful of small issues below: one dead " +
+        "prop expression, one theme-store update that does not notify subscribers, and a " +
+        "render-phase DOM mutation in the theme editor.",
+      findings: [
+        {
+          file: "frontend/src/hooks/useTheme.ts", lines: "248-262", sev: "warn", cat: "logic_error",
+          diff: [["+", 247, "  /** Drop the custom palette and fall back to a preset. */"],
+                 ["+", 248, "  const clearCustom = useCallback(() => {"],
+                 ["+", 249, "    const prefs = readPrefs();"],
+                 ["+", 250, "    const fallback = prefs.custom?.seeds.polarity === \"light\""],
+                 ["cut", 0, "8 lines"],
+                 ["+", 260, "    applyCustomTheme(null);"],
+                 ["+", 261, "    if (prefs.theme === \"custom\") apply(fallback);"],
+                 [" ", 262, "  }, []);"]],
+          body: "<code>clearCustom</code> only calls <code>apply()</code> — the function that runs " +
+            "<code>emit()</code> — when the custom theme happens to be the active one. Deleting a custom " +
+            "palette while a preset is selected writes storage and removes the <code>&lt;style&gt;</code> " +
+            "element but never notifies subscribers, so Appearance and ThemePicker keep rendering the " +
+            "“Custom” chip from stale prefs until something else forces a re-render. " +
+            "<code>saveCustom</code> has the same shape but always applies, so this is the one path that " +
+            "can silently desync."
+        },
+        {
+          file: "frontend/src/components/settings/Appearance.tsx", lines: "222-232", sev: "warn", cat: "logic_error",
+          diff: [["+", 222, "  const checks = useMemo(() => {"],
+                 ["+", 223, "    const probe = document.createElement(\"div\");"],
+                 ["+", 224, "    probe.style.cssText = TOKENS.map((t) => `--${t}:${tokens[t]}`).join(\";\");"],
+                 ["+", 225, "    probe.style.display = \"none\";"],
+                 ["+", 226, "    document.body.appendChild(probe);"],
+                 ["cut", 0, "5 lines"],
+                 ["+", 232, "    probe.remove();"]],
+          body: "This <code>useMemo</code> appends a probe element to <code>document.body</code> and removes " +
+            "it during the render phase. React may discard or re-run a render (StrictMode double-invokes, " +
+            "and the React Compiler is enabled elsewhere in this codebase), so a render-phase DOM mutation " +
+            "is not guaranteed to be balanced. The measurement itself is fine — it is the same probe trick " +
+            "<code>resolveColor</code> uses — but it belongs in an effect writing to state."
+        },
+        {
+          file: "frontend/src/components/review/tabs/FilesTab.tsx", lines: "189", sev: "warn", cat: "logic_error",
+          diff: [["+", 185, "            <ReviewComment"],
+                 ["+", 186, "              key={comment.id}"],
+                 ["+", 187, "              comment={comment}"],
+                 ["+", 188, "              reviewId={reviewId}"],
+                 ["flag", 189, "              onReveal={onGlyphClick ? undefined : undefined}"],
+                 ["+", 190, "            />"]],
+          body: "<code>onReveal={onGlyphClick ? undefined : undefined}</code> evaluates to " +
+            "<code>undefined</code> on both branches, so the inline comments under the diff never get a " +
+            "reveal handler. Either this is intentional (in which case drop the prop entirely so the intent " +
+            "is readable) or the truthy branch was meant to pass something — as written a reader cannot " +
+            "tell which."
+        },
+        {
+          file: "backend/app/services/eval_service.py", lines: "612-625", sev: "info", cat: "performance",
+          diff: [["+", 612, "    comment_counts = ("],
+                 ["+", 613, "        select("],
+                 ["+", 614, "            ReviewComment.review_id,"],
+                 ["+", 615, "            func.count(distinct(ReviewComment.id)).label(\"comments\"),"],
+                 ["cut", 0, "6 lines"],
+                 ["+", 622, "        .outerjoin(CommentFeedback, CommentFeedback.comment_id == ReviewComment.id)"],
+                 ["+", 623, "        .group_by(ReviewComment.review_id)"],
+                 ["+", 624, "        .subquery()"]],
+          body: "<code>comment_counts</code> aggregates the entire <code>review_comments</code> × " +
+            "<code>comment_feedback</code> product for every user on the instance and only then outer-joins " +
+            "onto the caller's scoped reviews. Correctness is fine, but the grouped scan is unbounded by the " +
+            "caller — on a shared deployment one user's Models tab pays for everyone's comments. Scoping " +
+            "the subquery keeps the same result and bounds the scan."
+        }
+      ]
+    },
+
+    "249": {
+      title: "Help, with lexical search",
+      meta: ['<span class="pill ok">completed</span>', '<span class="pill none">comment</span>',
+             "claude-opus-5", "<b>130,197</b> tokens", "<b>1m 24s</b>"],
+      sev: [0, 2, 1],
+      summary: "Adds the /help page with lexical search over Liffy's own documentation, and a report " +
+        "path that routes through SECURITY.md rather than opening a public issue. Three findings, all " +
+        "real — and the first one is the kind a human reviewer usually misses, because the test that " +
+        "should have caught it was passing for the wrong reason.",
+      findings: [
+        {
+          file: "frontend/src/pages/Help.tsx", lines: "46", sev: "warn", cat: "logic_error", diff: [],
+          body: "This effect runs on mount as well as on every <code>draft</code> change, so a deep link such " +
+            "as <code>/help?q=claude+not+on+PATH&amp;page=subscription-providers</code> loses its " +
+            "<code>page</code> param 200&nbsp;ms after load: <code>draft</code> is initialised from " +
+            "<code>q</code>, the timer fires, and <code>next.delete(\"page\")</code> drops the selection, " +
+            "falling the reading pane back to <code>results[0]</code>."
+        },
+        {
+          file: "frontend/src/api/help.ts", lines: "25", sev: "warn", cat: "security", diff: [],
+          body: "<code>slug</code> comes straight from the <code>?page=</code> query parameter and is " +
+            "interpolated into the path unencoded. A value like <code>../reviews</code> is normalised by the " +
+            "browser into a request against a completely different endpoint, and slugs containing spaces or " +
+            "<code>?</code>/<code>#</code> build a malformed URL. Encode the segment."
+        },
+        {
+          file: "backend/tests/test_help_service.py", lines: "204", sev: "info", cat: "logic_error", diff: [],
+          body: "The <code>!</code> escape hatch this test documents can never apply: <code>token</code> here " +
+            "is a normalised alias phrase (<code>\"queued\"</code>), while <code>doc.priority_tokens</code> " +
+            "holds <i>stemmed</i> tokens from <code>_tokenize</code> (<code>\"queu\"</code>), so the " +
+            "membership check is always false. The moment two pages legitimately share a word that one of " +
+            "them claims with <code>!</code>, this test fails."
+        }
+      ]
+    },
+
+    "247": {
+      title: "Codex effort control",
+      meta: ['<span class="pill ok">completed</span>', '<span class="pill none">comment</span>',
+             "claude-opus-5", "<b>42,648</b> tokens", "<b>1m 11s</b>"],
+      sev: [0, 2, 1],
+      summary: "Fixes the Codex effort control and the review-suggestion filter. Liffy caught a recovery " +
+        "hole in the re-index path, an over-eager suggestion filter, and a piece of help text whose " +
+        "replacement quietly dropped the sentence telling operators where their source code is sent.",
+      findings: [
+        {
+          file: "backend/app/api/repos.py", lines: "135-137", sev: "warn", cat: "logic_error", diff: [],
+          body: "Nulling <code>indexed_at</code> makes the status endpoint report <code>not_indexed</code>, " +
+            "which is indistinguishable from “never indexed” — the stale vectors are still in the " +
+            "store, and if <code>enqueue_index</code> raises (broker down) or the worker task fails, the repo " +
+            "is left permanently marked as unindexed with no way back short of a successful re-index."
+        },
+        {
+          file: "backend/app/llm/chain.py", lines: "59-62", sev: "warn", cat: "logic_error", diff: [],
+          body: "The backtick test drops any suggestion containing a single backtick, which includes " +
+            "perfectly valid replacement text: JS/TS template literals, shell command substitution, and any " +
+            "suggestion for a Markdown file — and Liffy reviews README.md and SETUP.md in this very repo."
+        },
+        {
+          file: "backend/app/config.py", lines: "342", sev: "info", cat: "convention", diff: [],
+          body: "The old <code>openai_base_url</code> help was the only place in the UI that told the " +
+            "operator this field decides where their source code is sent. The replacement text drops that " +
+            "entirely — same for <code>post_reviews_to_github</code>, which loses the note that it writes " +
+            "comments to a real pull request."
+        }
+      ]
+    },
+
+    "241": {
+      title: "A run that failed",
+      meta: ['<span class="pill crit">failed</span>', "no model reached", "<b>1s</b>"],
+      failure: "Review failed: 'codex' is not on PATH. Install the Codex CLI and run `codex login`, " +
+        "or set LLM_PROVIDER to a different provider.",
+      failNote: "This is the whole point of the failure path. An earlier build constructed the model " +
+        "transport before the review row existed, so a missing CLI raised before anything was written: no " +
+        "row, no error, an empty list on screen, and the reason only in a worker log. The review did not " +
+        "fail — it vanished. Now it fails visibly, and says what to do about it.",
+      findings: []
+    }
+  };
+
+  var SHOTS = [
+    ["/proof/proof-01.png", "Liffy approving a pull request on GitHub, with the overview it wrote: what the change does, then a File/Description table. “Liffy read 21 changed files and left 2 comments.”"],
+    ["/proof/proof-02.png", "Two of its comments, posted inline against the exact lines — each carrying the same severity and category chips the app shows. The first was read and marked resolved by the other maintainer."],
+    ["/proof/proof-03.png", "The same overview for #252, the review open in the workspace on the left of this section."],
+    ["/proof/proof-04.png", "The <code>eval_service.py</code> finding as GitHub renders it: the real hunk, the <code>info · performance</code> chips, and the comment."],
+    ["/proof/proof-05.png", "All four threads afterwards — three marked outdated because the fixes landed, and the two commits that fixed them."],
+    ["/proof/proof-06.png", "The honest limit: “Liffy would <b>approve</b> here, but GitHub does not allow a review event on your own pull request — so this is posted as a comment.”"]
+  ];
+
+  var body = document.getElementById("sr-body");
+  var meta = document.getElementById("sr-meta");
+  var prTabs = [].slice.call(root.querySelectorAll(".sr-item"));
+  var secTabs = [].slice.call(root.querySelectorAll(".sr-tab"));
+  var current = "252";
+  var tab = "summary";
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function hunk(rows) {
+    if (!rows || !rows.length) return "";
+    return '<div class="diff">' + rows.map(function (r) {
+      if (r[0] === "cut") return '<div class="sr-elide">⋮ ' + esc(r[2]) + " unchanged</div>";
+      var cls = r[0] === "+" ? "dl add" : r[0] === "flag" ? "dl add flag" : "dl ctxln";
+      return '<div class="' + cls + '"><span class="dl-n">' + r[1] + '</span><span class="dl-c">' +
+        esc(r[2]) + "</span></div>";
+    }).join("") + "</div>";
+  }
+
+  function note(f, withVote) {
+    return '<div class="sr-note ' + f.sev + '">' +
+      '<div class="sr-note-h"><span class="pill ' + f.sev + '">' + f.sev.replace("warn", "warning") +
+      '</span><span class="pill none">' + f.cat.replace("_", " ") + "</span></div>" +
+      "<p>" + f.body + "</p>" +
+      (withVote
+        ? '<div class="sr-vote"><p class="lbl">was this useful?</p>' +
+          '<button class="sr-v up" type="button" aria-pressed="false" aria-label="Useful">▲</button>' +
+          '<button class="sr-v down" type="button" aria-pressed="false" aria-label="Not useful">▼</button></div>'
+        : "") +
+      "</div>";
+  }
+
+  function render() {
+    var r = REVIEWS[current];
+    meta.innerHTML = r.meta.map(function (m) {
+      return m.charAt(0) === "<" ? m : "<span>" + m + "</span>";
+    }).join("");
+
+    var nf = document.getElementById("sr-nf");
+    var nc = document.getElementById("sr-nc");
+    if (nf) nf.textContent = r.findings.length ? r.findings.length : "0";
+    if (nc) nc.textContent = r.findings.length ? r.findings.length : "0";
+
+    var html;
+    if (r.failure) {
+      html = "<h4>Why it failed</h4>" +
+        '<div class="sr-fail"><span class="pill crit">failed</span><pre>' + esc(r.failure) + "</pre></div>" +
+        "<p style=\"margin-top:0.9rem\">" + r.failNote + "</p>";
+    } else if (tab === "summary") {
+      html = "<h4>Review summary</h4><p>" + esc(r.summary) + "</p>" +
+        '<div class="sr-sev">' +
+        '<div class="crit"><span class="v">' + r.sev[0] + '</span><span class="k">critical</span></div>' +
+        '<div class="warn"><span class="v">' + r.sev[1] + '</span><span class="k">warning</span></div>' +
+        '<div class="info"><span class="v">' + r.sev[2] + '</span><span class="k">info</span></div></div>';
+    } else if (tab === "files") {
+      html = r.findings.map(function (f) {
+        return '<div class="sr-file"><div class="sr-file-h"><span>' + esc(f.file) +
+          '</span><span class="right">line ' + f.lines + "</span></div>" +
+          hunk(f.diff) + note(f, false) + "</div>";
+      }).join("");
+    } else {
+      html = r.findings.map(function (f) {
+        return '<div class="sr-file"><div class="sr-file-h"><span>' + esc(f.file) +
+          '</span><span class="right">line ' + f.lines + "</span></div>" + note(f, true) + "</div>";
+      }).join("");
+    }
+    body.innerHTML = html;
+    body.scrollTop = 0;
+    wireVotes();
+  }
+
+  /* One vote per comment, and clicking the same one again clears it —
+     the app behaves this way, and a rating you cannot take back is a
+     rating people stop giving. */
+  function wireVotes() {
+    [].slice.call(body.querySelectorAll(".sr-v")).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var on = btn.getAttribute("aria-pressed") === "true";
+        var pair = btn.parentNode.querySelectorAll(".sr-v");
+        [].slice.call(pair).forEach(function (b) { b.setAttribute("aria-pressed", "false"); });
+        btn.setAttribute("aria-pressed", on ? "false" : "true");
+        if (!on) {
+          btn.classList.add("pop");
+          setTimeout(function () { btn.classList.remove("pop"); }, 200);
+        }
+      });
+    });
+  }
+
+  prTabs.forEach(function (t, i) {
+    t.tabIndex = i === 0 ? 0 : -1;
+    t.addEventListener("click", function () {
+      current = t.getAttribute("data-pr");
+      tab = "summary";
+      prTabs.forEach(function (o) { o.setAttribute("aria-selected", String(o === t)); o.tabIndex = o === t ? 0 : -1; });
+      secTabs.forEach(function (o) { o.setAttribute("aria-selected", String(o.getAttribute("data-tab") === "summary")); });
+      var solo = !!REVIEWS[current].failure;
+      secTabs.forEach(function (o) { o.style.display = solo ? "none" : ""; });
+      render();
+    });
+    t.addEventListener("keydown", function (e) {
+      var step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1
+               : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
+      if (!step) return;
+      e.preventDefault();
+      var n = prTabs[(i + step + prTabs.length) % prTabs.length];
+      n.focus(); n.click();
+    });
+  });
+
+  secTabs.forEach(function (t) {
+    t.addEventListener("click", function () {
+      tab = t.getAttribute("data-tab");
+      secTabs.forEach(function (o) { o.setAttribute("aria-selected", String(o === t)); });
+      render();
+    });
+  });
+
+  /* ---- the GitHub plane ---- */
+  var shot = document.getElementById("sr-shot");
+  var cap = document.getElementById("sr-cap");
+  var dots = document.getElementById("sr-dots");
+  var counter = document.getElementById("sr-gh-n");
+  var gh = document.getElementById("sr-gh");
+  var at = 0;
+
+  function paint(i) {
+    at = (i + SHOTS.length) % SHOTS.length;
+    shot.src = SHOTS[at][0];
+    shot.alt = SHOTS[at][1].replace(/<[^>]+>/g, "");
+    cap.innerHTML = SHOTS[at][1];
+    counter.textContent = at + 1 + " / " + SHOTS.length;
+    [].slice.call(dots.children).forEach(function (d, n) {
+      d.setAttribute("aria-current", String(n === at));
+    });
+  }
+
+  SHOTS.forEach(function (s, i) {
+    var d = document.createElement("button");
+    d.className = "sr-dot";
+    d.type = "button";
+    d.setAttribute("aria-label", "Screenshot " + (i + 1));
+    d.addEventListener("click", function () { paint(i); });
+    dots.appendChild(d);
+  });
+
+  /* Both planes stay in the document while one of them is off-stage, so
+     their controls stay tabbable unless something says otherwise — and a
+     keyboard user would tab straight into a pane they cannot see. Marking
+     it aria-hidden alone is worse than nothing: that hides it from a
+     screen reader while leaving it reachable by Tab. */
+  function tabbable(el, on) {
+    [].slice.call(el.querySelectorAll("button, a, img")).forEach(function (n) {
+      if (on) n.removeAttribute("tabindex");
+      else n.setAttribute("tabindex", "-1");
+    });
+  }
+
+  var plane = root.querySelector(".sr-plane");
+
+  function view(which) {
+    var toGithub = which === "github";
+    root.setAttribute("data-view", which);
+    gh.setAttribute("aria-hidden", String(!toGithub));
+    plane.setAttribute("aria-hidden", String(toGithub));
+    tabbable(gh, toGithub);
+    tabbable(plane, !toGithub);
+    /* The picker drives roving tabindex itself; hand it back on return. */
+    if (!toGithub) {
+      prTabs.forEach(function (o) {
+        o.tabIndex = o.getAttribute("aria-selected") === "true" ? 0 : -1;
+      });
+    }
+  }
+
+  document.getElementById("sr-open").addEventListener("click", function () {
+    if (!shot.src) paint(0);
+    view("github");
+    document.getElementById("sr-next").focus();
+  });
+  document.getElementById("sr-back").addEventListener("click", function () {
+    view("work");
+    document.getElementById("sr-open").focus();
+  });
+  document.getElementById("sr-next").addEventListener("click", function () { paint(at + 1); });
+
+  view("work");
+  render();
 })();
 </script>
 

@@ -793,8 +793,8 @@ document.documentElement.classList.add("anim");
 
     <div class="mast-meta">
       <p class="lbl">Built by <span>Nafees&nbsp;S &amp; S&nbsp;Gaja&nbsp;Lakshmi</span></p>
-      <p class="lbl">Report <span>v1.0</span></p>
-      <p class="lbl">Status <span>Working end to end</span></p>
+      <p class="lbl">Report <span>v2.0</span></p>
+      <p class="lbl">Status <span>All fifteen steps running</span></p>
     </div>
   </header>
 
@@ -902,8 +902,7 @@ document.documentElement.classList.add("anim");
             <p class="cast-tech">Scoring engine &middot; Feedback store</p>
           </div>
           <p class="cast-what">Collects the thumbs-up and thumbs-down a developer gives each
-            comment, and turns them into a score for how good Liffy's reviews actually are.
-            <span class="pill warn">being built now</span></p>
+            comment, and turns them into a score for how good Liffy's reviews actually are.</p>
         </div>
       </div>
 
@@ -1385,8 +1384,9 @@ document.documentElement.classList.add("anim");
 
       <p class="p sub tight" style="font-size:0.82rem;margin-bottom:1.5rem">Note the clock:
         two minutes, against a target of ninety seconds. That gap is the honest reason the
-        timing measurement described in Plate 04 is being built &mdash; a target nobody measures
-        properly is a target nobody misses.</p>
+        timing measurement described in Plate 04 exists &mdash; a target nobody measures
+        properly is a target nobody misses. Liffy now records both numbers on every review,
+        the working time and the full wait, and reports the median of each.</p>
 
       <h3 class="h3" style="margin-bottom:0.4rem">The one that mattered</h3>
       <p class="p dim tight" style="font-size:0.92rem">Liffy rated this <span class="pill crit">critical</span>
@@ -1474,7 +1474,7 @@ document.documentElement.classList.add("anim");
     </div>
     <div class="plate-bd">
       <div class="act-hd">
-        <p class="lbl">Steps 14 and 15 &mdash; currently being built</p>
+        <p class="lbl">Steps 14 to 16 &mdash; the loop that closes</p>
         <h2 class="h2">A review nobody scores cannot improve</h2>
         <p class="p dim">Everything up to here produces a review. This last act is what stops
           the quality being a matter of opinion. Without it, there would be no way to answer
@@ -1487,9 +1487,9 @@ document.documentElement.classList.add("anim");
           <div class="dg-arrow"></div>
           <div class="dg-box fill"><span class="dg-t">Stored against<br>the comment</span><span class="dg-s">Database</span></div>
           <div class="dg-arrow"></div>
-          <div class="dg-box dash"><span class="dg-t">Weekly job<br>scores reviews</span><span class="dg-s">Celery beat</span></div>
+          <div class="dg-box fill"><span class="dg-t">Weekly job<br>scores reviews</span><span class="dg-s">Celery beat</span></div>
           <div class="dg-arrow"></div>
-          <div class="dg-box dash"><span class="dg-t">Bad reviews<br>flagged</span><span class="dg-s">Examiner</span></div>
+          <div class="dg-box fill"><span class="dg-t">Bad reviews<br>flagged</span><span class="dg-s">Examiner</span></div>
           <div class="dg-arrow"></div>
           <div class="dg-box dash"><span class="dg-t">Briefing<br>rewritten</span><span class="dg-s">Humans</span></div>
         </div>
@@ -1534,8 +1534,8 @@ document.documentElement.classList.add("anim");
           <span class="pill none">target &gt; 70%</span>
         </div>
         <div class="board-row">
-          <div class="board-t">How often Liffy raises a non-issue<small>False positive rate</small></div>
-          <span class="pill none">target &lt; 20%</span>
+          <div class="board-t">How often Liffy raises a non-issue<small>False positive rate &middot; the complement of the above</small></div>
+          <span class="pill none">not the operative target</span>
         </div>
         <div class="board-row">
           <div class="board-t">Whether "critical" really means critical<small>Severity calibration</small></div>
@@ -1552,15 +1552,19 @@ document.documentElement.classList.add("anim");
       </div>
 
       <div class="note">
-        <p class="lbl">A contradiction found in our own specification</p>
+        <p class="lbl">A contradiction found in our own specification &mdash; and settled</p>
         <p class="p">The first two targets cannot both be met as written. If a developer's only
           options are thumbs up and thumbs down, then "comments marked as not an issue" is
           exactly "comments not given a thumbs up" &mdash; so the second number is always
           100% minus the first. Asking for above 70% <i>and</i> below 20% asks for
-          <span class="mono">70&nbsp;+&nbsp;80&nbsp;=&nbsp;150%</span>. Fixing it means either
-          adding a third option to the vote or admitting the two metrics are one. This was
-          caught while writing the code, and is being resolved and documented rather than
-          quietly implemented wrong.</p>
+          <span class="mono">70&nbsp;+&nbsp;80&nbsp;=&nbsp;150%</span>. It was caught while
+          writing the code, and written down rather than quietly implemented wrong.</p>
+        <p class="p">The resolution: both numbers are still stored, because they are the two
+          columns the schema promises, but <b>approval rate is the operative target</b> and
+          false-positive rate is recorded as its arithmetic complement, not as a second
+          opinion. Telling the two genuinely apart needs a third answer in the vote &mdash;
+          "wrong" as distinct from "not useful" &mdash; which is a schema change worth making
+          when there is enough feedback for the finer number to mean anything.</p>
       </div>
     </div>
   </section>
@@ -1632,15 +1636,15 @@ document.documentElement.classList.add("anim");
   <section class="plate">
     <div class="plate-hd">
       <span class="plate-no">PLATE 09</span>
-      <span class="plate-ti">What is built, and what is next</span>
+      <span class="plate-ti">What is built, and what is not</span>
     </div>
     <div class="plate-bd">
       <div class="act-hd">
-        <h2 class="h2">Thirteen of the fifteen steps run today</h2>
+        <h2 class="h2">All fifteen steps run today</h2>
         <p class="p dim">Steps 1 to 13 &mdash; sign in, connect a project, read it, receive a pull
           request, retrieve context, write the review, display it &mdash; all work end to end
-          against real repositories and a real AI. Steps 14 and 15, the scoring loop, are the
-          milestone currently in progress.</p>
+          against real repositories and a real AI. So do steps 14 and 15: comments are rated,
+          a weekly job turns those ratings into scores, and an analytics page shows them.</p>
       </div>
 
       <div class="board">
@@ -1664,17 +1668,25 @@ document.documentElement.classList.add("anim");
           <div class="board-t">Dashboard with inline comments on the diff<small>Act III &middot; step 13</small></div>
           <span class="pill ok">done</span>
         </div>
-        <div class="board-row now">
+        <div class="board-row done">
           <div class="board-t">Thumbs up / down on every comment<small>Act IV &middot; step 14</small></div>
-          <span class="pill warn">in progress</span>
+          <span class="pill ok">done</span>
         </div>
-        <div class="board-row now">
+        <div class="board-row done">
           <div class="board-t">Weekly scoring job and an analytics page<small>Act IV &middot; step 15</small></div>
-          <span class="pill warn">in progress</span>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row done">
+          <div class="board-t">Posting the review back onto the GitHub pull request<small>Deliberately last &mdash; see below</small></div>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row done">
+          <div class="board-t">Settings, model providers and themes inside the app<small>No .env editing, and a subscription plan works as a provider</small></div>
+          <span class="pill ok">done</span>
         </div>
         <div class="board-row now">
-          <div class="board-t">Posting the review back onto the GitHub pull request<small>Deliberately last &mdash; see below</small></div>
-          <span class="pill warn">in progress</span>
+          <div class="board-t">Teams, organisation accounts, anything outside a GitHub pull request<small>Not built &mdash; and not planned</small></div>
+          <span class="pill none">not built</span>
         </div>
       </div>
 
@@ -1684,19 +1696,22 @@ document.documentElement.classList.add("anim");
           day one. It deliberately did not. An automated reviewer that starts commenting on
           people's work before anyone has established whether it is any good is just noise &mdash;
           and noise gets muted permanently. The dashboard came first so the quality could be
-          judged privately. Now that a real review has been checked comment by comment, posting
-          is being added &mdash; switched off by default.</p>
+          judged privately. Only once a real review had been checked comment by comment did
+          posting go in &mdash; and it ships switched off. Turn it on and it still only leaves
+          a comment; approving a pull request or formally blocking a merge is a second,
+          separate opt-in. An automated reviewer that can hold up a human's work uninvited is
+          the kind of tool people mute permanently.</p>
       </div>
 
       <div class="stats">
-        <div class="stat"><span class="stat-v">655</span><span class="lbl">Automated tests</span></div>
-        <div class="stat"><span class="stat-v">130</span><span class="lbl">Commits</span></div>
-        <div class="stat"><span class="stat-v">37</span><span class="lbl">Merged changes</span></div>
+        <div class="stat"><span class="stat-v">1,347</span><span class="lbl">Automated tests</span></div>
+        <div class="stat"><span class="stat-v">274</span><span class="lbl">Commits</span></div>
+        <div class="stat"><span class="stat-v">68</span><span class="lbl">Pull requests merged</span></div>
         <div class="stat"><span class="stat-v">2</span><span class="lbl">People</span></div>
       </div>
-      <p class="p sub tight" style="font-size:0.82rem;margin-top:0.85rem">Every one of those 655
-        tests runs automatically before any change is allowed into the project. Nothing merges
-        red.</p>
+      <p class="p sub tight" style="font-size:0.82rem;margin-top:0.85rem">Every one of those
+        1,347 tests runs automatically before any change is allowed into the project. Nothing
+        merges red.</p>
     </div>
   </section>
 
@@ -1713,14 +1728,14 @@ document.documentElement.classList.add("anim");
 
     <div class="colo-credit">
       <span class="lbl">Architecture &amp; Project Report</span>
-      <span class="colo-credit-v">Version 1.0</span>
+      <span class="colo-credit-v">Version 2.0</span>
       <span class="colo-credit-v">Nafees&nbsp;S &amp; S&nbsp;Gaja&nbsp;Lakshmi</span>
     </div>
 
     <div class="colo-foot">
       <p class="lbl">Source <span>github.com/lucenity0/Liffy</span></p>
       <p class="lbl">Read the flow <span>liffy.lucenity.dev/report</span></p>
-      <p class="lbl">Steps live <span>13 of 15</span></p>
+      <p class="lbl">Steps live <span>15 of 15</span></p>
     </div>
   </footer>
 

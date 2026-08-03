@@ -35,23 +35,7 @@
  * the product are the same ink.
  * ==================================================================== */
 :root {
-  --paper: #f4f1ea;
-  --card: #faf8f3;
-  --recessed: #efebe2;
-  --rule: #ded8cb;
-  --rule-strong: #c9c1b0;
-  --shadow-edge: #c9c1b0;
-
-  --ink: #2b2925;
-  --ink-dim: #6b6459;
-  --ink-sub: #8e8678;
-
-  --oxide: #9a3f2b;
-  --sage: #4a6b4a;
-  --ochre: #7d6019;
-  --payne: #3f5a73;
-
-  --tint: 9%;
+  __PALETTE_LIGHT__
   --oxide-tint: color-mix(in oklab, var(--oxide) var(--tint), var(--card));
   --sage-tint: color-mix(in oklab, var(--sage) var(--tint), var(--card));
   --ochre-tint: color-mix(in oklab, var(--ochre) var(--tint), var(--card));
@@ -89,20 +73,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not(.light) {
-    --paper: #1d1b18;
-    --card: #28251f;
-    --recessed: #141311;
-    --rule: #423d36;
-    --rule-strong: #5a5349;
-    --shadow-edge: #0d0c0a;
-    --ink: #e6e1d6;
-    --ink-dim: #9c9280;
-    --ink-sub: #786f60;
-    --oxide: #dd8462;
-    --sage: #7ba171;
-    --ochre: #bd9433;
-    --payne: #84a5c2;
-    --tint: 17%;
+    __PALETTE_DARK__
     --grain-opacity: 0.05;
     --grain-blend: screen;
     --grid-opacity: 0.45;
@@ -110,20 +81,7 @@
 }
 :root[data-theme="dark"],
 :root.dark {
-  --paper: #1d1b18;
-  --card: #28251f;
-  --recessed: #141311;
-  --rule: #423d36;
-  --rule-strong: #5a5349;
-  --shadow-edge: #0d0c0a;
-  --ink: #e6e1d6;
-  --ink-dim: #9c9280;
-  --ink-sub: #786f60;
-  --oxide: #dd8462;
-  --sage: #7ba171;
-  --ochre: #bd9433;
-  --payne: #84a5c2;
-  --tint: 17%;
+  __PALETTE_DARK__
   --grain-opacity: 0.05;
   --grain-blend: screen;
   --grid-opacity: 0.45;
@@ -1600,15 +1558,22 @@ a { color: inherit; }
           <li>Retrieval-grounded, line-anchored comments</li>
           <li>Background queue and a dashboard to watch it</li>
           <li>Four interchangeable model providers</li>
+          <li>Rating comments up or down</li>
+          <li>Scoring the system against those ratings</li>
+          <li>Posting reviews back to the PR itself</li>
+          <li>Indexing languages beyond Python</li>
+          <li>In-app env settings configuration - avoid env(hopefully)</li>
+          <li>Subscription based models - connect your pro plans! [claude/codex]</li>
+          <li>Filter and sort review list</li>
+          <li>Help page</li>
         </ul>
       </div>
       <div class="wip">
         <p class="lbl">Being built</p>
         <ul>
-          <li>Rating comments up or down</li>
-          <li>Scoring the system against those ratings</li>
-          <li>Posting reviews back to the PR itself</li>
-          <li>Indexing languages beyond Python</li>
+          <li>Themes!</li>
+          <li>Teams and Enterprise mode [in development]</li>
+          <li>Your Future Contributions !!</li>
         </ul>
       </div>
     </div>
@@ -1708,7 +1673,7 @@ a { color: inherit; }
       <div class="foot-col">
         <h4>Built by</h4>
         <ul>
-          <li><a href="https://github.com/lucenity0">Nafees S</a></li>
+          <li><a href="https://github.com/lucenity0">lucenity</a></li>
           <li><a href="https://github.com/gajalakshmishashir">S Gaja Lakshmi</a></li>
         </ul>
       </div>

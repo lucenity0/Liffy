@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { Appearance } from "@/components/settings/Appearance";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import {
   EDITABLE_GROUP,
@@ -259,6 +260,11 @@ export function Settings() {
             </h2>
             <p className="text-sm text-ink-dim">{section.description}</p>
           </div>
+
+          {/* Appearance leads the Review section rather than getting a
+              section of its own: it is one card, and a nav entry holding a
+              single card is a heavier promise than it can keep. */}
+          {section.id === "review" && <Appearance />}
 
           {editableGroup && (
             <Sheet>

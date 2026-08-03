@@ -25,19 +25,28 @@ export function resolveColor(
   variable: string,
   fallback: string,
   theme?: string,
+  /**
+   * Measure inside an existing element instead of a fresh one.
+   *
+   * The theme editor resolves a palette that is not in any stylesheet yet —
+   * the values live in a `style` attribute on a scratch node — so it needs
+   * the probe mounted *there* rather than in a wrapper of our own.
+   */
+  within?: HTMLElement,
 ): string {
   try {
-    const host = document.createElement("div");
+    const host = within ?? document.createElement("div");
     if (theme) host.dataset.theme = theme;
-    host.style.display = "none";
+    if (!within) host.style.display = "none";
 
     const probe = document.createElement("span");
     probe.style.color = `var(${variable})`;
     host.appendChild(probe);
-    document.body.appendChild(host);
+    if (!within) document.body.appendChild(host);
 
     const computed = getComputedStyle(probe).color;
-    host.remove();
+    if (within) probe.remove();
+    else host.remove();
 
     const rgb = computed.match(/\d+(\.\d+)?/g);
     if (!rgb || rgb.length < 3) return fallback;

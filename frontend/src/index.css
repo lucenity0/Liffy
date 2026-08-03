@@ -216,6 +216,158 @@
 }
 
 /* ==================================================================== *
+ * 1c. BLACKBOARD — slate and chalk. The default.
+ *
+ * The material pair paper never had. Graphite is pencil on dark paper,
+ * which is the same substance twice; a blackboard is a different surface
+ * with a different mark on it, and every texture already in this file has a
+ * chalk reading — the graph grid becomes faint chalk rules, the grain
+ * becomes dust. Cooler than graphite by design: slate is blue-grey, and
+ * that is what separates the two dark themes at a glance rather than by
+ * name.
+ *
+ * The four semantic inks are chalk colours, which is a real constraint
+ * rather than a conceit — chalk ships in roughly this palette.
+ * ==================================================================== */
+[data-theme="blackboard"] {
+  color-scheme: dark;
+
+  --paper: #12171a;
+  --card: #1b2226; /* 1.12:1 — still the lightest of the three */
+  --recessed: #090c0e;
+  --rule: #3e4a52; /* 1.78:1 */
+  --rule-strong: #55636c; /* 2.66:1 */
+  --shadow-edge: #05080a;
+
+  --ink: #e8e9e4; /* 14.8:1  chalk, not white */
+  --ink-dim: #b3b8b4; /*  9.0:1 */
+  --ink-sub: #93999a; /*  6.2:1 */
+
+  --oxide: #e2846a; /* 6.7:1 */
+  --sage: #84b184; /* 7.4:1 */
+  --ochre: #d0ab52; /* 8.3:1 */
+  --payne: #88b4d4; /* 8.2:1 */
+
+  --neutral-tint: #2a333a;
+  --tint-mix: 20%;
+  --diff-add-mix: 24%;
+  --diff-del-mix: 22%;
+
+  --chrome: #0b0f11;
+  --chrome-ink: #e8e9e4;
+  --chrome-ink-dim: #8d9599;
+  --chrome-rule: #313d44;
+  --chrome-active: #192126;
+
+  /* Chalk dust, not paper grain: coarser and lifted rather than multiplied,
+     and a touch stronger than graphite's because slate is flatter. */
+  --grain-blend: screen;
+  --grain-opacity: 0.05;
+  --grid-opacity: 0.4;
+}
+
+/* ==================================================================== *
+ * 1d. CARBON — near-black, for OLED and for maximum contrast.
+ *
+ * The deep end of the dark ladder. Its constraint is the opposite of every
+ * other theme's: with --paper at #0b0b0b there is almost no room *below*
+ * the page, so --recessed is true black and the whole surface stack is
+ * pushed upward instead. That is why --card sits further off the page here
+ * than anywhere else — it is the only direction left.
+ * ==================================================================== */
+[data-theme="carbon"] {
+  color-scheme: dark;
+
+  --paper: #0b0b0b;
+  --card: #1c1c1c; /* 1.13:1 */
+  --recessed: #000000; /* true black — the floor */
+  --rule: #434343; /* 1.71:1 */
+  --rule-strong: #585858; /* 2.42:1 */
+  --shadow-edge: #000000;
+
+  --ink: #ededed; /* 16.6:1 */
+  --ink-dim: #b0b0b0; /*  9.0:1 */
+  --ink-sub: #8e8e8e; /*  5.9:1 */
+
+  --oxide: #e08a6c;
+  --sage: #82ab7d;
+  --ochre: #c9a33f;
+  --payne: #8aacc8;
+
+  --neutral-tint: #2c2c2c;
+  --tint-mix: 20%;
+  --diff-add-mix: 24%;
+  --diff-del-mix: 22%;
+
+  --chrome: #000000;
+  --chrome-ink: #ededed;
+  --chrome-ink-dim: #8e8e8e;
+  --chrome-rule: #313131;
+  --chrome-active: #181818;
+
+  --grain-blend: screen;
+  /* Less than the other dark themes. The point of carbon is that black is
+     black — visible noise over it is the one thing that would undo it. */
+  --grain-opacity: 0.03;
+  --grid-opacity: 0.3;
+}
+
+/* ==================================================================== *
+ * 1e. BOND — bright office paper. The high-contrast light theme.
+ *
+ * This is where WCAG 1.4.11's 3.0:1 for non-text actually lands. Paper's
+ * hairlines sit at 1.60:1 and are meant to; pushing them to 3.0 would turn
+ * every divider into an outline and make the whole thing a different
+ * design. So the accessible answer is a theme rather than a compromise —
+ * `prefers-contrast: more` selects this one, and Paper keeps its character.
+ *
+ * Cooler and flatter than paper on purpose: this is bond paper under an
+ * office light, not a notebook.
+ * ==================================================================== */
+[data-theme="bond"] {
+  color-scheme: light;
+
+  --paper: #f2f2ef;
+  --card: #ffffff; /* the one place #fff is right */
+  --recessed: #e5e5e1;
+  --rule: #98988f; /* 2.73:1 — clears 1.4.11 */
+  --rule-strong: #6b6b64; /* 4.94:1 */
+  --shadow-edge: #88887f;
+
+  --ink: #16161a; /* 17.4:1 */
+  --ink-dim: #44444a; /*  9.3:1 */
+  --ink-sub: #5e5e64; /*  6.2:1 */
+
+  /* Darker than paper's, so they clear AA against white by a wide margin
+     rather than by the two decimal places paper needs. */
+  --oxide: #8c2f1c; /* 8.0:1 */
+  --sage: #2f5a34; /* 7.7:1 */
+  --ochre: #6a4e0c; /* 7.5:1 */
+  --payne: #2c4a63; /* 9.0:1 */
+
+  --neutral-tint: #dededd;
+  /* Stronger washes than paper: mixed against pure white, the same
+     percentage loses the chroma that separates a tinted badge from a
+     neutral one. */
+  --tint-mix: 26%;
+  --diff-add-mix: 26%;
+  --diff-del-mix: 24%;
+
+  --chrome: #16161a;
+  --chrome-ink: #fbfbfa;
+  --chrome-ink-dim: #a6a6a2;
+  --chrome-rule: #3c3c42;
+  --chrome-active: #26262c;
+
+  /* No texture. Grain and a grid are exactly the low-contrast decoration
+     someone choosing a high-contrast theme is trying to get away from —
+     the prefers-contrast block at the end of this file removes them for
+     everyone, and this theme does not wait to be asked. */
+  --grain-opacity: 0;
+  --grid-opacity: 0;
+}
+
+/* ==================================================================== *
  * 2. NAMESPACE RESETS + THEME-INVARIANT SCALES.
  *
  * This block MUST come before the aliases below. `*: initial` closes a

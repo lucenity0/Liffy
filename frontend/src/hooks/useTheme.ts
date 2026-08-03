@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
+import { customThemeCss, type CustomTheme } from "@/lib/theme/derive";
 import {
   DEFAULT_DARK,
   DEFAULT_LIGHT,
@@ -38,6 +39,31 @@ export interface ThemePrefs {
   theme: ThemeId;
   light: ThemeId;
   dark: ThemeId;
+  /** The user's own palette, if they have built one. */
+  custom: CustomTheme | null;
+}
+
+/** The <style> element the custom palette is injected into. */
+const CUSTOM_STYLE_ID = "liffy-custom-theme";
+
+/**
+ * Writes the custom palette into the document.
+ *
+ * A dedicated <style> element rather than inline properties on <html>: the
+ * style attribute is shared with anything else that might touch it, and a
+ * rule keyed on `[data-theme="custom"]` also means selecting another theme
+ * deactivates it without anything having to clean up.
+ */
+export function applyCustomTheme(custom: CustomTheme | null): void {
+  const existing = document.getElementById(CUSTOM_STYLE_ID);
+  if (!custom) {
+    existing?.remove();
+    return;
+  }
+  const style = existing ?? document.createElement("style");
+  style.id = CUSTOM_STYLE_ID;
+  style.textContent = customThemeCss(custom);
+  if (!existing) document.head.appendChild(style);
 }
 
 const DEFAULTS: ThemePrefs = {
@@ -45,6 +71,7 @@ const DEFAULTS: ThemePrefs = {
   theme: DEFAULT_THEME,
   light: DEFAULT_LIGHT,
   dark: DEFAULT_DARK,
+  custom: null,
 };
 
 const listeners = new Set<() => void>();
@@ -82,11 +109,23 @@ export function parsePrefs(raw: string | null): ThemePrefs {
       theme: isThemeId(p.theme) ? p.theme : DEFAULTS.theme,
       light: isThemeId(p.light) ? p.light : DEFAULTS.light,
       dark: isThemeId(p.dark) ? p.dark : DEFAULTS.dark,
+      custom: isCustomTheme(p.custom) ? p.custom : null,
     };
   } catch {
     // A theme preference is never worth throwing over.
     return DEFAULTS;
   }
+}
+
+/** Shape check only — the values are colours and the browser is the judge. */
+function isCustomTheme(value: unknown): value is CustomTheme {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as CustomTheme;
+  return (
+    Boolean(candidate.seeds) &&
+    typeof candidate.seeds.surface === "string" &&
+    typeof candidate.seeds.ink === "string"
+  );
 }
 
 /** Which theme a set of preferences resolves to right now. */
@@ -136,9 +175,13 @@ function getSnapshot(): ThemeId {
 }
 
 /** The DOM half of a theme change, without touching localStorage. */
-function apply(theme: ThemeId) {
+function apply(theme: ThemeId, custom?: CustomTheme | null) {
   const root = document.documentElement;
-  const polarity = polarityOf(theme);
+  // The custom theme's polarity is whatever its seeds say, not what the
+  // placeholder spec claims — it is the one theme whose answer is stored
+  // rather than declared.
+  const polarity =
+    theme === "custom" && custom ? custom.seeds.polarity : polarityOf(theme);
 
   root.dataset.theme = theme;
   // Polarity as a class as well as an attribute: `@custom-variant dark` keys
@@ -148,7 +191,12 @@ function apply(theme: ThemeId) {
   root.classList.toggle("light", polarity === "light");
 
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", themeSpec(theme).color);
+  if (meta) {
+    meta.setAttribute(
+      "content",
+      theme === "custom" && custom ? custom.seeds.surface : themeSpec(theme).color,
+    );
+  }
 
   emit();
 }
@@ -159,22 +207,67 @@ export function useTheme() {
   /** Pin a theme. Also records it as the preferred theme of its polarity. */
   const setTheme = useCallback((next: ThemeId) => {
     const prefs = readPrefs();
+    const polarity =
+      next === "custom" && prefs.custom
+        ? prefs.custom.seeds.polarity
+        : polarityOf(next);
     writePrefs({
       ...prefs,
       mode: "fixed",
       theme: next,
       // Remembered per side, so a later "match system" picks up the themes
       // actually chosen rather than resetting to the defaults.
-      [polarityOf(next)]: next,
+      [polarity]: next,
     });
-    apply(next);
+    if (next === "custom") applyCustomTheme(prefs.custom);
+    apply(next, prefs.custom);
+  }, []);
+
+  /**
+   * Save the custom palette, and switch to it.
+   *
+   * Writes the <style> tag before the attribute, so the rule exists by the
+   * time `[data-theme="custom"]` starts matching — the other order paints one
+   * frame of an unstyled page.
+   */
+  const saveCustom = useCallback((custom: CustomTheme) => {
+    const prefs = readPrefs();
+    const next: ThemePrefs = {
+      ...prefs,
+      mode: "fixed",
+      theme: "custom",
+      custom,
+      [custom.seeds.polarity]: "custom",
+    };
+    writePrefs(next);
+    applyCustomTheme(custom);
+    apply("custom", custom);
+  }, []);
+
+  /** Drop the custom palette and fall back to a preset. */
+  const clearCustom = useCallback(() => {
+    const prefs = readPrefs();
+    const fallback = prefs.custom?.seeds.polarity === "light"
+      ? DEFAULT_LIGHT
+      : DEFAULT_DARK;
+    writePrefs({
+      ...prefs,
+      custom: null,
+      theme: prefs.theme === "custom" ? fallback : prefs.theme,
+      light: prefs.light === "custom" ? DEFAULT_LIGHT : prefs.light,
+      dark: prefs.dark === "custom" ? DEFAULT_DARK : prefs.dark,
+    });
+    applyCustomTheme(null);
+    if (prefs.theme === "custom") apply(fallback);
   }, []);
 
   /** Hand the choice back to the OS, keeping the per-side preferences. */
   const matchSystem = useCallback(() => {
     const prefs = { ...readPrefs(), mode: "system" as const };
     writePrefs(prefs);
-    apply(resolveTheme(prefs, prefersDark()));
+    const resolved = resolveTheme(prefs, prefersDark());
+    if (resolved === "custom") applyCustomTheme(prefs.custom);
+    apply(resolved, prefs.custom);
   }, []);
 
   /**
@@ -188,11 +281,19 @@ export function useTheme() {
     setTheme(next);
   }, [setTheme]);
 
+  const prefs = readPrefs();
+  const polarity =
+    theme === "custom" && prefs.custom
+      ? prefs.custom.seeds.polarity
+      : polarityOf(theme);
+
   return {
     theme,
-    polarity: polarityOf(theme),
-    prefs: readPrefs(),
+    polarity,
+    prefs,
     setTheme,
+    saveCustom,
+    clearCustom,
     matchSystem,
     toggle,
   };

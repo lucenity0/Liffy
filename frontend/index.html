@@ -7,7 +7,7 @@
     <meta name="color-scheme" content="light dark" />
     <!-- The default theme's --paper. The boot script below rewrites this as
          soon as it knows which theme is actually active. -->
-    <meta name="theme-color" content="#1d1b18" />
+    <meta name="theme-color" content="#12171a" />
     <meta
       name="description"
       content="Liffy — a self-hosted AI code reviewer for your pull requests."
@@ -34,11 +34,15 @@
       (function () {
         var THEMES = {
           paper: { polarity: "light", color: "#f0ece3" },
+          bond: { polarity: "light", color: "#f2f2ef" },
           graphite: { polarity: "dark", color: "#1d1b18" },
+          blackboard: { polarity: "dark", color: "#12171a" },
+          carbon: { polarity: "dark", color: "#0b0b0b" },
         };
-        var DEFAULT = "graphite";
+        var DEFAULT = "blackboard";
 
         var id = DEFAULT;
+        var custom = null;
         try {
           var raw = localStorage.getItem("liffy-theme");
           if (raw) {
@@ -47,6 +51,7 @@
               id = raw;
             } else {
               var p = JSON.parse(raw);
+              custom = p.custom || null;
               var pick =
                 p.mode === "system"
                   ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -54,6 +59,7 @@
                     : p.light
                   : p.theme;
               if (THEMES[pick]) id = pick;
+              else if (pick === "custom" && custom) id = "custom";
             }
           }
         } catch (e) {
@@ -61,10 +67,35 @@
         }
 
         var root = document.documentElement;
+        var polarity = THEMES[id] ? THEMES[id].polarity : "dark";
+        var color = THEMES[id] ? THEMES[id].color : null;
+
+        /* The custom palette has to be in the document before the attribute
+           starts matching, or the first paint is an unstyled page. Its values
+           live in storage rather than in index.css, so this writes the rule
+           out here and the app's applyCustomTheme replaces the same element
+           afterwards. It restates deriveTokens' output, not its logic — the
+           tokens are stored already resolved. */
+        if (id === "custom" && custom) {
+          polarity = custom.seeds.polarity === "light" ? "light" : "dark";
+          color = custom.seeds.surface;
+          var body = "";
+          for (var key in custom.tokens) {
+            if (Object.prototype.hasOwnProperty.call(custom.tokens, key)) {
+              body += "--" + key + ":" + custom.tokens[key] + ";";
+            }
+          }
+          var style = document.createElement("style");
+          style.id = "liffy-custom-theme";
+          style.textContent =
+            '[data-theme="custom"]{color-scheme:' + polarity + ";" + body + "}";
+          document.head.appendChild(style);
+        }
+
         root.setAttribute("data-theme", id);
-        root.classList.add(THEMES[id].polarity);
+        root.classList.add(polarity);
         var meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.setAttribute("content", THEMES[id].color);
+        if (meta && color) meta.setAttribute("content", color);
       })();
     </script>
 

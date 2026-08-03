@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { ThemeToggle } from "./ThemeToggle";
+import { ThemePicker } from "./ThemeToggle";
 import { UserMenu } from "./UserMenu";
 import { cn } from "@/lib/utils";
 
@@ -197,7 +197,7 @@ export function SideNav() {
           clipped off the bottom of the screen. */}
       <div className="flex shrink-0 items-center gap-1 lg:flex-col lg:items-stretch lg:gap-0.5">
         <div className="hidden lg:mb-1 lg:block lg:border-t lg:border-chrome-rule" />
-        <ThemeToggle />
+        <ThemePicker />
         <UserMenu />
         {/* The strip has no room for a tagline, and it is not worth a line
             of a phone's viewport. */}

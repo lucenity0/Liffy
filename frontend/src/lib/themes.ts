@@ -12,7 +12,24 @@
  * only the id → polarity and id → colour maps; keep them in step.
  */
 
-export type ThemeId = "paper" | "graphite";
+export type ThemeId =
+  | "paper"
+  | "bond"
+  | "graphite"
+  | "blackboard"
+  | "carbon"
+  | "custom";
+
+/**
+ * The custom theme is a real id but not a preset.
+ *
+ * It is absent from THEMES because everything that maps over THEMES — the
+ * picker's preset list, the style guide's audit — is asking about palettes
+ * that exist in index.css. Custom's values live in localStorage and are
+ * injected as a <style> tag, so it is selectable but never enumerated
+ * alongside the built-ins.
+ */
+export const CUSTOM_THEME: ThemeId = "custom";
 
 /** Light or dark. Distinct from the theme itself — five themes, two of these. */
 export type Polarity = "light" | "dark";
@@ -41,23 +58,61 @@ export const THEMES: readonly ThemeSpec[] = [
     color: "#f0ece3",
   },
   {
+    id: "bond",
+    label: "Bond",
+    note: "Crisp, high contrast",
+    polarity: "light",
+    color: "#f2f2ef",
+  },
+  {
     id: "graphite",
     label: "Graphite",
     note: "Soft warm dark",
     polarity: "dark",
     color: "#1d1b18",
   },
+  {
+    id: "blackboard",
+    label: "Blackboard",
+    note: "Slate and chalk",
+    polarity: "dark",
+    color: "#12171a",
+  },
+  {
+    id: "carbon",
+    label: "Carbon",
+    note: "Near-black, for OLED",
+    polarity: "dark",
+    color: "#0b0b0b",
+  },
 ];
 
 const BY_ID = new Map(THEMES.map((t) => [t.id, t]));
 
+/**
+ * A spec for the custom theme, so consumers do not each special-case it.
+ *
+ * `polarity` and `color` are placeholders: the real values live in the
+ * stored seeds, and `applyCustomTheme` rewrites the class and the meta tag
+ * from those. Anything reading this for display gets a sensible label.
+ */
+const CUSTOM_SPEC: ThemeSpec = {
+  id: "custom",
+  label: "Custom",
+  note: "Yours",
+  polarity: "dark",
+  color: "#12171a",
+};
+
 export function isThemeId(value: unknown): value is ThemeId {
-  return typeof value === "string" && BY_ID.has(value as ThemeId);
+  return (
+    typeof value === "string" &&
+    (BY_ID.has(value as ThemeId) || value === CUSTOM_THEME)
+  );
 }
 
 export function themeSpec(id: ThemeId): ThemeSpec {
-  // Non-null: ThemeId is derived from THEMES, so every id has a spec.
-  return BY_ID.get(id)!;
+  return BY_ID.get(id) ?? CUSTOM_SPEC;
 }
 
 export function polarityOf(id: ThemeId): Polarity {
@@ -77,6 +132,6 @@ export function themesByPolarity(polarity: Polarity): readonly ThemeSpec[] {
  * had already chosen keeps their choice — the migration in useTheme reads the
  * old plain-string value rather than discarding it.
  */
-export const DEFAULT_THEME: ThemeId = "graphite";
+export const DEFAULT_THEME: ThemeId = "blackboard";
 export const DEFAULT_LIGHT: ThemeId = "paper";
-export const DEFAULT_DARK: ThemeId = "graphite";
+export const DEFAULT_DARK: ThemeId = "blackboard";

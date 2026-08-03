@@ -831,7 +831,6 @@ export const fixturePullRequests: PullRequestOut[] = [
     head_branch: "feature/indexing",
     base_branch: "main",
     state: "open",
-    updated_at: "2026-07-26T13:44:00Z",
   },
   {
     number: 251,
@@ -840,7 +839,6 @@ export const fixturePullRequests: PullRequestOut[] = [
     head_branch: "feat/repositories",
     base_branch: "main",
     state: "open",
-    updated_at: "2026-07-26T11:02:00Z",
   },
   {
     number: 246,
@@ -848,9 +846,6 @@ export const fixturePullRequests: PullRequestOut[] = [
     author: "lucenity0",
     head_branch: "claude-code",
     base_branch: "main",
-    // Null on purpose: GitHub can omit it, and the row must simply drop the
-    // timestamp rather than rendering "Invalid Date".
-    updated_at: null,
     state: "closed",
   },
 ];

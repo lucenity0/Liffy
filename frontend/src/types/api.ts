@@ -69,12 +69,6 @@ export interface PullRequestOut {
   head_branch: string;
   base_branch: string;
   state: string;
-  /**
-   * When GitHub last saw activity — the key this list is *sorted* by, so the
-   * picker can explain its own order. Null when GitHub omitted it; show
-   * nothing rather than guessing.
-   */
-  updated_at: string | null;
 }
 
 export interface PullRequestListOut {

@@ -4,7 +4,7 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Input } from "@/components/ui/Field";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { usePullRequests } from "@/hooks/usePullRequests";
-import { cn, formatAbsolute, formatRelative } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type State = "open" | "closed";
 
@@ -153,19 +153,6 @@ export function PullRequestPicker({
                       <span className="min-w-0 flex-1 truncate text-base text-ink">
                         {pull.title}
                       </span>
-                      {/* The list is sorted by this. Without it on the row the
-                          picker shows an order it cannot explain — and "is
-                          this the one I just pushed?" is the question you are
-                          actually asking here. */}
-                      {pull.updated_at && (
-                        <time
-                          dateTime={pull.updated_at}
-                          title={formatAbsolute(pull.updated_at)}
-                          className="shrink-0 text-2xs whitespace-nowrap text-ink-sub"
-                        >
-                          {formatRelative(pull.updated_at)}
-                        </time>
-                      )}
                     </span>
                     <span className="truncate font-code text-2xs text-ink-sub">
                       {pull.head_branch} → {pull.base_branch}

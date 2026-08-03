@@ -1,3 +1,4 @@
+import logging
 import json
 
 import pytest
@@ -1361,3 +1362,110 @@ def test_openai_json_schema_constrains_to_the_review_schema(
     assert fmt["json_schema"]["strict"] is True
     props = fmt["json_schema"]["schema"]["properties"]
     assert {"summary", "verdict", "comments"} <= set(props)
+
+
+# ── What a failed run is allowed to report ───────────────────────────────────
+#
+# A real failure surfaced as `Claude Code exited 1: {"type":"system",
+# "subtype":"init",...` — the CLI's startup banner, truncated mid-JSON. stderr
+# was empty, so the 300-character message was spent entirely on the least
+# informative line in the transcript and the actual error never appeared.
+
+
+def test_failure_message_skips_the_init_banner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The banner is long, first, and says nothing about the failure."""
+    from app.llm.chain import ClaudeCodeError
+
+    banner = json.dumps(
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "/tmp/liffy-review-cx__97r0",
+            "tools": [],
+            "mcp_servers": [],
+            "model": "claude-opus-5",
+            "slash_commands": ["deep-research"] * 40,
+        }
+    )
+    stdout = f"{banner}\nsomething actually went wrong here\n"
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(ClaudeCodeError) as caught:
+        llm.complete("sys", "user")
+
+    message = str(caught.value)
+    assert "something actually went wrong here" in message
+    assert '"subtype": "init"' not in message
+
+
+def test_failure_message_prefers_the_result_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI states its own error there, and it used to be thrown away.
+
+    The nonzero-exit path never called `_claude_code_stream`, so the one
+    parser that knows where the error lives was skipped exactly when needed.
+    """
+    from app.llm.chain import ClaudeCodeError
+
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init", "tools": []}),
+            json.dumps(
+                {"type": "result", "subtype": "error_during_execution",
+                 "is_error": True, "result": "model overloaded"}
+            ),
+        ]
+    )
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(ClaudeCodeError, match="model overloaded"):
+        llm.complete("sys", "user")
+
+
+def test_a_limit_stated_only_in_the_result_event_is_still_classified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Classification reads the whole blob, so a late notice still lands."""
+    from app.llm.chain import SubscriptionLimitError
+
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init", "tools": []}),
+            json.dumps(
+                {"type": "result", "is_error": True,
+                 "result": "You've hit your usage limit. Resets at 3pm."}
+            ),
+        ]
+    )
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    # "wait" rather than "something is broken" — the whole point of the split.
+    with pytest.raises(SubscriptionLimitError):
+        llm.complete("sys", "user")
+
+
+def test_a_silent_failure_says_so_rather_than_printing_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm.chain import ClaudeCodeError
+
+    llm, _ = _claude_code(monkeypatch, stdout="", returncode=1)
+    with pytest.raises(ClaudeCodeError, match="no output on stdout or stderr"):
+        llm.complete("sys", "user")
+
+
+def test_failed_run_is_logged_in_full(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The user-facing message is capped at 300 chars and the output is gone
+    the moment the subprocess returns — so without this nothing is
+    diagnosable after the fact."""
+    from app.llm.chain import ClaudeCodeError
+
+    stdout = json.dumps({"type": "system", "subtype": "init"}) + "\n" + ("x" * 900)
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with caplog.at_level(logging.ERROR, logger="app.llm.chain"):
+        with pytest.raises(ClaudeCodeError):
+            llm.complete("sys", "user")
+
+    assert "x" * 900 in caplog.text

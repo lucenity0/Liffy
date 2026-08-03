@@ -76,11 +76,6 @@ class PullRequestOut(BaseModel):
     head_branch: str
     base_branch: str
     state: str  # "open" | "closed"
-    # When GitHub last saw activity on it — the key the list is sorted by, so
-    # the picker can say why one row is above another. Nullable because the
-    # field is optional on GitHub's side and a missing timestamp must not
-    # take the whole picker down.
-    updated_at: datetime | None
 
 
 class PullRequestListOut(BaseModel):

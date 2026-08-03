@@ -286,26 +286,18 @@ describe("choosing a pull request from the list", () => {
 // ── What the mockup in review_ui.md asks the pocket to show ──────────────────
 
 describe("the pull request pocket", () => {
-  it("says how recently each pull request moved", async () => {
+  /**
+   * No per-row timestamp. The mockup shows "18m ago", and GitHub does return
+   * `updated_at` — but review_ui.md is explicit that this is a frontend
+   * restructuring and that unavailable information is omitted rather than
+   * added to the backend to satisfy a mockup. It is not on PullRequestOut, so
+   * the row does not claim it.
+   */
+  it("shows no timestamp, which the API does not carry", async () => {
     const { user } = open();
     await chooseRepo(user, "lucenity0/Liffy");
 
     const row = await screen.findByRole("button", { name: /#253/ });
-
-    // The list is sorted by activity; without this on the row it shows an
-    // order it cannot explain.
-    const when = within(row).getByRole("time");
-    expect(when).toHaveAttribute("datetime", "2026-07-26T13:44:00Z");
-  });
-
-  it("drops the timestamp rather than rendering a broken date", async () => {
-    const { user } = open();
-    await chooseRepo(user, "lucenity0/Liffy");
-    await user.click(await screen.findByRole("button", { name: /^closed/i }));
-
-    // #246's updated_at is null — GitHub can omit it, and "Invalid Date" in a
-    // picker is worse than no timestamp.
-    const row = await screen.findByRole("button", { name: /#246/ });
     expect(within(row).queryByRole("time")).toBeNull();
   });
 
@@ -341,7 +333,6 @@ describe("the pull request pocket", () => {
             head_branch: "f",
             base_branch: "main",
             state: "open",
-            updated_at: "2026-07-26T10:00:00Z",
           })),
           state: "open",
           // Null: a full page means "at least 50", which is not a total.

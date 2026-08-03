@@ -276,7 +276,6 @@ def list_repo_pulls(
                 head_branch=pull.head_branch,
                 base_branch=pull.base_branch,
                 state=pull.state,
-                updated_at=pull.updated_at,
             )
             for pull in pulls
         ],

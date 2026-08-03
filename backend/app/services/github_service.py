@@ -247,10 +247,6 @@ class PullRequestMeta:
     head_branch: str
     head_sha: str
     state: str
-    # ISO-8601, straight off GitHub. Defaulted rather than required because
-    # the single-PR path builds this too and does not need it — only the
-    # picker, which orders by activity and has to say how recent that was.
-    updated_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -546,9 +542,6 @@ class GitHubClient:
                 head_branch=(item.get("head") or {}).get("ref", ""),
                 head_sha=(item.get("head") or {}).get("sha", ""),
                 state=item.get("state", ""),
-                # The field this list is *sorted* by. Without it the picker
-                # shows an order it cannot explain.
-                updated_at=item.get("updated_at"),
             )
             for item in data
         ]

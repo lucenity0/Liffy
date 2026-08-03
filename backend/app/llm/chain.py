@@ -7,6 +7,7 @@ anchors comment line numbers to the actual diff.
 
 import atexit
 import json
+import logging
 import os
 import re
 import shutil
@@ -21,6 +22,8 @@ from app.llm.prompts import SYSTEM_PROMPT, build_review_prompt
 from app.schemas.review import LLMReviewOutput
 from app.services.diff_parser import FileDiff, FileStatus
 from app.services.rag_service import RetrievedChunk
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_RETRIES = 2
 
@@ -295,6 +298,46 @@ def running_in_container() -> bool:
         return False
 
 
+def _cli_failure_blob(stdout: str | None, stderr: str | None) -> str:
+    """The most informative 300 characters of a failed CLI run.
+
+    Built rather than concatenated, because the naive
+    ``stderr + "\\n" + stdout`` version was actively misleading. A
+    ``stream-json`` transcript opens with a ``system/init`` banner listing the
+    CLI's model, tools and every slash command it loaded — several hundred
+    characters of the least useful text in the stream. With an empty stderr,
+    that banner *was* the whole error message, and the real failure sat past
+    the truncation. The reported error read as if Claude Code had died at
+    startup when it had not even begun.
+
+    So: the ``result`` event first if the transcript has one, since that is
+    where the CLI states its own error. Then stderr. Then the **tail** of
+    stdout — whatever happened last, which on a crash is the crash.
+
+    Classification is unaffected either way: ``_classify_cli_failure`` scans
+    this whole string, and it is the *message* that gets truncated. But a
+    limit notice the markers do not recognise is now visible instead of cut.
+    """
+    parts: list[str] = []
+
+    result, _turns, _tools = _claude_code_stream(stdout or "")
+    if result is not None:
+        parts.append(json.dumps(result))
+
+    if stderr and stderr.strip():
+        parts.append(stderr.strip())
+
+    body = (stdout or "").strip()
+    if body:
+        # Drop the init banner rather than the ending. Skipped when the
+        # transcript is a single line, which is then all there is to show.
+        lines = body.splitlines()
+        tail = lines[1:] if len(lines) > 1 else lines
+        parts.append("\n".join(tail[-8:]))
+
+    return "\n".join(parts) if parts else "(no output on stdout or stderr)"
+
+
 def _classify_cli_failure(
     provider: str,
     returncode: int,
@@ -534,10 +577,27 @@ class ClaudeCodeReviewLLM:
             # Classify before reporting. A hit rate limit and a genuine crash
             # both arrive here as a nonzero exit, and telling them apart is the
             # difference between "wait" and "something is broken".
+            #
+            # The transcript is parsed *first*, even on a failure. It used to
+            # be skipped on this path, which threw away the one thing that
+            # knows where the CLI puts its own error — the `result` event —
+            # exactly when it was needed.
+            #
+            # Logged in full before the message is truncated. The error a user
+            # sees is capped at 300 characters and the subprocess output is
+            # gone the moment this returns, so without this a failed review is
+            # simply not diagnosable after the fact. Not the prompt — that
+            # carries the diff and the retrieved context.
+            logger.error(
+                "Claude Code exited %s\n--- stderr ---\n%s\n--- stdout ---\n%s",
+                proc.returncode,
+                proc.stderr or "(empty)",
+                proc.stdout or "(empty)",
+            )
             raise _classify_cli_failure(
                 "Claude Code",
                 proc.returncode,
-                f"{proc.stderr or ''}\n{proc.stdout or ''}",
+                _cli_failure_blob(proc.stdout, proc.stderr),
                 ClaudeCodeError,
             ) from None
 

@@ -49,6 +49,7 @@
         try {
           var raw = localStorage.getItem("liffy-theme");
           var id = null;
+          var polarity = null;
           if (raw) {
             if (raw.charAt(0) === "{") {
               var p = JSON.parse(raw);
@@ -58,13 +59,22 @@
                     ? p.dark
                     : p.light
                   : p.theme;
+              /* "custom" is the one id whose polarity is stored rather than
+                 declared, and DARK cannot answer for it. Reading it off the
+                 seeds instead of letting the lookup miss: `DARK["custom"]` is
+                 undefined, which used to send anyone running a dark custom
+                 theme to a light landing page. */
+              if (id === "custom" && p.custom && p.custom.seeds) {
+                polarity = p.custom.seeds.polarity === "light" ? "light" : "dark";
+              }
             } else {
               /* Bare string: what older versions of the app wrote. */
               id = raw;
             }
           }
-          if (id) {
-            document.documentElement.classList.add(DARK[id] ? "dark" : "light");
+          if (!polarity && id) polarity = DARK[id] ? "dark" : "light";
+          if (polarity) {
+            document.documentElement.classList.add(polarity);
           }
         } catch (e) {
           /* The media query decides, then. */

@@ -29,25 +29,15 @@ async def github_webhook(
     if not verify_webhook_signature(settings.github_webhook_secret, body, x_hub_signature_256):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
 
-    # Report §8.1's clock starts here — this is the "webhook received" the
-    # < 90s target is measured from.
+    # Report §8.1's clock starts here — the "webhook received" its < 90s target
+    # is measured from. The placement is load-bearing in both directions:
+    # earlier would include a slow client's upload, letting anyone deflate the
+    # metric by trickling a body; later would hide the JSON parse and the
+    # `resolve_repo_owner` round trip, which are real work a user waits through.
     #
-    # Not at the top of the function: an unsigned request is not a review, and
-    # `await request.body()` includes a slow client's upload, which would let
-    # anyone inflate the metric by trickling a body. Not just before
-    # `enqueue_review` either: the JSON parse and the `resolve_repo_owner`
-    # round trip below are real work a user waits through, and hiding a
-    # saturated connection pool from the number is the class of bug METRIC-1
-    # existed to fix.
-    #
-    # Deliveries that turn out to be ignorable are stamped too. It is a local
-    # that dies on the `return {"status": "ignored"}` paths — never written,
-    # never enqueued — and one `datetime.now()` on a request that already paid
-    # for an HMAC over the whole body is not worth branching around.
-    #
-    # `timezone.utc` explicitly: a naive `datetime.now()` would record the API
-    # host's offset as latency, and the worker that reads it is a different
-    # process that may not share the host.
+    # `timezone.utc` explicitly — a naive `datetime.now()` records the API
+    # host's offset as latency, and the worker reading it is a different process
+    # that may not share the host.
     received_at = datetime.now(timezone.utc)
 
     try:
@@ -66,10 +56,10 @@ async def github_webhook(
         # 200 so GitHub does not retry pings/irrelevant events.
         return {"status": "ignored"}
 
-    # A delivery for a repository nobody connected has no owner to attribute
-    # the review to. Before AUTH-4 a phantom system user absorbed these, which
-    # let an unsolicited webhook create rows; now it is ignored, and checking
-    # here rather than in the worker avoids queueing work that gets discarded.
+    # A delivery for a repository nobody connected has no owner to attribute the
+    # review to. Ignored rather than absorbed by a phantom user (AUTH-4), which
+    # let an unsolicited webhook create rows. Checked here rather than in the
+    # worker so the work is never queued.
     if resolve_repo_owner(db, full_name) is None:
         return {"status": "ignored", "reason": "repository not connected"}
 

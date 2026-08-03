@@ -38,7 +38,7 @@ export function TokenEfficiencyTrend({
   reviewsCompleted: number;
 }) {
   return (
-    <Sheet aria-label="Token efficiency trend">
+    <Sheet aria-label="Token efficiency trend" data-liffy="analytics-chart">
       <Sheet.Header title="Token efficiency trend" />
       <Sheet.Body className="flex flex-col gap-3">
         {points.length === 0 ? (

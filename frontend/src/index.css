@@ -17,6 +17,47 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ==================================================================== *
+ * 0. WORKSPACE CONTROLS — the levers Appearance moves.
+ *
+ * A theme answers "what colour"; these answer "how big, how tight, how
+ * round, how loud". They are deliberately *upstream* of the scales in
+ * @theme rather than a parallel set of utilities: --text-base is
+ * `calc(14px * var(--ui-scale))`, so one variable moves the whole type
+ * ramp, and Tailwind's --spacing hangs off the same multiplier, so
+ * padding, gaps and control heights move with it. That is what makes UI
+ * Scale a single honest slider instead of forty font-size fields.
+ *
+ * Defaults here are exactly today's values — --ui-radius: 3px yields the
+ * same 2px chip and 3px sheet the design shipped with — so an install that
+ * never opens Appearance renders byte-identically.
+ *
+ * Overridden at runtime by `html:root { … }` from <style id="liffy-appearance">,
+ * which outranks this at (0,1,1) without depending on source order. The
+ * boot script in index.html writes that element before first paint and
+ * src/lib/theme/appearance.ts writes it afterwards; bootScript.test.ts
+ * holds the two to the same answer.
+ * ==================================================================== */
+:root {
+  --ui-scale: 1;
+  --ui-density: 1;
+  --ui-radius: 3px;
+  --ui-leading: 1.6;
+  --ui-heading-weight: 500;
+  --ui-body-weight: 400;
+
+  /* Indirection so a font choice is one variable rather than an edit to
+     three @theme entries. Only faces that are actually served: the two
+     Monaspace variables this app preloads, and the OS stacks, which cost
+     no bytes. A CDN face would put a third-party request on every page of
+     a self-hosted tool. */
+  --ui-font-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
+  --ui-font-hand: "Monaspace Argon", "Monaspace Fallback", ui-monospace,
+    monospace;
+  --ui-font-code: "Monaspace Argon", "Monaspace Fallback", ui-monospace,
+    monospace;
+}
+
+/* ==================================================================== *
  * 1. RAW PALETTE — hand-written, always emitted.
  *
  * Tailwind only emits the theme variables it sees *used in classes*, so
@@ -385,37 +426,49 @@
   --color-current: currentColor;
 
   --font-*: initial;
-  --font-hand: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
-  --font-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
-  --font-code: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+  --font-hand: var(--ui-font-hand);
+  --font-ui: var(--ui-font-ui);
+  --font-code: var(--ui-font-code);
   --default-font-family: var(--font-ui);
   --default-mono-font-family: var(--font-code);
 
+  /* Every step through --ui-scale, so the ramp moves as one. The px values
+     are the ones the design was drawn at; the multiplier defaults to 1. */
   /* Monaspace runs narrow (0.62em advance), so the ramp sits a touch
      larger than it would for a proportional face. */
   --text-*: initial;
-  --text-2xs: 10px;
-  --text-xs: 11px; /* the label idiom: uppercase + tracking-label */
-  --text-sm: 12.5px;
-  --text-base: 14px;
-  --text-md: 15px;
-  --text-lg: 18px;
-  --text-xl: 22px;
-  --text-2xl: 28px;
+  --text-2xs: calc(10px * var(--ui-scale));
+  --text-xs: calc(11px * var(--ui-scale)); /* the label idiom */
+  --text-sm: calc(12.5px * var(--ui-scale));
+  --text-base: calc(14px * var(--ui-scale));
+  --text-md: calc(15px * var(--ui-scale));
+  --text-lg: calc(18px * var(--ui-scale));
+  --text-xl: calc(22px * var(--ui-scale));
+  --text-2xl: calc(28px * var(--ui-scale));
+
+  /* Padding, gaps, control heights and icon boxes all resolve through
+     Tailwind's --spacing, which is why scaling it is what makes UI Scale
+     read as "bigger interface" rather than "bigger text in the same boxes".
+     Density rides the same variable at a much narrower range — ±12% against
+     scale's ±20% — so the two compose instead of fighting. */
+  --spacing: calc(0.25rem * var(--ui-scale) * var(--ui-density));
 
   --leading-*: initial;
   --leading-none: 1;
   --leading-tight: 1.3;
-  --leading-normal: 1.6;
+  --leading-normal: var(--ui-leading);
   --leading-relaxed: 1.75;
   --leading-rule: var(--rule-step); /* prose: one line == one ruled line */
 
   --tracking-label: 0.14em; /* ~2px at 11px — straight off the portfolio */
   --tracking-wide: 0.06em;
 
+  /* One knob, two radii, and the chip stays a hair tighter than the sheet
+     the way it was drawn. `max()` keeps it at 0 rather than negative when
+     the slider bottoms out. */
   --radius-*: initial;
-  --radius-chip: 2px;
-  --radius-sheet: 3px;
+  --radius-chip: max(0px, calc(var(--ui-radius) - 1px));
+  --radius-sheet: var(--ui-radius);
   --radius-full: 9999px;
 
   --shadow-*: initial;
@@ -481,11 +534,29 @@
     color: var(--ink);
     font-family: var(--font-ui);
     font-size: var(--text-base);
-    line-height: 1.6;
+    line-height: var(--ui-leading);
+    font-weight: var(--ui-body-weight);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     /* Texture healing + ligatures — the reason for the variable fonts. */
     font-feature-settings: "calt" 1, "liga" 1;
+  }
+
+  /* Headings take the other weight knob. Both faces are variable, so this
+     is a real axis rather than a jump to a second file.
+
+     In @layer base, so the handful of explicit `font-medium` / `font-normal`
+     utilities in components still win where someone meant a specific weight.
+     `.label` is the app's actual heading idiom — Sheet.Header renders an h2
+     wearing it — so it is named here rather than left to inherit body. */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  .label {
+    font-weight: var(--ui-heading-weight);
   }
 
   /* Hairlines are the whole visual language, and v4 defaults border-color
@@ -721,6 +792,69 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* The same backstop, asked for explicitly.
+ *
+ * The OS switch above is a *declaration of need* and stays absolute — a
+ * preference set here can add motion suppression but never take it away,
+ * which is why this sits before nothing that could re-enable it. "Reduced"
+ * keeps state changes legible but stops anything from feeling animated;
+ * "off" is the full stop, matching the media query exactly. */
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] ::before,
+html[data-motion="reduced"] ::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 60ms !important;
+}
+
+html[data-motion="off"] *,
+html[data-motion="off"] ::before,
+html[data-motion="off"] ::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* The compact rail.
+ *
+ * Only at lg and up, because below it the rail is an off-canvas drawer that
+ * covers the page — narrowing a drawer buys nothing and makes it harder to
+ * hit. Liffy's nav rows are words rather than icons, so "compact" means a
+ * tighter measure and a smaller type size, not labels swapped for glyphs:
+ * an icons-only rail here would be five unlabelled squares.
+ *
+ * Unlayered, so it beats the `lg:w-56` utility without !important. */
+@media (width >= 64rem) {
+  html[data-nav="compact"] [data-liffy-rail] {
+    width: 11rem;
+  }
+
+  html[data-nav="compact"] [data-liffy-rail] [data-liffy="sidebar-item"] {
+    font-size: var(--text-sm);
+  }
+}
+
+/* Shadow depth, as a rebinding rather than a second set of utilities.
+ *
+ * `none` empties the colour every hard shadow is drawn in, so the offsets
+ * stay in the layout and simply stop being visible — nothing has to know
+ * whether it is wearing a shadow. `elevated` promotes the one-pixel offset
+ * to the three-pixel one, which is the same mark further from the page, not
+ * a blur: index.css's rule is that paper does not glow, and a soft shadow
+ * here would be the one element in the app lit from somewhere else. */
+html[data-shadow="none"] {
+  --shadow-edge: transparent;
+}
+
+/* The literal offset, not `var(--shadow-hard-lg)`: that one is declared in
+   `@theme inline`, which substitutes it into utilities and never emits it as
+   a custom property, so the var() would resolve to nothing here. Keep this
+   in step with --shadow-hard-lg above. */
+html[data-shadow="elevated"] .shadow-hard {
+  box-shadow: 3px 3px 0 0 var(--shadow-edge);
 }
 
 @media (prefers-contrast: more) {

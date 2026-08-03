@@ -85,6 +85,7 @@ export function Badge({
 }: BadgeProps) {
   return (
     <span
+      data-liffy="finding-badge"
       className={cn(
         "rounded-chip inline-flex items-center gap-1.5 border whitespace-nowrap uppercase",
         "tracking-label leading-normal",

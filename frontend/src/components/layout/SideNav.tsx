@@ -209,6 +209,11 @@ export function SideNav() {
 
       <aside
         id="side-nav"
+        // Appearance's "Compact" narrows the rail through a rule keyed on
+        // `html[data-nav]` in index.css, rather than by threading a setting
+        // down here — the width has to be settled before first paint, and a
+        // prop cannot be.
+        data-liffy-rail=""
         className={[
           "chrome-surface shrink-0 border-chrome-rule",
           // Below lg: an off-canvas drawer. `fixed` rather than a collapsing
@@ -333,6 +338,9 @@ function NavRow({
         <NavLink
           to={item.to}
           end={item.end}
+          // The component registry's `sidebar-item` — what Appearance's
+          // inspector highlights and what its override rules select on.
+          data-liffy="sidebar-item"
           className={({ isActive }) =>
             cn(
               ROW_BASE,

@@ -275,7 +275,7 @@ export function Settings() {
           {section.id === "appearance" && <Appearance />}
 
           {editableGroup && (
-            <Sheet>
+            <Sheet data-liffy="settings-group">
               <Sheet.Header title={section.label} />
               {editableRows.length === 0 ? (
                 <Sheet.Body>
@@ -301,7 +301,7 @@ export function Settings() {
           )}
 
           {section.id === "secrets" && (
-            <Sheet>
+            <Sheet data-liffy="settings-group">
               <Sheet.Header
                 title="Secrets"
                 actions={
@@ -345,6 +345,7 @@ export function Settings() {
               <Sheet
                 key={group.id}
                 id={`settings-${section.id}-${group.id}`}
+                data-liffy="settings-group"
                 className="scroll-mt-16"
               >
                 <Sheet.Header
@@ -363,7 +364,7 @@ export function Settings() {
               the worst failure for a page whose job is answering "where is
               this configured?". */}
           {section.id === "infrastructure" && stragglers.length > 0 && (
-            <Sheet>
+            <Sheet data-liffy="settings-group">
               <Sheet.Header
                 title="Other"
                 actions={<span className="label text-ink-dim">Read-only</span>}

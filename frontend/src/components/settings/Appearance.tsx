@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
-import { Field, Input } from "@/components/ui/Field";
 import { Sheet } from "@/components/ui/Sheet";
+import { useAppearance } from "@/hooks/useAppearance";
+import { usePaletteShortcut } from "@/hooks/usePaletteShortcut";
 import { useTheme } from "@/hooks/useTheme";
 import { contrastRatio, resolveColor } from "@/lib/colors";
+import { isDefault, type ComponentOverride } from "@/lib/theme/appearance";
+import { componentSpec, pruneOverride, type ComponentSpec } from "@/lib/theme/components";
 import {
   buildCustomTheme,
   DEFAULT_SEEDS,
@@ -12,230 +15,435 @@ import {
   type ThemeSeeds,
   type TokenName,
 } from "@/lib/theme/derive";
-import { THEMES, themesByPolarity, type Polarity } from "@/lib/themes";
+import {
+  customFromSaved,
+  deleteTheme,
+  duplicateTheme,
+  importTheme,
+  listThemes,
+  renameTheme,
+  saveTheme,
+  type SavedTheme,
+} from "@/lib/theme/library";
+import { THEMES, type ThemeId } from "@/lib/themes";
 import { cn } from "@/lib/utils";
+import { ComponentEditor } from "./appearance/ComponentEditor";
+import { ComponentPalette } from "./appearance/ComponentPalette";
+import { LivePreview, type PreviewSurface } from "./appearance/LivePreview";
+import {
+  LayoutSection,
+  PaletteEditor,
+  ThemeSection,
+  TypographySection,
+} from "./appearance/sections";
+import { ThemeLibrary } from "./appearance/ThemeLibrary";
 
 /**
- * Choosing a theme, and building one.
+ * Designing your workspace, rather than editing a stylesheet.
  *
- * Saves the moment you press something — no dirty state and no Save button,
- * unlike everything else on this page. That is deliberate and labelled: the
- * rest of Settings is global server configuration behind an explicit PATCH,
- * and this is a preference stored in your browser. Sharing the page's
- * save model would imply it is shared with your team.
+ * The page this replaces put a theme picker and nineteen colour inputs on one
+ * surface at one level, with no way to see the effect without saving and
+ * navigating away, and exactly one slot to keep a result in. Three separate
+ * problems, and they compound: you cannot judge a change you cannot see, so
+ * you save to look, and saving overwrites the thing you were comparing
+ * against.
+ *
+ * So: four layers in the order people work through them, a preview that is
+ * the app's own stylesheet at a smaller size, and a library that makes an
+ * experiment recoverable.
+ *
+ * Everything lands the instant you press it — no dirty state, no Save button.
+ * That is unchanged and still deliberate: the rest of Settings is global
+ * server configuration behind an explicit PATCH, and this is a preference in
+ * your browser. Sharing the page's save model would imply it is shared with
+ * your team. What is new is that "undo" now has a real answer — Reset, or any
+ * saved theme — instead of meaning "remember what it was".
  */
+
+type SectionId = "theme" | "typography" | "layout" | "advanced";
+
+const SECTIONS: { id: SectionId; label: string; note: string }[] = [
+  { id: "theme", label: "Theme", note: "Palette, radius, shadows" },
+  { id: "typography", label: "Typography", note: "Scale, faces, weights" },
+  { id: "layout", label: "Layout", note: "Navigation, density, motion" },
+  { id: "advanced", label: "Advanced", note: "Tokens and components" },
+];
+
 export function Appearance() {
   const { theme, prefs, setTheme, saveCustom, clearCustom, matchSystem } =
     useTheme();
-  const [editing, setEditing] = useState(false);
+  const { config, update, replace, reset } = useAppearance();
 
-  return (
-    <Sheet aria-label="Appearance">
-      <Sheet.Header
-        title="Appearance"
-        actions={
-          <span className="label text-ink-dim">Stored in this browser</span>
-        }
-      />
+  const [section, setSection] = useState<SectionId>("theme");
+  const [surface, setSurface] = useState<PreviewSurface>("dashboard");
+  const [selected, setSelected] = useState<ComponentSpec | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [themes, setThemes] = useState<SavedTheme[]>(() => listThemes());
+  const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
 
-      <Sheet.Body className="flex flex-col gap-5">
-        {(["light", "dark"] as Polarity[]).map((polarity) => (
-          <div key={polarity} className="flex flex-col gap-2">
-            <p className="label">{polarity}</p>
-            <div className="flex flex-wrap gap-2">
-              {themesByPolarity(polarity).map((spec) => (
-                <ThemeChip
-                  key={spec.id}
-                  id={spec.id}
-                  label={spec.label}
-                  note={spec.note}
-                  selected={theme === spec.id}
-                  onSelect={() => setTheme(spec.id)}
-                />
-              ))}
-              {prefs.custom?.seeds.polarity === polarity && (
-                <ThemeChip
-                  id="custom"
-                  label="Custom"
-                  note="Yours"
-                  selected={theme === "custom"}
-                  onSelect={() => setTheme("custom")}
-                />
-              )}
-            </div>
-          </div>
-        ))}
+  const openPalette = useCallback(() => setPaletteOpen(true), []);
+  usePaletteShortcut(openPalette);
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant={prefs.mode === "system" ? "primary" : "secondary"}
-            aria-pressed={prefs.mode === "system"}
-            onClick={matchSystem}
-          >
-            Match system
-          </Button>
-          <span className="text-sm text-ink-dim">
-            {/* The two sides are remembered separately, so this is not "light
-                or dark" — it is the two themes already chosen. */}
-            Uses {themeLabel(prefs.light)} and {themeLabel(prefs.dark)}.
-          </span>
-        </div>
-      </Sheet.Body>
+  /* -------------------------------------------------------------- *
+   * The custom palette, edited live.
+   * -------------------------------------------------------------- */
 
-      <Sheet.Header
-        title="Custom theme"
-        className="border-t border-rule"
-        actions={
-          <div className="flex items-center gap-2">
-            {prefs.custom && (
-              <Button size="sm" variant="ghost" onClick={clearCustom}>
-                Delete
-              </Button>
-            )}
-            <Button size="sm" onClick={() => setEditing((open) => !open)}>
-              {editing ? "Close" : prefs.custom ? "Edit" : "Create"}
-            </Button>
-          </div>
-        }
-      />
-
-      {editing && (
-        <Sheet.Body>
-          <CustomEditor
-            initial={prefs.custom?.seeds}
-            initialOverrides={prefs.custom?.overrides ?? {}}
-            onSave={(seeds, overrides) =>
-              saveCustom(buildCustomTheme(seeds, overrides))
-            }
-          />
-        </Sheet.Body>
-      )}
-    </Sheet>
-  );
-}
-
-function themeLabel(id: string): string {
-  return THEMES.find((spec) => spec.id === id)?.label ?? "Custom";
-}
-
-function ThemeChip({
-  id,
-  label,
-  note,
-  selected,
-  onSelect,
-}: {
-  id: string;
-  label: string;
-  note: string;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      title={note}
-      className={cn(
-        "rounded-sheet flex items-center gap-2 border px-3 py-2 text-left",
-        selected
-          ? "border-ink bg-neutral-tint text-ink"
-          : "border-rule text-ink-dim hover:border-rule-strong hover:text-ink",
-      )}
-    >
-      {/* A real swatch of the theme, drawn by scoping a probe to it — the
-          same trick Monaco and the style guide use, so the chip cannot show
-          a colour the theme does not actually have. */}
-      <Swatch theme={id} />
-      <span className="flex flex-col">
-        <span className="text-base">{label}</span>
-        <span className="text-2xs text-ink-sub">{note}</span>
-      </span>
-    </button>
-  );
-}
-
-function Swatch({ theme }: { theme: string }) {
-  return (
-    <span
-      data-theme={theme}
-      aria-hidden="true"
-      className="rounded-chip flex size-6 shrink-0 items-center justify-center border border-rule bg-paper"
-    >
-      <span className="size-2.5 rounded-full bg-ink" />
-    </span>
-  );
-}
-
-const SEED_FIELDS: { key: keyof ThemeSeeds; label: string; hint: string }[] = [
-  { key: "surface", label: "Surface", hint: "The page. Everything else derives from it." },
-  { key: "ink", label: "Ink", hint: "Primary text." },
-  { key: "oxide", label: "Critical", hint: "Failures and request-changes." },
-  { key: "sage", label: "Approve", hint: "Passes and completed runs." },
-  { key: "ochre", label: "Warning", hint: "In progress, and warnings." },
-  { key: "payne", label: "Info", hint: "Informational findings." },
-];
-
-/**
- * Five seeds, and an Advanced disclosure over all nineteen tokens.
- *
- * The contrast readout is not decoration. A palette that looks good in the
- * swatches and fails at 3:1 on body text is the single most likely thing to
- * come out of an editor like this, so every ink is measured against the
- * surface it will actually sit on, live. It warns rather than blocks — it is
- * the user's tool, and a hard stop on a theme they can see and like would be
- * the wrong call.
- */
-function CustomEditor({
-  initial,
-  initialOverrides,
-  onSave,
-}: {
-  initial?: ThemeSeeds;
-  initialOverrides: Partial<Record<TokenName, string>>;
-  onSave: (
-    seeds: ThemeSeeds,
-    overrides: Partial<Record<TokenName, string>>,
-  ) => void;
-}) {
   const [seeds, setSeeds] = useState<ThemeSeeds>(
-    initial ?? DEFAULT_SEEDS.dark,
+    () => prefs.custom?.seeds ?? DEFAULT_SEEDS.dark,
   );
-  const [overrides, setOverrides] =
-    useState<Partial<Record<TokenName, string>>>(initialOverrides);
-  const [advanced, setAdvanced] = useState(false);
-  const probeRef = useRef<HTMLDivElement>(null);
+  const [overrides, setOverrides] = useState<Partial<Record<TokenName, string>>>(
+    () => prefs.custom?.overrides ?? {},
+  );
 
-  const tokens = useMemo(
+  const resolved = useMemo(
     () => resolveCustom({ seeds, overrides }),
     [seeds, overrides],
   );
 
   /**
-   * Resolved through the browser rather than computed here.
+   * Editing the palette applies it. There is no "Save and use" any more.
    *
-   * The derived values are `color-mix()` expressions, so there is no hex to
-   * measure until something has rendered them. A stable probe lets the effect
-   * read those values without mutating the DOM during render.
+   * The button existed because there was nowhere to see the result without
+   * committing; now the preview is on screen while you drag, so committing
+   * *is* the preview and a second step would only be a step. Switching the
+   * document to the custom theme is part of it — a palette editor that leaves
+   * you looking at a different theme is the original complaint restated.
    */
+  const applyPalette = useCallback(
+    (nextSeeds: ThemeSeeds, nextOverrides: Partial<Record<TokenName, string>>) => {
+      setSeeds(nextSeeds);
+      setOverrides(nextOverrides);
+      saveCustom(buildCustomTheme(nextSeeds, nextOverrides));
+      setActiveSavedId(null);
+    },
+    [saveCustom],
+  );
+
+  const { checks, probeRef } = useContrastChecks(resolved);
+
+  /* -------------------------------------------------------------- *
+   * The library.
+   * -------------------------------------------------------------- */
+
+  const applySaved = useCallback(
+    (saved: SavedTheme) => {
+      const custom = customFromSaved(saved);
+      if (custom) {
+        setSeeds(custom.seeds);
+        setOverrides(custom.overrides);
+        saveCustom(custom);
+      } else {
+        setTheme(saved.base);
+      }
+      replace(saved.appearance);
+      setActiveSavedId(saved.id);
+    },
+    [replace, saveCustom, setTheme],
+  );
+
+  const saveCurrent = useCallback(
+    (name: string) => {
+      const next = saveTheme(
+        {
+          name,
+          base: theme,
+          seeds: theme === "custom" ? seeds : null,
+          overrides: theme === "custom" ? overrides : {},
+          appearance: config,
+        },
+        // Passed in rather than read inside library.ts, so saving stays a
+        // pure function of its inputs and the tests do not need a clock.
+        Date.now(),
+      );
+      setThemes(next);
+      setActiveSavedId(
+        next.find((candidate) => candidate.name === name.trim())?.id ?? null,
+      );
+    },
+    [config, overrides, seeds, theme],
+  );
+
+  const onImport = useCallback((text: string): string | null => {
+    const result = importTheme(text);
+    if (!result.ok) return result.error;
+    setThemes(saveTheme(result.theme, Date.now()));
+    return null;
+  }, []);
+
+  /* -------------------------------------------------------------- *
+   * Component overrides.
+   * -------------------------------------------------------------- */
+
+  const selectComponent = useCallback((spec: ComponentSpec) => {
+    setSelected(spec);
+    setSection("advanced");
+    setSurface(spec.surface);
+  }, []);
+
+  const setOverride = useCallback(
+    (id: string, override: ComponentOverride) => {
+      const pruned = pruneOverride(id, override);
+      const components = { ...config.components };
+      if (Object.keys(pruned).length) components[id] = pruned;
+      else delete components[id];
+      update({ components });
+      setActiveSavedId(null);
+    },
+    [config.components, update],
+  );
+
+  const overrideCount = Object.keys(config.components).length;
+  const untouched = isDefault(config);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Sheet aria-label="Appearance">
+        <Sheet.Header
+          title="Appearance"
+          actions={
+            <div className="flex items-center gap-2">
+              <span className="label text-ink-dim">Stored in this browser</span>
+              <Button size="sm" variant="ghost" onClick={openPalette}>
+                ⌘K components
+              </Button>
+              {!untouched && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    reset();
+                    setSelected(null);
+                    setActiveSavedId(null);
+                  }}
+                >
+                  Reset
+                </Button>
+              )}
+            </div>
+          }
+        />
+
+        {/* Two panes, and the preview is the point of the split: every control
+            on the left changes something on the right without a save, a
+            navigation, or a guess. It stacks on narrow screens rather than
+            shrinking, because a preview too small to read is worse than one
+            you scroll to. */}
+        <Sheet.Body className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
+          <div className="flex min-w-0 flex-col gap-4">
+            <nav
+              aria-label="Appearance sections"
+              className="flex flex-wrap gap-1"
+            >
+              {SECTIONS.map((spec) => (
+                <button
+                  key={spec.id}
+                  type="button"
+                  aria-current={section === spec.id ? "true" : undefined}
+                  onClick={() => setSection(spec.id)}
+                  className={cn(
+                    "rounded-chip border-l-2 px-2.5 py-1.5 text-left transition-colors duration-100",
+                    section === spec.id
+                      ? "border-ink bg-neutral-tint text-ink"
+                      : "border-transparent text-ink-dim hover:bg-neutral-tint hover:text-ink",
+                  )}
+                >
+                  <span className="block text-base">{spec.label}</span>
+                  <span className="block text-2xs text-ink-sub">{spec.note}</span>
+                </button>
+              ))}
+            </nav>
+
+            {section === "theme" && (
+              <ThemeSection
+                theme={theme}
+                onSelectTheme={(id) => {
+                  setTheme(id);
+                  setActiveSavedId(null);
+                }}
+                config={config}
+                update={update}
+                hasCustom={Boolean(prefs.custom)}
+                onEditCustom={() => {
+                  setSection("advanced");
+                  setSelected(null);
+                }}
+                systemMode={prefs.mode === "system"}
+                onMatchSystem={matchSystem}
+                lightLabel={themeLabel(prefs.light)}
+                darkLabel={themeLabel(prefs.dark)}
+              />
+            )}
+
+            {section === "typography" && (
+              <TypographySection config={config} update={update} />
+            )}
+
+            {section === "layout" && (
+              <LayoutSection config={config} update={update} />
+            )}
+
+            {section === "advanced" && (
+              <div className="flex flex-col gap-6">
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="label text-ink">Component overrides</p>
+                    <Button size="sm" onClick={openPalette}>
+                      Search components — ⌘K
+                    </Button>
+                  </div>
+
+                  {selected ? (
+                    <ComponentEditor
+                      spec={selected}
+                      override={config.components[selected.id] ?? {}}
+                      onChange={(next) => setOverride(selected.id, next)}
+                      onClear={() => setOverride(selected.id, {})}
+                    />
+                  ) : (
+                    <p className="text-sm text-ink-sub">
+                      Pick a component to edit only that component — its
+                      background, border, radius, padding, weight and shadow,
+                      and nothing else. It highlights in the preview as soon as
+                      you choose it.
+                    </p>
+                  )}
+
+                  {overrideCount > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-2xs text-ink-sub">Overridden:</span>
+                      {Object.keys(config.components).map((id) => {
+                        const spec = componentSpec(id);
+                        if (!spec) return null;
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => selectComponent(spec)}
+                            className="rounded-chip border border-rule px-1.5 py-0.5 text-2xs text-ink-dim hover:border-rule-strong hover:text-ink"
+                          >
+                            {spec.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-3 border-t border-rule pt-5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="label text-ink">Custom palette</p>
+                    {prefs.custom && (
+                      <Button size="sm" variant="ghost" onClick={clearCustom}>
+                        Delete palette
+                      </Button>
+                    )}
+                  </div>
+                  <PaletteEditor
+                    seeds={seeds}
+                    overrides={overrides}
+                    resolved={checks?.values ?? null}
+                    onSeeds={(next) => applyPalette(next, overrides)}
+                    onOverrides={(next) => applyPalette(seeds, next)}
+                    checks={checks?.rows ?? null}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sticky, so it stays put while the left pane scrolls — the whole
+              value is being able to see the effect of the control under your
+              cursor, and a preview that scrolls away has none. */}
+          <div className="lg:sticky lg:top-4 lg:self-start">
+            <LivePreview
+              surface={surface}
+              onSurfaceChange={setSurface}
+              highlight={section === "advanced" ? selected : null}
+            />
+          </div>
+        </Sheet.Body>
+      </Sheet>
+
+      <Sheet aria-label="My themes">
+        <Sheet.Header
+          title="My themes"
+          actions={
+            <span className="label text-ink-dim">
+              {themes.length} saved · portable
+            </span>
+          }
+        />
+        <Sheet.Body>
+          <ThemeLibrary
+            themes={themes}
+            activeId={activeSavedId}
+            onApply={applySaved}
+            onSaveCurrent={saveCurrent}
+            onRename={(id, name) => setThemes(renameTheme(id, name))}
+            onDuplicate={(id) => setThemes(duplicateTheme(id, Date.now()))}
+            onDelete={(id) => {
+              setThemes(deleteTheme(id));
+              if (id === activeSavedId) setActiveSavedId(null);
+            }}
+            onImport={onImport}
+          />
+        </Sheet.Body>
+      </Sheet>
+
+      <ComponentPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onSelect={selectComponent}
+      />
+
+      {/* Mounted in the tree and measured after commit — see useContrastChecks.
+          Lives here rather than inside PaletteEditor so the readings survive
+          switching sections, which is also what keeps a bad-contrast warning
+          visible from the Theme tab. */}
+      <div ref={probeRef} aria-hidden="true" className="hidden" />
+    </div>
+  );
+}
+
+function themeLabel(id: ThemeId): string {
+  return THEMES.find((spec) => spec.id === id)?.label ?? "Custom";
+}
+
+type ContrastChecks = {
+  values: Record<TokenName, string>;
+  rows: { label: string; ratio: number; floor: number }[];
+};
+
+/**
+ * Contrast, measured through the browser rather than computed here.
+ *
+ * The derived values are `color-mix()` expressions, so there is no hex to
+ * measure until something has rendered them. A stable probe mounted in the
+ * tree lets the effect read those values after commit — React can replay a
+ * render, but it cannot leave a render-phase append/remove pair unbalanced.
+ *
+ * It warns rather than blocks. It is the user's tool, and a hard stop on a
+ * theme they can see and like would be the wrong call — but a palette that
+ * looks good in swatches and fails at 3:1 on body text is the single most
+ * likely thing to come out of an editor like this, so every ink is measured
+ * against the surface it will actually sit on.
+ */
+function useContrastChecks(tokens: Record<TokenName, string>) {
+  const probeRef = useRef<HTMLDivElement>(null);
   const [checks, setChecks] = useState<ContrastChecks | null>(null);
 
   useEffect(() => {
     const probe = probeRef.current;
     if (!probe) return;
 
-    // The probe is mounted in the tree and measured after commit. React can
-    // replay a render, but it cannot leave a render-phase append/remove pair
-    // unbalanced.
     TOKENS.forEach((token) =>
       probe.style.setProperty(`--${token}`, tokens[token]),
     );
-    const hex = (token: TokenName) =>
-      resolveColor(`--${token}`, "#000000", undefined, probe);
     const values = Object.fromEntries(
-      TOKENS.map((token) => [token, hex(token)]),
+      TOKENS.map((token) => [
+        token,
+        resolveColor(`--${token}`, "#000000", undefined, probe),
+      ]),
     ) as Record<TokenName, string>;
 
     const against = (fg: TokenName, bg: TokenName, floor: number) => ({
@@ -255,182 +463,12 @@ function CustomEditor({
         against("ochre", "card", 4.5),
         against("payne", "card", 4.5),
         against("chrome-ink", "chrome", 7),
-        // Advisory: a hairline is not text, and WCAG's 3:1 for non-text
-        // would turn every divider into an outline. Flagged low, not failed.
+        // Advisory: a hairline is not text, and WCAG's 3:1 for non-text would
+        // turn every divider into an outline. Flagged low, not failed.
         against("rule", "paper", 1.55),
       ],
     });
   }, [tokens]);
 
-  const failing = checks?.rows.filter((row) => row.ratio < row.floor) ?? [];
-
-  return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap gap-2">
-        {(["light", "dark"] as Polarity[]).map((polarity) => (
-          <Button
-            key={polarity}
-            size="sm"
-            variant={seeds.polarity === polarity ? "primary" : "secondary"}
-            aria-pressed={seeds.polarity === polarity}
-            onClick={() =>
-              // Swapping polarity reseeds from that side's defaults: a dark
-              // ink on a dark surface is not a theme anyone wants to hand-fix
-              // one field at a time.
-              setSeeds(initial?.polarity === polarity ? initial : DEFAULT_SEEDS[polarity])
-            }
-            className="capitalize"
-          >
-            {polarity}
-          </Button>
-        ))}
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {SEED_FIELDS.map((field) => (
-          <Field key={field.key} label={field.label} hint={field.hint}>
-            {(props) => (
-              <span className="flex items-center gap-2">
-                <input
-                  type="color"
-                  aria-label={`${field.label} colour`}
-                  value={seeds[field.key] as string}
-                  onChange={(event) =>
-                    setSeeds({ ...seeds, [field.key]: event.target.value })
-                  }
-                  className="size-8 shrink-0 cursor-pointer rounded-chip border border-rule bg-card"
-                />
-                <Input
-                  {...props}
-                  value={seeds[field.key] as string}
-                  onChange={(event) =>
-                    setSeeds({ ...seeds, [field.key]: event.target.value })
-                  }
-                  className="w-28 font-code"
-                />
-              </span>
-            )}
-          </Field>
-        ))}
-      </div>
-
-      <Field
-        label="Rule strength"
-        hint="How far the hairlines sit from the surface. Everything else follows."
-      >
-        {(props) => (
-          <input
-            {...props}
-            type="range"
-            min={0}
-            max={100}
-            value={seeds.ruleStrength}
-            onChange={(event) =>
-              setSeeds({ ...seeds, ruleStrength: Number(event.target.value) })
-            }
-            className="w-full accent-ink"
-          />
-        )}
-      </Field>
-
-      {/* Live, against the surface each ink will actually sit on. */}
-      <div className="flex flex-col gap-2">
-        <p className="label">Contrast</p>
-        <ul className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
-          {checks ? (
-            checks.rows.map((row) => (
-              <li key={row.label} className="flex items-baseline gap-2">
-                <span className="min-w-0 flex-1 truncate font-code text-2xs text-ink-dim">
-                  {row.label}
-                </span>
-                <span
-                  data-numeric
-                  className={row.ratio < row.floor ? "text-oxide" : "text-sage"}
-                >
-                  {row.ratio.toFixed(2)}
-                </span>
-              </li>
-            ))
-          ) : (
-            <li className="text-ink-dim">Measuring…</li>
-          )}
-        </ul>
-        {failing.length > 0 && (
-          <p className="text-sm text-oxide" role="status">
-            {failing.length} combination{failing.length === 1 ? "" : "s"} below
-            the readable threshold. You can still save this — it is your tool —
-            but text at those ratios is hard to read.
-          </p>
-        )}
-      </div>
-
-      <details
-        open={advanced}
-        onToggle={(event) => setAdvanced(event.currentTarget.open)}
-      >
-        <summary className="cursor-pointer text-sm text-ink-dim hover:text-ink">
-          Advanced — all {TOKENS.length} tokens
-        </summary>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {TOKENS.map((token) => {
-            const pinned = overrides[token] !== undefined;
-            return (
-              <label key={token} className="flex items-center gap-2 text-sm">
-                <input
-                  type="color"
-                  aria-label={token}
-                  value={checks?.values[token] ?? "#000000"}
-                  onChange={(event) =>
-                    setOverrides({ ...overrides, [token]: event.target.value })
-                  }
-                  className="size-6 shrink-0 cursor-pointer rounded-chip border border-rule"
-                />
-                <span className="min-w-0 flex-1 truncate font-code text-2xs">
-                  {token}
-                </span>
-                {/* Pinned tokens stop following the seeds, so they say so and
-                    offer the way back. Without this a seed change looks
-                    broken: most of the palette moves and one swatch does not. */}
-                {pinned && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = { ...overrides };
-                      delete next[token];
-                      setOverrides(next);
-                    }}
-                    className="shrink-0 text-2xs text-ink-sub underline underline-offset-2 hover:text-ink"
-                  >
-                    pinned
-                  </button>
-                )}
-              </label>
-            );
-          })}
-        </div>
-      </details>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" onClick={() => onSave(seeds, overrides)}>
-          Save and use
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={() => {
-            setSeeds(DEFAULT_SEEDS[seeds.polarity]);
-            setOverrides({});
-          }}
-        >
-          Reset
-        </Button>
-      </div>
-
-      <div ref={probeRef} aria-hidden="true" className="hidden" />
-    </div>
-  );
+  return { checks, probeRef };
 }
-
-type ContrastChecks = {
-  values: Record<TokenName, string>;
-  rows: { label: string; ratio: number; floor: number }[];
-};

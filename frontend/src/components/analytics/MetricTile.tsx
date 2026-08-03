@@ -39,7 +39,7 @@ export function MetricTile({
   const comparator = metric.comparison === "gt" ? ">" : "<";
 
   return (
-    <Sheet aria-label={label} className="flex flex-col">
+    <Sheet aria-label={label} data-liffy="metric-card" className="flex flex-col">
       <Sheet.Header title={label} />
 
       <Sheet.Body className="flex grow flex-col gap-2">

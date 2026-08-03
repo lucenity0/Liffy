@@ -43,6 +43,9 @@ export const keys = {
   analytics: {
     all: ["analytics"] as const,
     summary: () => [...keys.analytics.all, "summary"] as const,
+    // Keyed by the window: a 7-day and a 30-day answer are different data,
+    // and sharing one entry would serve whichever loaded last.
+    activity: (days: number) => [...keys.analytics.all, "activity", days] as const,
   },
   /**
    * One document, not a list — there is no per-key query, because the page

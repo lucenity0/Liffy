@@ -17,12 +17,25 @@ export type SectionId =
   | "github"
   | "providers"
   | "secrets"
-  | "infrastructure";
+  | "infrastructure"
+  | "appearance";
+
+/**
+ * Who a section's settings belong to.
+ *
+ * Everything the API serves is `server`: one global configuration, edited
+ * behind a PATCH, shared by everyone using this instance. Appearance is
+ * `browser` — yours, saved the instant you press it, invisible to anyone
+ * else. Filing them under one heading made a personal preference look like
+ * it changed the deployment.
+ */
+export type SectionScope = "server" | "browser";
 
 export interface SectionSpec {
   id: SectionId;
   label: string;
   description: string;
+  scope: SectionScope;
   /**
    * Sub-groups within the section, in order. Only sections that genuinely
    * have them get any — a disclosure on a flat list is a control that does
@@ -36,17 +49,20 @@ export const SECTIONS: SectionSpec[] = [
     id: "review",
     label: "Review",
     description: "How Liffy reviews pull requests.",
+    scope: "server",
   },
   {
     id: "github",
     label: "GitHub",
     description: "What Liffy does with a review once it has written one.",
+    scope: "server",
   },
   {
     id: "providers",
     label: "Providers",
     description:
       "Where each model runtime lives on this server. Set in backend/.env.",
+    scope: "server",
     groups: [
       { id: "claude_code", label: "Claude Code" },
       { id: "codex", label: "Codex" },
@@ -57,17 +73,35 @@ export const SECTIONS: SectionSpec[] = [
     id: "secrets",
     label: "Secrets",
     description: "Which credentials are configured. Values never reach the browser.",
+    scope: "server",
   },
   {
     id: "infrastructure",
     label: "Infrastructure",
     description:
       "Deployment-level configuration, read when Liffy starts. Changing it means editing backend/.env and restarting.",
+    scope: "server",
     groups: [
       { id: "application", label: "Application" },
       { id: "authentication", label: "Authentication" },
       { id: "indexing", label: "Indexing" },
     ],
+  },
+  /**
+   * Last, and behind a rule.
+   *
+   * Not because it matters least — it is the one section on this page most
+   * people will actually touch — but because it is the only one that is not
+   * server configuration, and `/settings` with no query string must keep
+   * landing on Review. Ordering it first would quietly change where the page
+   * opens.
+   */
+  {
+    id: "appearance",
+    label: "Appearance",
+    description:
+      "Theme and colour, saved in this browser. Nobody else using this Liffy sees your choice.",
+    scope: "browser",
   },
 ];
 

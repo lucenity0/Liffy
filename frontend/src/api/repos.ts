@@ -2,12 +2,13 @@ import { apiClient } from "./client";
 import type {
   IndexAccepted,
   PullRequestListOut,
+  RepoListItem,
   RepoOut,
   RepoStatusOut,
 } from "@/types/api";
 
-export async function listRepos(): Promise<RepoOut[]> {
-  const { data } = await apiClient.get<RepoOut[]>("/repos");
+export async function listRepos(): Promise<RepoListItem[]> {
+  const { data } = await apiClient.get<RepoListItem[]>("/repos");
   return data;
 }
 

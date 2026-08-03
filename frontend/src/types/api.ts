@@ -45,6 +45,22 @@ export interface RepoOut {
   created_at: string;
 }
 
+/**
+ * A repository as the list returns it, with how much reviewing has happened.
+ *
+ * The two extra fields are computed by the list query and are on `GET /repos`
+ * only — `POST /repos` still answers a bare `RepoOut`, deliberately, because
+ * reconnecting an existing repository would otherwise report a review count of
+ * zero for a repository with a hundred reviews behind it. Same split as
+ * `ReviewListItem`.
+ */
+export interface RepoListItem extends RepoOut {
+  /** Every review, including failed ones — attempts, not successes. */
+  review_count: number;
+  /** Null on a repository nothing has reviewed. Never the connection date. */
+  last_review_at: string | null;
+}
+
 /** One pull request, as much as the review picker needs to identify it. */
 export interface PullRequestOut {
   number: number;
@@ -53,6 +69,12 @@ export interface PullRequestOut {
   head_branch: string;
   base_branch: string;
   state: string;
+  /**
+   * When GitHub last saw activity — the key this list is *sorted* by, so the
+   * picker can explain its own order. Null when GitHub omitted it; show
+   * nothing rather than guessing.
+   */
+  updated_at: string | null;
 }
 
 export interface PullRequestListOut {
@@ -340,6 +362,24 @@ export interface ModelComparisonRow {
 export interface ModelAnalyticsOut {
   models: ModelPerformanceRow[];
   comparisons: ModelComparisonRow[];
+}
+
+/**
+ * `GET /analytics/activity` — what happened over a recent window.
+ *
+ * Counts, not rates. The dashboard's opening question is "has anything been
+ * happening", which a percentage cannot answer: an 88% approval rate reads
+ * identically on a busy week and on a dead one.
+ */
+export interface ActivityOut {
+  /** Echoed back from the request. Render the heading from this, not a constant. */
+  days: number;
+  /** Every review created in the window, failed ones included. */
+  reviews: number;
+  /** Comments on those reviews — counted through the review, not their own clock. */
+  findings: number;
+  /** Repositories with a review in the window, not repositories connected. */
+  repositories: number;
 }
 
 export interface AnalyticsSummaryOut {

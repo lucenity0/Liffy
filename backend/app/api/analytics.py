@@ -6,15 +6,17 @@ review to build an average, which is an N+1 across the network. See
 ``docs/api.md``.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.user import User
-from app.schemas.analytics import AnalyticsSummaryOut, ModelAnalyticsOut
+from app.schemas.analytics import ActivityOut, AnalyticsSummaryOut, ModelAnalyticsOut
 from app.services.eval_service import (
+    ActivityWindow,
     AnalyticsSummary,
+    activity,
     model_comparisons,
     model_performance,
     summarize,
@@ -60,3 +62,23 @@ def analytics_models(
         models=model_performance(db, user_id=user.id),
         comparisons=model_comparisons(db, user_id=user.id),
     )
+
+
+@router.get("/activity", response_model=ActivityOut)
+def analytics_activity(
+    days: int = Query(7, ge=1, le=90, description="Window length in days."),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ActivityWindow:
+    """Reviews, findings and repositories touched over a recent window.
+
+    Its own route rather than fields on ``/summary``: the dashboard opens with
+    these three counts and needs nothing else on that page, while ``/summary``
+    computes every §8.1 rate plus the flagged-review list. The dashboard is the
+    most-visited screen in the app and should not pay for the analytics page.
+
+    ``days`` is bounded rather than free. Unbounded it is a full-table scan
+    with a friendly name, and past a quarter the figures stop being activity
+    and start being history — which is what ``/summary`` is for.
+    """
+    return activity(db, user_id=user.id, days=days)

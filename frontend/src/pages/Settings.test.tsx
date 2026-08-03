@@ -470,6 +470,27 @@ describe("Settings", () => {
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
   });
 
+  it("gives Appearance its own section, with no Save button over it", async () => {
+    renderPage("appearance");
+
+    // It is here...
+    expect(
+      await screen.findByRole("region", { name: "Appearance" }),
+    ).toBeInTheDocument();
+    // ...and labelled as the one thing on this page that is not shared.
+    expect(screen.getByText("Stored in this browser")).toBeInTheDocument();
+    // No Save changes: every control in here has already saved by the time
+    // you let go of it, and a disabled Save above them reads as a failure.
+    expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
+  });
+
+  it("does not leave Appearance sitting on top of the review settings", async () => {
+    renderPage();
+
+    await screen.findByLabelText("Thinking effort");
+    expect(screen.queryByRole("region", { name: "Appearance" })).toBeNull();
+  });
+
   it("surfaces a failed load with a retry", async () => {
     server.use(
       http.get("*/settings", () =>

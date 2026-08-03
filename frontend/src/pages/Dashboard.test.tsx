@@ -140,7 +140,10 @@ describe("Dashboard — repositories", () => {
           indexed_at: null,
           created_at: "2026-07-26T10:00:00Z",
         };
-        repos = [...repos, created];
+        // The list computes the review history; POST does not return it. The
+        // split is real — see RepoListItemOut — so the mock keeps it, and a
+        // page reading counts off a connect response fails here.
+        repos = [...repos, { ...created, review_count: 0, last_review_at: null }];
         return HttpResponse.json(created, { status: 201 });
       }),
     );
@@ -360,5 +363,107 @@ describe("Dashboard — recent reviews", () => {
     expect(
       within(await reposList()).getAllByRole("listitem"),
     ).toHaveLength(fixtureRepos.length);
+  });
+});
+
+describe("Dashboard — this week", () => {
+  it("opens with figures that exist nowhere else on the page", async () => {
+    renderWithProviders(<Dashboard />);
+
+    const strip = await screen.findByRole("region", { name: "This week" });
+
+    // The region mounts with skeletons in it, so the figures are awaited.
+    expect(await within(strip).findByText("5")).toBeInTheDocument();
+    expect(within(strip).getByText("18")).toBeInTheDocument();
+    // Repositories *active* this week — two, while the fixture list has two
+    // connected. Different questions that happen to agree here.
+    expect(within(strip).getByText("Findings")).toBeInTheDocument();
+  });
+
+  it("says zero rather than a dash when nothing happened", async () => {
+    server.use(
+      http.get("*/analytics/activity", () =>
+        HttpResponse.json({ days: 7, reviews: 0, findings: 0, repositories: 0 }),
+      ),
+    );
+
+    renderWithProviders(<Dashboard />);
+
+    const strip = await screen.findByRole("region", { name: "This week" });
+    // A quiet week is a measurement, unlike the analytics rates where "no
+    // data" and "zero" are genuinely different facts.
+    await waitFor(() =>
+      expect(within(strip).getAllByText("0")).toHaveLength(3),
+    );
+  });
+
+  it("titles itself from the window the server answered with", async () => {
+    server.use(
+      http.get("*/analytics/activity", () =>
+        HttpResponse.json({ days: 30, reviews: 9, findings: 40, repositories: 3 }),
+      ),
+    );
+
+    renderWithProviders(<Dashboard />);
+
+    // Not "This week" — a heading contradicting its own data is a bug that
+    // looks entirely fine on screen.
+    expect(
+      await screen.findByRole("region", { name: "Last 30 days" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a failed strip from taking the rest of the page with it", async () => {
+    server.use(
+      http.get("*/analytics/activity", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+
+    renderWithProviders(<Dashboard />);
+
+    expect(await screen.findByText(/boom/)).toBeInTheDocument();
+    expect(await repoCard(fixtureRepoIndexed.full_name)).toBeInTheDocument();
+  });
+});
+
+describe("Dashboard — top repositories", () => {
+  it("ranks by most recently reviewed, never-reviewed last", async () => {
+    server.use(
+      http.get("*/repos", () =>
+        HttpResponse.json([
+          // Connected most recently, but nothing has ever reviewed it.
+          { ...fixtureRepoIndexing, review_count: 0, last_review_at: null },
+          { ...fixtureRepoIndexed, last_review_at: "2026-07-26T14:12:00Z" },
+        ]),
+      ),
+    );
+
+    renderWithProviders(<Dashboard />);
+
+    const list = await reposList();
+    const names = within(list)
+      .getAllByRole("listitem")
+      .map((item) => within(item).getAllByRole("link")[0].textContent);
+
+    // `null` sorts last as "never", not first as "unknown, possibly recent" —
+    // otherwise a brand-new connection outranks active work every time.
+    expect(names).toEqual([
+      fixtureRepoIndexed.full_name,
+      fixtureRepoIndexing.full_name,
+    ]);
+  });
+
+  it("does not carry the same name as the Repositories page", async () => {
+    renderWithProviders(<Dashboard />);
+
+    // Two nav destinations reading "Repositories" was half of why the
+    // dashboard looked like a copy of the page it links to.
+    expect(await screen.findByText("Top repositories")).toBeInTheDocument();
+    // Awaited: the link only exists once there is a list to link past, so it
+    // arrives with the repos rather than with the header.
+    expect(
+      await screen.findByRole("link", { name: "All repositories →" }),
+    ).toHaveAttribute("href", "/repositories");
   });
 });

@@ -35,13 +35,15 @@ describe("app shell", () => {
   it("renders the wordmark and all three primary tabs", () => {
     renderAt("/");
 
-    expect(screen.getByRole("link", { name: /liffy — home/i })).toBeInTheDocument();
+    // Two: one on the mobile bar, one on the rail. They are mutually
+    // exclusive by media query, which jsdom does not apply — so this asserts
+    // the count rather than pretending only one is in the tree.
+    expect(screen.getAllByRole("link", { name: /liffy — home/i })).toHaveLength(2);
 
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(nav).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Reviews" })).toBeInTheDocument();
-    // Third since #200. Still a tab strip, still no sidebar.
     expect(screen.getByRole("link", { name: "Analytics" })).toBeInTheDocument();
   });
 
@@ -107,19 +109,24 @@ describe("app shell", () => {
    * a row doing both would make "show me what is in here" and "take me
    * there" the same click.
    */
+  /**
+   * Settings, not Dashboard. Dashboard's sub-items are gone: every section of
+   * that page is on screen when you land, so three rows of anchors bought
+   * nothing but rail height.
+   */
   it("expands a nav section without navigating, and remembers it", async () => {
     const user = userEvent.setup();
     renderAt("/reviews");
 
-    const disclosure = screen.getByRole("button", { name: /expand dashboard/i });
+    const disclosure = screen.getByRole("button", { name: /expand settings/i });
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("link", { name: "Recent reviews" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Appearance" })).toBeNull();
 
     await user.click(disclosure);
 
-    expect(screen.getByRole("link", { name: "Recent reviews" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Appearance" })).toHaveAttribute(
       "href",
-      "/#recent-reviews",
+      "/settings?section=appearance",
     );
     // Expanding is not navigating: still on Reviews.
     expect(screen.getByRole("heading", { name: "Reviews" })).toBeInTheDocument();
@@ -127,32 +134,74 @@ describe("app shell", () => {
     // touched" — a Set could only say "expanded", which made collapsing the
     // section you were standing in a no-op.
     expect(JSON.parse(localStorage.getItem("liffy-nav-expanded")!)).toEqual({
-      "/": true,
+      "/settings": true,
     });
   });
 
   it("collapses the section you are in, which a set-based state could not", async () => {
     const user = userEvent.setup();
-    renderAt("/");
+    renderAt("/settings");
 
-    expect(screen.getByRole("link", { name: "Recent reviews" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /collapse dashboard/i }));
+    expect(screen.getByRole("link", { name: "Appearance" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /collapse settings/i }));
 
-    expect(screen.queryByRole("link", { name: "Recent reviews" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Appearance" })).toBeNull();
     expect(JSON.parse(localStorage.getItem("liffy-nav-expanded")!)).toEqual({
-      "/": false,
+      "/settings": false,
     });
   });
 
   /** A collapsed *current* section would hide the only sub-items reachable
    *  from where you are, so the active one opens regardless of preference. */
   it("opens the section you are in even with nothing stored", () => {
+    renderAt("/settings");
+
+    expect(screen.getByRole("link", { name: "Appearance" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse settings/i }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("has no disclosure on Dashboard, whose sections are all on the page", () => {
     renderAt("/");
 
-    expect(screen.getByRole("link", { name: "Recent reviews" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /dashboard/i })).toBeNull();
+  });
+
+  /**
+   * Below `lg` the rail is a drawer. jsdom applies no media queries, so these
+   * assert the state machine — open, dismissed, closed by navigating — rather
+   * than which copy is visible at which width.
+   */
+  it("opens and dismisses the nav drawer", async () => {
+    const user = userEvent.setup();
+    renderAt("/");
+
+    const hamburger = screen.getByRole("button", { name: "Navigation menu" });
+    expect(hamburger).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(hamburger);
+    expect(hamburger).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole("button", { name: /collapse dashboard/i }),
-    ).toHaveAttribute("aria-expanded", "true");
+      screen.getByRole("button", { name: "Close navigation" }),
+    ).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(hamburger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes the drawer when you navigate, not leaving it over the page", async () => {
+    const user = userEvent.setup();
+    renderAt("/");
+
+    await user.click(screen.getByRole("button", { name: "Navigation menu" }));
+    await user.click(screen.getByRole("link", { name: "Reviews" }));
+
+    // The single most common bug in this pattern: the drawer standing over
+    // the page you just asked for.
+    expect(
+      await screen.findByRole("button", { name: "Navigation menu" }),
+    ).toHaveAttribute("aria-expanded", "false");
   });
 
   it("renders the 404 page for an unmatched path, inside the shell", () => {

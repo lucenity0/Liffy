@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 import {
+  fixtureActivity,
   fixtureAnalyticsSummary,
   fixtureHelpPassages,
   fixtureHelpTopics,
@@ -325,6 +326,13 @@ export const handlers = [
   http.get("*/analytics/summary", () =>
     HttpResponse.json(fixtureAnalyticsSummary),
   ),
+
+  // Echoes the window back rather than hardcoding 7, so a page asking for a
+  // month and rendering a week's figures fails here instead of on screen.
+  http.get("*/analytics/activity", ({ request }) => {
+    const days = Number(new URL(request.url).searchParams.get("days") ?? 7);
+    return HttpResponse.json({ ...fixtureActivity, days });
+  }),
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   // Happy-path defaults. The interesting auth cases (a refresh that 401s,

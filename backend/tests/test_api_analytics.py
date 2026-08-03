@@ -652,3 +652,141 @@ def test_comparison_needs_two_different_models_on_one_pr(db, factory):
     assert len(comparisons) == 1
     assert sorted(r["model"] for r in comparisons[0]["reviews"]) == ["codex", "opus"]
     assert comparisons[0]["pr_number"] > 0
+
+
+# ── GET /analytics/activity ───────────────────────────────────────────────────
+#
+# The dashboard's opening strip. Two shapes of bug are specifically guarded
+# below, because both produce a plausible number rather than an error:
+# counting a review once per finding, and counting a repository once per
+# review.
+
+
+def _activity(headers, **params) -> dict:
+    response = client.get("/analytics/activity", headers=headers, params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _recent(days_ago: float = 1) -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=days_ago)
+
+
+def test_activity_unauthenticated_401(factory) -> None:
+    assert client.get("/analytics/activity").status_code == 401
+
+
+def test_activity_empty_account_returns_zeros(db) -> None:
+    """A new account, and the state the dashboard renders on first login."""
+    user = seed_user(db, github_id=1, username="octo")
+    db.commit()
+
+    body = _activity(auth_headers(user))
+
+    assert body == {"days": 7, "reviews": 0, "findings": 0, "repositories": 0}
+
+
+def test_activity_excludes_reviews_outside_the_window(db) -> None:
+    """``T0`` is over a month old; only the recent review may be counted.
+
+    Also the one test that proves the cutoff comparison survives SQLite, which
+    stores these columns as naive strings while Postgres returns aware
+    datetimes.
+    """
+    user = seed_user(db, github_id=1, username="octo")
+    _make_review(db, user, created_at=T0)
+    _make_review(db, user, created_at=_recent(2))
+    db.commit()
+
+    assert _activity(auth_headers(user))["reviews"] == 1
+
+
+def test_activity_window_length_is_honoured_and_echoed(db) -> None:
+    user = seed_user(db, github_id=1, username="octo")
+    _make_review(db, user, created_at=_recent(20))
+    db.commit()
+
+    week = _activity(auth_headers(user))
+    month = _activity(auth_headers(user), days=30)
+
+    assert (week["days"], week["reviews"]) == (7, 0)
+    assert (month["days"], month["reviews"]) == (30, 1)
+
+
+def test_activity_findings_do_not_multiply_the_review_count(db) -> None:
+    """One review with three findings is one review, not three.
+
+    The natural single-query version of this endpoint joins comments to
+    reviews and counts both off the same rows, which fans out and reports
+    ``reviews: 3``. That number looks entirely reasonable on a dashboard.
+    """
+    user = seed_user(db, github_id=1, username="octo")
+    _make_review(
+        db,
+        user,
+        comments=[("bug", "critical"), ("style", "info"), ("perf", "warning")],
+        created_at=_recent(1),
+    )
+    db.commit()
+
+    body = _activity(auth_headers(user))
+
+    assert body["reviews"] == 1
+    assert body["findings"] == 3
+    assert body["repositories"] == 1
+
+
+def test_activity_counts_repositories_once_across_several_reviews(db) -> None:
+    """Two reviews on one repository is one repository."""
+    user = seed_user(db, github_id=1, username="octo")
+    first = _make_review(db, user, comments=[("bug", "info")], created_at=_recent(1))
+    # A second review against the same pull request, so it shares the repo.
+    db.add(
+        Review(
+            pr_id=first.pr_id, status="completed", summary="s",
+            verdict="comment", created_at=_recent(1),
+        )
+    )
+    db.commit()
+
+    body = _activity(auth_headers(user))
+
+    assert body["reviews"] == 2
+    assert body["repositories"] == 1
+
+
+def test_activity_counts_failed_reviews(db) -> None:
+    """Work that arrived, not work that succeeded.
+
+    A week whose reviews all failed still had reviews, and reporting zero
+    would hide the outage the failures are evidence of.
+    """
+    user = seed_user(db, github_id=1, username="octo")
+    _make_review(db, user, status="failed", created_at=_recent(1))
+    db.commit()
+
+    assert _activity(auth_headers(user))["reviews"] == 1
+
+
+def test_activity_scoped_to_caller(db) -> None:
+    """The property that matters: no counting across somebody else's repos."""
+    mine = seed_user(db, github_id=1, username="octo")
+    theirs = seed_user(db, github_id=2, username="hubot")
+    _make_review(db, theirs, comments=[("bug", "critical")], created_at=_recent(1))
+    db.commit()
+
+    assert _activity(auth_headers(mine)) == {
+        "days": 7, "reviews": 0, "findings": 0, "repositories": 0,
+    }
+
+
+@pytest.mark.parametrize("days", [0, -1, 91])
+def test_activity_rejects_an_out_of_range_window(db, days: int) -> None:
+    user = seed_user(db, github_id=1, username="octo")
+    db.commit()
+
+    response = client.get(
+        "/analytics/activity", headers=auth_headers(user), params={"days": days}
+    )
+
+    assert response.status_code == 422

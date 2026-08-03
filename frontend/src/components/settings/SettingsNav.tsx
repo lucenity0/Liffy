@@ -33,12 +33,20 @@ export function SettingsNav({
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5">
       <p className="label px-2 pb-1 text-ink-sub">Settings</p>
 
-      {SECTIONS.map((section) => {
+      {SECTIONS.map((section, index) => {
         const current = section.id === active;
         const expanded = isOpen(section.id);
+        // A rule wherever the scope changes, rather than after a counted
+        // position — adding a second browser-local section later must not
+        // silently put the line in the wrong place.
+        const startsScope =
+          index > 0 && SECTIONS[index - 1].scope !== section.scope;
 
         return (
           <div key={section.id} className="flex flex-col">
+            {startsScope && (
+              <hr className="my-2 border-0 border-t border-rule" />
+            )}
             <div className="flex items-center">
               <button
                 type="button"

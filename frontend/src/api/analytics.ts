@@ -1,5 +1,10 @@
 import { apiClient } from "./client";
-import type { ModelAnalyticsOut, AnalyticsSummaryOut, EvalScoresOut } from "@/types/api";
+import type {
+  ActivityOut,
+  ModelAnalyticsOut,
+  AnalyticsSummaryOut,
+  EvalScoresOut,
+} from "@/types/api";
 
 /**
  * Reads of computed evaluation scores — report §8.1's numbers, as opposed to
@@ -33,6 +38,20 @@ export async function getReviewEval(reviewId: string): Promise<EvalScoresOut> {
   const { data } = await apiClient.get<EvalScoresOut>(
     `/reviews/${reviewId}/eval`,
   );
+  return data;
+}
+
+/**
+ * The dashboard's opening figures, over the last `days`.
+ *
+ * Its own route rather than fields on the summary: this loads on the app's
+ * most-visited screen, and the summary computes every §8.1 rate plus the
+ * flagged-review list to answer questions only the analytics page asks.
+ */
+export async function getActivity(days: number): Promise<ActivityOut> {
+  const { data } = await apiClient.get<ActivityOut>("/analytics/activity", {
+    params: { days },
+  });
   return data;
 }
 

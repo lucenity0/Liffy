@@ -183,3 +183,21 @@ class ModelAnalyticsOut(BaseModel):
 
     models: list[ModelPerformanceRowOut]
     comparisons: list[ModelComparisonRowOut]
+
+
+class ActivityOut(BaseModel):
+    """``GET /analytics/activity`` — the dashboard's opening figures.
+
+    ``days`` is echoed back rather than assumed by the caller: the window is a
+    query parameter, and a strip headed "this week" rendering a 30-day count
+    because the two drifted apart is exactly the kind of quiet wrongness a
+    dashboard must not have.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    days: int
+    reviews: int
+    findings: int
+    # Repositories with a review in the window, not repositories connected.
+    repositories: int

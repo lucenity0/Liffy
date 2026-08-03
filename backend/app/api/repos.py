@@ -7,13 +7,16 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.database import get_db
+from app.models.pull_request import PullRequest
 from app.models.repo_embedding import RepoEmbedding
 from app.models.repository import Repository
+from app.models.review import Review
 from app.models.user import User
 from app.schemas.repo import (
     PullRequestListOut,
     PullRequestOut,
     RepoConnectRequest,
+    RepoListItemOut,
     RepoOut,
     RepoStatusOut,
 )
@@ -110,18 +113,55 @@ def connect_repo(
     return repo
 
 
-@router.get("", response_model=list[RepoOut])
+@router.get("", response_model=list[RepoListItemOut])
 def list_repos(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[Repository]:
-    return list(
-        db.scalars(
-            select(Repository)
-            .where(Repository.user_id == user.id)
-            .order_by(Repository.created_at.desc())
+) -> list[RepoListItemOut]:
+    """The caller's repositories, each with how much reviewing has happened on it.
+
+    The counts arrive in the same round trip as one grouped subquery rather
+    than as a request per repository — the table showing them lists every
+    connected repository, so the per-row version is an N+1 that grows with
+    exactly the thing the page is for.
+
+    Still ordered by connection date. Callers that want them by recent
+    activity have ``last_review_at`` to sort on, and changing the order here
+    would silently reshuffle a table somebody is already reading.
+    """
+    # Not scoped to the user itself: it is joined onto Repository, which is,
+    # so a row belonging to anybody else has nothing to attach to. Grouped by
+    # repo_id so a repository with twelve reviews stays one row — joining the
+    # reviews in directly would return the repository twelve times.
+    history = (
+        select(
+            PullRequest.repo_id.label("repo_id"),
+            func.count(Review.id).label("review_count"),
+            func.max(Review.created_at).label("last_review_at"),
         )
+        .select_from(Review)
+        .join(PullRequest, Review.pr_id == PullRequest.id)
+        .group_by(PullRequest.repo_id)
+        .subquery()
     )
+
+    rows = db.execute(
+        select(Repository, history.c.review_count, history.c.last_review_at)
+        # Outer, so a repository nobody has opened a pull request against is
+        # still listed. It is the state every repository starts in.
+        .outerjoin(history, history.c.repo_id == Repository.id)
+        .where(Repository.user_id == user.id)
+        .order_by(Repository.created_at.desc())
+    ).all()
+
+    return [
+        RepoListItemOut(
+            **RepoOut.model_validate(repo).model_dump(),
+            review_count=int(review_count or 0),
+            last_review_at=last_review_at,
+        )
+        for repo, review_count, last_review_at in rows
+    ]
 
 
 @router.delete("/{repo_id}", status_code=204)
@@ -236,6 +276,7 @@ def list_repo_pulls(
                 head_branch=pull.head_branch,
                 base_branch=pull.base_branch,
                 state=pull.state,
+                updated_at=pull.updated_at,
             )
             for pull in pulls
         ],

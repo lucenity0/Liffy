@@ -4,7 +4,7 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Input } from "@/components/ui/Field";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { usePullRequests } from "@/hooks/usePullRequests";
-import { cn } from "@/lib/utils";
+import { cn, formatAbsolute, formatRelative } from "@/lib/utils";
 
 type State = "open" | "closed";
 
@@ -36,6 +36,20 @@ export function PullRequestPicker({
   const [state, setState] = useState<State>("open");
   const [query, setQuery] = useState("");
   const pulls = usePullRequests(repoId, state);
+
+  /**
+   * The other tab's count, so both read `OPEN 4  CLOSED 28` at once.
+   *
+   * A second proxied call when the picker opens, not a free one — but a tab
+   * whose number only appears after you press it cannot tell you whether it
+   * is worth pressing, which is the entire job of a count on a tab.
+   */
+  const otherState: State = state === "open" ? "closed" : "open";
+  const other = usePullRequests(repoId, otherState);
+  const counts: Record<State, number | null | undefined> = {
+    [state]: pulls.data?.total,
+    [otherState]: other.data?.total,
+  } as Record<State, number | null | undefined>;
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -86,10 +100,11 @@ export function PullRequestPicker({
             {option}
             {/* Only when it is provably the whole set — the endpoint returns
                 null for a full page rather than reporting "at least 50" as a
-                total. */}
-            {state === option && pulls.data?.total !== null && (
+                total, and a tab reading "CLOSED 50" on a repository with 900
+                closed pull requests is worse than one reading "CLOSED". */}
+            {typeof counts[option] === "number" && (
               <span data-numeric className="ml-1.5 opacity-70">
-                {pulls.data?.total}
+                {counts[option]}
               </span>
             )}
           </Button>
@@ -135,9 +150,22 @@ export function PullRequestPicker({
                       <span data-numeric className="shrink-0 font-code text-sm">
                         #{pull.number}
                       </span>
-                      <span className="min-w-0 truncate text-base text-ink">
+                      <span className="min-w-0 flex-1 truncate text-base text-ink">
                         {pull.title}
                       </span>
+                      {/* The list is sorted by this. Without it on the row the
+                          picker shows an order it cannot explain — and "is
+                          this the one I just pushed?" is the question you are
+                          actually asking here. */}
+                      {pull.updated_at && (
+                        <time
+                          dateTime={pull.updated_at}
+                          title={formatAbsolute(pull.updated_at)}
+                          className="shrink-0 text-2xs whitespace-nowrap text-ink-sub"
+                        >
+                          {formatRelative(pull.updated_at)}
+                        </time>
+                      )}
                     </span>
                     <span className="truncate font-code text-2xs text-ink-sub">
                       {pull.head_branch} → {pull.base_branch}
@@ -150,13 +178,28 @@ export function PullRequestPicker({
         )}
       </div>
 
-      <button
-        type="button"
-        onClick={onFallback}
-        className="w-fit text-2xs text-ink-sub underline underline-offset-4 hover:text-ink"
-      >
-        Enter a number instead
-      </button>
+      <div className="flex items-baseline gap-3">
+        <button
+          type="button"
+          onClick={onFallback}
+          className="text-2xs text-ink-sub underline underline-offset-4 hover:text-ink"
+        >
+          Enter a number instead
+        </button>
+
+        {/* What you are looking at, out of what there is. Says "of N" only
+            when N is known — one page came back short — and otherwise just
+            counts what is on screen rather than implying a total. */}
+        {visible.length > 0 && (
+          <span data-numeric className="ml-auto text-2xs text-ink-sub">
+            {visible.length === 1 ? "1" : `1–${visible.length}`}
+            {typeof pulls.data?.total === "number" &&
+            visible.length === pulls.data.items.length
+              ? ` of ${pulls.data.total}`
+              : ""}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -207,17 +207,24 @@ export function Settings() {
           </>
         }
         actions={
-          <>
-            {dirty && <span className="label text-ink-dim">Unsaved</span>}
-            <Button
-              variant="primary"
-              disabled={!dirty}
-              loading={save.isPending}
-              onClick={onSave}
-            >
-              Save changes
-            </Button>
-          </>
+          /* Hidden on Appearance, which saves on press — a disabled "Save
+             changes" over controls that have already saved reads as a
+             failure. It comes back the moment there is a real draft, so
+             edits made in another section are never stranded behind a
+             button that disappeared. */
+          section.scope === "server" || dirty ? (
+            <>
+              {dirty && <span className="label text-ink-dim">Unsaved</span>}
+              <Button
+                variant="primary"
+                disabled={!dirty}
+                loading={save.isPending}
+                onClick={onSave}
+              >
+                Save changes
+              </Button>
+            </>
+          ) : undefined
         }
       />
 
@@ -261,10 +268,11 @@ export function Settings() {
             <p className="text-sm text-ink-dim">{section.description}</p>
           </div>
 
-          {/* Appearance leads the Review section rather than getting a
-              section of its own: it is one card, and a nav entry holding a
-              single card is a heavier promise than it can keep. */}
-          {section.id === "review" && <Appearance />}
+          {/* Its own section, not a card on top of Review. It shares nothing
+              with the rest of the page — no draft, no PATCH, no provenance —
+              and sitting above the review settings it read as one more thing
+              the Save button was holding. */}
+          {section.id === "appearance" && <Appearance />}
 
           {editableGroup && (
             <Sheet>

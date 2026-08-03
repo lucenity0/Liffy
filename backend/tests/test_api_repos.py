@@ -12,7 +12,9 @@ import app.models  # noqa: F401
 from app.api import repos as repos_api
 from app.database import Base, get_db
 from app.main import app
+from app.models.pull_request import PullRequest
 from app.models.repository import Repository
+from app.models.review import Review
 from app.models.user import User
 from app.services.github_service import (
     GitHubAuthError,
@@ -606,3 +608,80 @@ def test_github_auth_failure_surfaces_as_503(
     monkeypatch.setattr(repos_api, "GitHubClient", factory)
 
     assert client.get(f"/repos/{repo['id']}/pulls", headers=caller).status_code == 503
+
+
+# ── Review history on the list ────────────────────────────────────────────────
+
+
+def _add_review(db, repo_id: uuid.UUID, *, number: int, created_at: datetime) -> None:
+    """One pull request and one review against ``repo_id``."""
+    pr = PullRequest(
+        repo_id=repo_id, github_pr_number=number, title="t", author="octo",
+        base_branch="main", head_branch="f", status="open",
+    )
+    db.add(pr)
+    db.flush()
+    db.add(Review(pr_id=pr.id, status="completed", summary="s", created_at=created_at))
+    db.flush()
+
+
+def test_list_reports_no_reviews_as_zero_and_none(
+    session_factory, caller, indexed, fake_github
+) -> None:
+    """A freshly connected repository, which is where every repository starts."""
+    _connect(caller)
+
+    listed = client.get("/repos", headers=caller).json()
+
+    assert listed[0]["review_count"] == 0
+    # None, not the connection date — nothing has reviewed this yet, and a
+    # timestamp here would render as a last review that never happened.
+    assert listed[0]["last_review_at"] is None
+
+
+def test_list_counts_reviews_without_duplicating_the_repository(
+    session_factory, caller, indexed, fake_github
+) -> None:
+    """Three reviews on one repository is one row reading 3.
+
+    Joining reviews onto the repository query directly returns the repository
+    once per review, so the page would list the same repository three times —
+    and each copy would claim a review count of 1.
+    """
+    connected = _connect(caller)
+    repo_id = uuid.UUID(connected["id"])
+
+    with session_factory() as db:
+        for i in range(3):
+            _add_review(
+                db, repo_id, number=i + 1,
+                created_at=datetime(2026, 7, i + 1, tzinfo=timezone.utc),
+            )
+        db.commit()
+
+    listed = client.get("/repos", headers=caller).json()
+
+    assert len(listed) == 1
+    assert listed[0]["review_count"] == 3
+    # The most recent, not the first or an arbitrary one.
+    assert listed[0]["last_review_at"].startswith("2026-07-03")
+
+
+def test_list_does_not_count_another_users_reviews(
+    session_factory, caller, other, indexed, fake_github
+) -> None:
+    """The subquery is unscoped by design; the join to Repository is the scope."""
+    theirs = _connect(other)
+    mine = _connect(caller, "octo/mine")
+
+    with session_factory() as db:
+        _add_review(
+            db, uuid.UUID(theirs["id"]), number=1,
+            created_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+        db.commit()
+
+    listed = client.get("/repos", headers=caller).json()
+
+    assert [r["id"] for r in listed] == [mine["id"]]
+    assert listed[0]["review_count"] == 0

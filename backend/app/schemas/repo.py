@@ -26,6 +26,24 @@ class RepoOut(BaseModel):
     created_at: datetime
 
 
+class RepoListItemOut(RepoOut):
+    """A repository plus its review history, for the list.
+
+    A subclass rather than two more fields on ``RepoOut``, because these are
+    computed by the list query and nothing else has them. Defaulting them on
+    the base model would let ``POST /repos`` answer ``review_count: 0`` for a
+    repository being *re*-connected — a repository that may well have a
+    hundred reviews behind it — and a wrong count is worse than an absent one.
+    """
+
+    # Every review, not only completed ones: this answers "how much has Liffy
+    # done here", and a failed run is still an attempt that happened.
+    review_count: int
+    # ``None`` on a repository nothing has reviewed yet — never epoch, and
+    # never the connection date standing in for a review that never happened.
+    last_review_at: datetime | None
+
+
 class RepoStatusOut(BaseModel):
     id: uuid.UUID
     full_name: str
@@ -58,6 +76,11 @@ class PullRequestOut(BaseModel):
     head_branch: str
     base_branch: str
     state: str  # "open" | "closed"
+    # When GitHub last saw activity on it — the key the list is sorted by, so
+    # the picker can say why one row is above another. Nullable because the
+    # field is optional on GitHub's side and a missing timestamp must not
+    # take the whole picker down.
+    updated_at: datetime | None
 
 
 class PullRequestListOut(BaseModel):

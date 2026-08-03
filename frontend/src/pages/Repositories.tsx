@@ -12,7 +12,7 @@ import { ConnectRepoModal } from "@/components/repo/ConnectRepoModal";
 import { useRepos } from "@/hooks/useRepos";
 import { useRepoStatuses } from "@/hooks/useRepoStatuses";
 import { formatAbsolute, formatCount, formatRelative } from "@/lib/utils";
-import type { IndexStatus, RepoOut, RepoStatusOut } from "@/types/api";
+import type { IndexStatus, RepoListItem, RepoStatusOut } from "@/types/api";
 
 type Filter = "all" | IndexStatus;
 
@@ -195,7 +195,8 @@ export function Repositories() {
                 >
                   <span className="label">Repository</span>
                   <span className="label">Index</span>
-                  <span className="label text-right">Chunks</span>
+                  <span className="label text-right">Reviews</span>
+                  <span className="label text-right">Last review</span>
                   <span className="label text-right">Last indexed</span>
                 </div>
                 <Sheet.List as="ul">
@@ -243,21 +244,26 @@ function Stat({ label, value }: { label: string; value: number }) {
  * badge and chunk count landed at a different x. The list looked ragged for a
  * reason that had nothing to do with the repositories in it.
  */
-const ROW_GRID = "grid grid-cols-[minmax(0,1fr)_7rem_7rem_9rem] items-baseline gap-x-4";
+const ROW_GRID =
+  "grid grid-cols-[minmax(0,1fr)_7rem_5rem_8rem_8rem] items-baseline gap-x-4";
 
 /**
  * One repository, as a row.
  *
- * No review count or last-review column: deriving either means a paginated
- * reviews query *per repository*, which is exactly the backend work the brief
- * rules out for decorative metadata. Everything shown here is data the
- * repository endpoints already return.
+ * Columns follow `repo_tab_ui.md`: Repository, Index, Reviews, Last review —
+ * plus Last indexed, which was already here and is worth its width. The chunk
+ * count moved down into the sub-line under the name: it is index detail, and
+ * a sixth column would have cost the repository name the space it needs more.
+ *
+ * The review figures used to be absent with a note saying they would cost a
+ * paginated query per repository. They now arrive on `GET /repos` itself, as
+ * one grouped subquery — see `RepoListItemOut`.
  */
 function RepoRow({
   repo,
   status,
 }: {
-  repo: RepoOut;
+  repo: RepoListItem;
   status: RepoStatusOut | undefined;
 }) {
   const indexedAt = status?.indexed_at ?? repo.indexed_at;
@@ -275,6 +281,7 @@ function RepoRow({
           </span>
           <span className="block truncate font-code text-2xs text-ink-sub">
             {repo.default_branch}
+            {status ? ` · ${formatCount(status.chunk_count)} chunks` : ""}
             {/* Said plainly, and only when true: a partial index means reviews
                 touching those files retrieve no context. */}
             {skipped > 0 ? ` · ${formatCount(skipped)} skipped` : ""}
@@ -283,8 +290,23 @@ function RepoRow({
 
         <span>{status ? <IndexBadge value={status.status} /> : null}</span>
 
+        {/* A real zero, not a dash. "Connected but never reviewed" is a fact
+            the list knows, and it is the state this column exists to expose. */}
         <span className="text-sm text-ink-dim lg:text-right" data-numeric>
-          {status ? `${formatCount(status.chunk_count)} chunks` : "—"}
+          {formatCount(repo.review_count)}
+        </span>
+
+        <span className="text-sm whitespace-nowrap text-ink-dim lg:text-right">
+          {repo.last_review_at ? (
+            <time
+              dateTime={repo.last_review_at}
+              title={formatAbsolute(repo.last_review_at)}
+            >
+              {formatRelative(repo.last_review_at)}
+            </time>
+          ) : (
+            "never"
+          )}
         </span>
 
         <span className="text-sm whitespace-nowrap text-ink-sub lg:text-right">

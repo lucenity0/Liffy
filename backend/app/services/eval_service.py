@@ -19,7 +19,7 @@ survive all the way to the JSON. See ``docs/decisions/004``.
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import case, distinct, func, select
 from sqlalchemy.orm import Session
@@ -755,3 +755,74 @@ def model_comparisons(
         if len({review.model for review in row.reviews}) > 1
     ]
     return comparable[:limit]
+
+
+@dataclass(frozen=True)
+class ActivityWindow:
+    """What Liffy did over the last ``days``, for the dashboard's opening strip.
+
+    Three counts rather than the rates in ``summarize``. The strip answers "has
+    anything been happening", which a percentage cannot: an approval rate of
+    88% reads identically on a busy week and on a dead one.
+
+    Everything is windowed on ``reviews.created_at`` — including the findings,
+    which are counted through their review rather than by their own timestamp.
+    A comment is written minutes after the review that produced it, so the two
+    clocks only ever disagree at the boundary, and joining through the review
+    keeps "these findings came from these reviews" true.
+    """
+
+    days: int
+    reviews: int
+    findings: int
+    repositories: int
+
+
+def activity(db: Session, *, user_id: uuid.UUID, days: int) -> ActivityWindow:
+    """Reviews, findings and repositories touched in the last ``days``.
+
+    Counted across every review in the window regardless of status: this is
+    how much work arrived, not how much succeeded. A week whose reviews all
+    failed is a week that had reviews, and reporting 0 would hide the outage
+    the failures are evidence of.
+
+    ``repositories`` is repositories *with a review in the window*, not
+    repositories connected — under a "this week" heading, a connection count
+    from eight months ago is not an activity figure.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Scoped to the caller's repositories at every level, like every other
+    # aggregate in this module. One missing join here leaks review volume
+    # across private repositories.
+    in_window = (
+        select(Review.id.label("review_id"), Repository.id.label("repo_id"))
+        .select_from(Review)
+        .join(PullRequest, Review.pr_id == PullRequest.id)
+        .join(Repository, PullRequest.repo_id == Repository.id)
+        .where(Repository.user_id == user_id, Review.created_at >= cutoff)
+        .subquery()
+    )
+
+    reviews, repositories = db.execute(
+        select(
+            func.count(in_window.c.review_id),
+            func.count(distinct(in_window.c.repo_id)),
+        )
+    ).one()
+
+    # Its own query rather than another column on the one above: joining
+    # comments in would fan the review rows out one per comment and count
+    # every review as many times as it has findings.
+    findings = db.scalar(
+        select(func.count(ReviewComment.id)).join(
+            in_window, ReviewComment.review_id == in_window.c.review_id
+        )
+    )
+
+    return ActivityWindow(
+        days=days,
+        reviews=int(reviews or 0),
+        findings=int(findings or 0),
+        repositories=int(repositories or 0),
+    )

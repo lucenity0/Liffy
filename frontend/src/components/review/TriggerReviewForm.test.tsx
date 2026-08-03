@@ -282,3 +282,78 @@ describe("choosing a pull request from the list", () => {
     expect(prField()).toBeInTheDocument();
   });
 });
+
+// ── What the mockup in review_ui.md asks the pocket to show ──────────────────
+
+describe("the pull request pocket", () => {
+  it("says how recently each pull request moved", async () => {
+    const { user } = open();
+    await chooseRepo(user, "lucenity0/Liffy");
+
+    const row = await screen.findByRole("button", { name: /#253/ });
+
+    // The list is sorted by activity; without this on the row it shows an
+    // order it cannot explain.
+    const when = within(row).getByRole("time");
+    expect(when).toHaveAttribute("datetime", "2026-07-26T13:44:00Z");
+  });
+
+  it("drops the timestamp rather than rendering a broken date", async () => {
+    const { user } = open();
+    await chooseRepo(user, "lucenity0/Liffy");
+    await user.click(await screen.findByRole("button", { name: /^closed/i }));
+
+    // #246's updated_at is null — GitHub can omit it, and "Invalid Date" in a
+    // picker is worse than no timestamp.
+    const row = await screen.findByRole("button", { name: /#246/ });
+    expect(within(row).queryByRole("time")).toBeNull();
+  });
+
+  it("counts both tabs, not only the one you are on", async () => {
+    const { user } = open();
+    await chooseRepo(user, "lucenity0/Liffy");
+
+    // A tab whose number appears only after you press it cannot tell you
+    // whether pressing it is worth it.
+    const closed = await screen.findByRole("button", { name: /^closed/i });
+    await waitFor(() => expect(closed).toHaveTextContent("1"));
+    expect(
+      await screen.findByRole("button", { name: /^open/i }),
+    ).toHaveTextContent("2");
+  });
+
+  it("shows what you are looking at out of what there is", async () => {
+    const { user } = open();
+    await chooseRepo(user, "lucenity0/Liffy");
+
+    await screen.findByRole("button", { name: /#253/ });
+    expect(screen.getByText("1–2 of 2")).toBeInTheDocument();
+  });
+
+  it("does not claim a total when the page came back full", async () => {
+    server.use(
+      http.get("*/repos/:repoId/pulls", () =>
+        HttpResponse.json({
+          items: Array.from({ length: 50 }, (_, i) => ({
+            number: 900 - i,
+            title: `PR ${900 - i}`,
+            author: "lucenity0",
+            head_branch: "f",
+            base_branch: "main",
+            state: "open",
+            updated_at: "2026-07-26T10:00:00Z",
+          })),
+          state: "open",
+          // Null: a full page means "at least 50", which is not a total.
+          total: null,
+        }),
+      ),
+    );
+    const { user } = open();
+    await chooseRepo(user, "lucenity0/Liffy");
+
+    await screen.findByRole("button", { name: /#900/ });
+    expect(screen.getByText("1–50")).toBeInTheDocument();
+    expect(screen.queryByText(/of 50/)).toBeNull();
+  });
+});

@@ -796,17 +796,29 @@
 
 /* The same backstop, asked for explicitly.
  *
- * The OS switch above is a *declaration of need* and stays absolute — a
- * preference set here can add motion suppression but never take it away,
- * which is why this sits before nothing that could re-enable it. "Reduced"
- * keeps state changes legible but stops anything from feeling animated;
- * "off" is the full stop, matching the media query exactly. */
-html[data-motion="reduced"] *,
-html[data-motion="reduced"] ::before,
-html[data-motion="reduced"] ::after {
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 60ms !important;
+ * The OS switch above is a *declaration of need* and is meant to stay
+ * absolute — a preference set here can add motion suppression but never take
+ * it away. Without the media guard below that was only true in intent:
+ * `html[data-motion="reduced"] *` is (0,1,1) against the OS block's bare `*`
+ * at (0,0,0), both `!important`, so specificity — not the stated invariant —
+ * decided, and "reduced" stored alongside an OS request for less motion won
+ * with its own weaker 60ms instead of the ~0ms the media query asked for.
+ * Scoped to `no-preference` so the OS block is the only one that can ever
+ * apply when the OS has actually asked for reduced motion — this rule now
+ * only fires when there is no such request to defer to.
+ *
+ * "Reduced" keeps state changes legible but stops anything from feeling
+ * animated; "off" is the full stop, matching the media query exactly, which
+ * is also why it needs no such guard — it can only ever agree with the OS
+ * block, never weaken it. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-motion="reduced"] *,
+  html[data-motion="reduced"] ::before,
+  html[data-motion="reduced"] ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 60ms !important;
+  }
 }
 
 html[data-motion="off"] *,

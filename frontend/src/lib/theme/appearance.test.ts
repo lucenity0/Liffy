@@ -88,6 +88,30 @@ describe("appearanceAttrs", () => {
       expect(CSS, `${name}="${value}" rule`).toContain(`html[${name}="${value}"]`);
     }
   });
+
+  /**
+   * The finding from Liffy's second review: the OS backstop selects on bare
+   * `*` at (0,0,0), and `html[data-motion="reduced"] *` is (0,1,1) — both
+   * `!important`, so specificity decided and "reduced" could *weaken* an OS
+   * request for less motion instead of only ever adding to it, which the
+   * comment above the rule claims is impossible. jsdom does not evaluate
+   * `@media` against real media features, so this cannot be proven through a
+   * rendered cascade — it asserts the shape that makes the invariant true
+   * instead: the "reduced" rule sits inside a `no-preference` guard, so it
+   * can never fire when the OS block already applies, and "off" needs no
+   * such guard because it is already identical to the OS block.
+   */
+  it("guards data-motion=\"reduced\" so it cannot outrank the OS's own request", () => {
+    const guarded = /@media \(prefers-reduced-motion:\s*no-preference\)\s*\{[^}]*html\[data-motion="reduced"\]/s;
+    expect(CSS).toMatch(guarded);
+
+    // "off" is deliberately unguarded: it matches the media query's own
+    // declarations, so agreeing with it is never a weakening.
+    const offIndex = CSS.indexOf('html[data-motion="off"]');
+    const precedingMedia = CSS.lastIndexOf("@media", offIndex);
+    const precedingClose = CSS.lastIndexOf("}", offIndex);
+    expect(precedingClose).toBeGreaterThan(precedingMedia);
+  });
 });
 
 /* ------------------------------------------------------------------ *

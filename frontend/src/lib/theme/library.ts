@@ -54,14 +54,27 @@ export interface SavedTheme {
 /**
  * Ids are content-free and generated here rather than from the name, so
  * renaming a theme does not orphan it and two themes called "Midnight" are
- * still two themes. `crypto.randomUUID` where it exists — it does in every
- * browser this app supports — with a counter fallback for jsdom-shaped
- * environments that predate it.
+ * still two themes. `crypto.randomUUID` where it exists, with a fallback for
+ * where it does not.
+ *
+ * That fallback is not only a jsdom concern: `randomUUID` is scoped to
+ * secure contexts, so a self-hosted Liffy reached over plain HTTP at a LAN
+ * address — a real deployment shape for this project, not a niche one —
+ * falls through to it on every save. `counter` resets on every page load and
+ * `TOKENS.length` is constant, so the old fallback produced the same
+ * sequence of ids each time (`theme-1-19`, `theme-2-19`, …) — two themes
+ * saved in different sessions could share an id, and every lookup keyed on
+ * `candidate.id === saved.id` would then hit both. `Date.now()` and
+ * `Math.random()` vary per session and per call, which a page-load counter
+ * alone cannot.
  */
 let counter = 0;
 function newId(): string {
   const uuid = globalThis.crypto?.randomUUID?.();
-  return uuid ?? `theme-${(counter += 1)}-${TOKENS.length}`;
+  return (
+    uuid ??
+    `theme-${Date.now().toString(36)}-${(counter += 1)}-${Math.random().toString(36).slice(2, 8)}`
+  );
 }
 
 function read(): SavedTheme[] {

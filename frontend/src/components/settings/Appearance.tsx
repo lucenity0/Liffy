@@ -333,7 +333,22 @@ export function Appearance() {
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <p className="label text-ink">Custom palette</p>
                     {prefs.custom && (
-                      <Button size="sm" variant="ghost" onClick={clearCustom}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          // clearCustom drops prefs.custom, but the editor's
+                          // own seeds/overrides are separate state, seeded
+                          // once from prefs.custom and touched only by
+                          // applyPalette/applySaved. Left alone, the deleted
+                          // palette stayed on screen below and the next seed
+                          // nudge called applyPalette → saveCustom, silently
+                          // resurrecting it and switching back to "custom".
+                          clearCustom();
+                          setSeeds(DEFAULT_SEEDS.dark);
+                          setOverrides({});
+                        }}
+                      >
                         Delete palette
                       </Button>
                     )}

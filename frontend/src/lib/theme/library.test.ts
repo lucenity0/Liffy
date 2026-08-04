@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, parseAppearance } from "./appearance";
 import { DEFAULT_SEEDS } from "./derive";
 import {
@@ -217,5 +217,59 @@ describe("customFromSaved", () => {
       1,
     );
     expect(customFromSaved(theme)).toBeNull();
+  });
+});
+
+/**
+ * The finding from Liffy's second review: `crypto.randomUUID` is scoped to
+ * secure contexts, so a self-hosted Liffy reached over plain HTTP at a LAN
+ * address — a real deployment shape, not a niche one — falls through to the
+ * counter fallback on every save. The old fallback was `theme-${counter}-
+ * ${TOKENS.length}`, and `counter` resets on every page load while
+ * `TOKENS.length` is constant — so the fallback produced the exact same id
+ * sequence each load. Two themes saved in different sessions could then
+ * share an id, and every lookup keyed on `candidate.id === saved.id` would
+ * hit both.
+ *
+ * `vi.resetModules` plus a fresh dynamic import stands in for "a different
+ * page load": it gets a library module whose own `counter` closure starts
+ * back at zero, the same way a real reload would.
+ */
+describe("id generation without crypto.randomUUID", () => {
+  const original = globalThis.crypto.randomUUID;
+
+  beforeEach(() => {
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      value: original,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("does not repeat an id across a simulated reload", async () => {
+    vi.resetModules();
+    const first = await import("./library");
+    const [a] = first.saveTheme(
+      { name: "A", base: "paper", seeds: null, overrides: {}, appearance: DEFAULT_APPEARANCE },
+      1,
+    );
+
+    localStorage.clear();
+    vi.resetModules();
+    const second = await import("./library");
+    const [b] = second.saveTheme(
+      { name: "B", base: "paper", seeds: null, overrides: {}, appearance: DEFAULT_APPEARANCE },
+      1,
+    );
+
+    expect(a.id).not.toBe(b.id);
   });
 });

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Appearance } from "./Appearance";
 import { APPEARANCE_KEY } from "@/hooks/useAppearance";
+import { DEFAULT_SEEDS } from "@/lib/theme/derive";
 import { LIBRARY_KEY } from "@/lib/theme/library";
 import { THEME_KEY } from "@/hooks/useTheme";
 
@@ -259,6 +260,35 @@ describe("Appearance", () => {
     expect(screen.getByRole("textbox", { name: "Ink hex" })).toHaveValue(
       "#123456",
     );
+  });
+
+  /**
+   * The finding from Liffy's second review: `clearCustom` drops `prefs.custom`,
+   * but the editor's own `seeds`/`overrides` state is separate — seeded once
+   * from `prefs.custom` and touched only by `applyPalette`/`applySaved`.
+   * Deleting used to leave that state untouched, so the editor kept showing
+   * the deleted palette, and the next seed nudge called applyPalette ->
+   * saveCustom and silently resurrected it. The visible fix is that the
+   * editor snaps back to the defaults the instant Delete is pressed.
+   */
+  it("resets the visible palette on delete, instead of leaving the deleted one on screen", async () => {
+    const user = userEvent.setup();
+    render(<Appearance />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Build a custom palette" }),
+    );
+    const ink = screen.getByRole("textbox", { name: "Ink hex" });
+    await user.clear(ink);
+    await user.type(ink, "#123456");
+    expect(document.documentElement.dataset.theme).toBe("custom");
+
+    await user.click(screen.getByRole("button", { name: "Delete palette" }));
+
+    expect(screen.getByRole("textbox", { name: "Ink hex" })).toHaveValue(
+      DEFAULT_SEEDS.dark.ink,
+    );
+    expect(document.documentElement.dataset.theme).not.toBe("custom");
   });
 
   /**

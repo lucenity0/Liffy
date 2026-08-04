@@ -42,10 +42,15 @@ export function LivePreview({
    */
   useEffect(() => {
     if (!highlight) return;
-    const target = scrollRef.current?.querySelector(
-      `[data-liffy="${highlight.id}"]`,
-    );
-    target?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const scroller = scrollRef.current;
+    const target = scroller?.querySelector(`[data-liffy="${highlight.id}"]`);
+    if (!scroller || !target) return;
+    const box = scroller.getBoundingClientRect();
+    const rect = target.getBoundingClientRect();
+    scroller.scrollBy({
+      top: rect.top - box.top - (box.height - rect.height) / 2,
+      behavior: "smooth",
+    });
   }, [highlight]);
 
   return (

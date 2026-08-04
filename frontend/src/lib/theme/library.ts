@@ -67,6 +67,10 @@ export interface SavedTheme {
  * `candidate.id === saved.id` would then hit both. `Date.now()` and
  * `Math.random()` vary per session and per call, which a page-load counter
  * alone cannot.
+ *
+ * `derivedId` below is the one exception, and only for entries that reached
+ * storage without an id at all — where being reproducible matters more than
+ * being content-free.
  */
 let counter = 0;
 function newId(): string {
@@ -75,6 +79,30 @@ function newId(): string {
     uuid ??
     `theme-${Date.now().toString(36)}-${(counter += 1)}-${Math.random().toString(36).slice(2, 8)}`
   );
+}
+
+/**
+ * The id for an entry that arrived without one.
+ *
+ * Parsing is a read: it cannot write the repair back, which means the id it
+ * invents has to be the *same* id the next time `read()` re-parses the same
+ * bytes. `newId()` is stable for exactly one call, and `renameTheme`,
+ * `deleteTheme` and `duplicateTheme` all `read()` again and match on
+ * `theme.id === id` — so an entry handed out under a random id would silently
+ * no-op against every one of them. Position in the stored array plus a hash
+ * of the name is stable for as long as the entry is, and the first mutation
+ * writes the repaired list back, at which point the id stops being derived
+ * and starts being real.
+ *
+ * Only hand-edited or externally seeded storage reaches this: `saveTheme`
+ * always writes an id.
+ */
+function derivedId(name: string, index: number): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) {
+    hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  }
+  return `theme-r${index}-${(hash >>> 0).toString(36)}`;
 }
 
 function read(): SavedTheme[] {
@@ -101,14 +129,14 @@ export function parseLibrary(raw: string | null): SavedTheme[] {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .map(parseSaved)
+      .map((entry, index) => parseSaved(entry, index))
       .filter((theme): theme is SavedTheme => theme !== null);
   } catch {
     return [];
   }
 }
 
-function parseSaved(value: unknown): SavedTheme | null {
+function parseSaved(value: unknown, index = 0): SavedTheme | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
@@ -116,7 +144,7 @@ function parseSaved(value: unknown): SavedTheme | null {
 
   const base = isThemeId(raw.base) ? raw.base : "custom";
   return {
-    id: typeof raw.id === "string" && raw.id ? raw.id : newId(),
+    id: typeof raw.id === "string" && raw.id ? raw.id : derivedId(name, index),
     name: name.slice(0, 60),
     base,
     seeds: parseSeeds(raw.seeds),

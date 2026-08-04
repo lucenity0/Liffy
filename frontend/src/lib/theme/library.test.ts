@@ -7,6 +7,7 @@ import {
   duplicateTheme,
   exportTheme,
   importTheme,
+  LIBRARY_KEY,
   listThemes,
   parseLibrary,
   renameTheme,
@@ -198,6 +199,38 @@ describe("parseLibrary", () => {
     );
     expect(themes.map((theme) => theme.name)).toEqual(["Good"]);
     expect(themes[0].appearance).toEqual(parseAppearance({}));
+  });
+
+  /**
+   * Parsing is a read, so the id it invents for an entry that has none is
+   * never written back — every `read()` re-parses. A fresh id per parse
+   * would mean the id `listThemes` handed the page is not the id
+   * `renameTheme` finds a moment later, and the rename would no-op.
+   */
+  it("gives an entry with no id the same id on every parse", () => {
+    const raw = JSON.stringify([
+      { name: "Seeded", base: "paper" },
+      { name: "Also seeded", base: "paper" },
+    ]);
+    const first = parseLibrary(raw);
+    const second = parseLibrary(raw);
+
+    expect(first.map((theme) => theme.id)).toEqual(
+      second.map((theme) => theme.id),
+    );
+    expect(new Set(first.map((theme) => theme.id)).size).toBe(2);
+  });
+
+  it("lets a rename reach an entry that reached storage without an id", () => {
+    localStorage.setItem(
+      LIBRARY_KEY,
+      JSON.stringify([{ name: "Seeded", base: "paper" }]),
+    );
+    const [before] = listThemes();
+    const [after] = renameTheme(before.id, "Renamed");
+    expect(after.name).toBe("Renamed");
+    // And the repaired id is persisted, so it stops being derived.
+    expect(after.id).toBe(before.id);
   });
 });
 

@@ -1,4 +1,5 @@
 import { TOKENS, type TokenName } from "@/lib/theme/derive";
+import { pruneOverride } from "@/lib/theme/components";
 
 /**
  * Everything about the workspace that is not colour.
@@ -368,7 +369,15 @@ function parseComponents(
     }
     if (SHADOWS.includes(o.shadow as Shadow)) override.shadow = o.shadow as Shadow;
 
-    if (Object.keys(override).length) out[clean] = override;
+    // And then held to the registry, which is the other half of the same
+    // job. `pruneOverride` runs in the editor, on the way *out* of a control
+    // — but the import path (parseSaved → parseAppearance → applySaved →
+    // replace → componentCss) never touches it, so a theme file carrying
+    // `shadow` on `review-row`, or an override for a component that does not
+    // exist, would emit a declaration no control in this app can undo.
+    // Pruning on the way in means every reader is holding the same list.
+    const pruned = pruneOverride(clean, override);
+    if (Object.keys(pruned).length) out[clean] = pruned;
   }
   return out;
 }

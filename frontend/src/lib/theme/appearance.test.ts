@@ -244,6 +244,31 @@ describe("component overrides", () => {
   it("prunes an unknown component to nothing", () => {
     expect(pruneOverride("not-a-component", { padding: 6 })).toEqual({});
   });
+
+  /**
+   * `pruneOverride` runs in the editor, on the way out of a control — but
+   * the import path (parseSaved → parseAppearance → applySaved → replace →
+   * componentCss) never reaches that call. Parsing has to prune too, or a
+   * theme file is the one way to get a declaration no control can undo.
+   */
+  it("prunes on the way in, not only in the editor", () => {
+    const parsed = parseAppearance({
+      components: { "review-row": { padding: 6, shadow: "elevated", radius: 12 } },
+    });
+    expect(parsed.components["review-row"]).toEqual({ padding: 6 });
+
+    const css = componentCss(parsed.components);
+    expect(css).toContain("padding");
+    expect(css).not.toContain("box-shadow");
+    expect(css).not.toContain("border-radius");
+  });
+
+  it("drops an override for a component the registry does not name", () => {
+    const parsed = parseAppearance({
+      components: { "not-a-component": { padding: 6 } },
+    });
+    expect(parsed.components).toEqual({});
+  });
 });
 
 /* ------------------------------------------------------------------ *

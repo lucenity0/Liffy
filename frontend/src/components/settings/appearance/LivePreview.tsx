@@ -39,6 +39,14 @@ export function LivePreview({
    * and a highlight below the fold of a 420px panel is indistinguishable from
    * nothing happening. Scoped to the preview's own scroller, so it never
    * moves the settings page underneath it.
+   *
+   * Which is why this is `scrollBy` on the scroller and not `scrollIntoView`
+   * on the target: `scrollIntoView` walks *every* scrollable ancestor up to
+   * the document, so picking a component from ⌘K would also jump the Settings
+   * page — the more jarring for the preview being `lg:sticky` and therefore
+   * still on screen while the page moves behind it. Centring the target
+   * inside the scroller is the same arithmetic `block: "center"` does, done
+   * to one box.
    */
   useEffect(() => {
     if (!highlight) return;

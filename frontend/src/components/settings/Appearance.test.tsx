@@ -230,4 +230,63 @@ describe("Appearance", () => {
       theme: "paper",
     });
   });
+
+  /**
+   * The regression Liffy's review caught: the polarity buttons unconditionally
+   * reseeded from `DEFAULT_SEEDS[polarity]`, and because `onSeeds` is wired to
+   * `applyPalette` — which calls `saveCustom` immediately, with no dirty
+   * buffer to back out of — pressing the *already selected* polarity silently
+   * overwrote and persisted the palette someone was mid-edit on. This presses
+   * exactly that button, on the polarity the editor already opens on.
+   */
+  it("keeps the palette when the already-selected polarity is pressed", async () => {
+    const user = userEvent.setup();
+    render(<Appearance />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Build a custom palette" }),
+    );
+
+    const ink = screen.getByRole("textbox", { name: "Ink hex" });
+    await user.clear(ink);
+    await user.type(ink, "#123456");
+    expect(ink).toHaveValue("#123456");
+
+    // The editor opens on Dark (DEFAULT_SEEDS.dark) — pressing it again is
+    // the no-op case, not a request to reset.
+    await user.click(screen.getByRole("button", { name: "dark" }));
+
+    expect(screen.getByRole("textbox", { name: "Ink hex" })).toHaveValue(
+      "#123456",
+    );
+  });
+
+  /**
+   * The other finding: `componentCss` interpolated colours unchecked, and the
+   * only caller that validated first was the import path — the live editor's
+   * free-text hex field reached the stylesheet with nothing in between. This
+   * types the exact shape of payload `appearance.test.ts` proves an imported
+   * file cannot get away with, through the editor instead of a file.
+   */
+  it("does not let an unsafe hex typed into the live editor reach the stylesheet", async () => {
+    const user = userEvent.setup();
+    render(<Appearance />);
+
+    await user.click(screen.getByRole("button", { name: /⌘K components/ }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Search components" }),
+      "metric",
+    );
+    await user.keyboard("{Enter}");
+
+    const hex = screen.getByRole("textbox", { name: "Background hex" });
+    await user.clear(hex);
+    fireEvent.change(hex, {
+      target: { value: "#fff;} html{display:none} .x{color:red" },
+    });
+
+    const applied = document.getElementById("liffy-appearance")?.textContent ?? "";
+    expect(applied).not.toContain("display:none");
+    expect(applied).not.toContain('[data-liffy="metric-card"]');
+  });
 });

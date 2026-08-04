@@ -152,6 +152,39 @@ describe("component overrides", () => {
     expect(componentCss(parsed.components)).not.toContain("display:none");
   });
 
+  /**
+   * `parseAppearance`/`parseComponents` cover storage and imported files, but
+   * the live editor's free-text hex field writes straight to `update({
+   * components })` → `applyAppearance` → `componentCss`, never through the
+   * parser. This calls `componentCss` directly with the unsafe value — the
+   * shape the editor would actually produce — to prove the emission layer
+   * itself refuses it rather than relying on every caller having validated
+   * first.
+   */
+  it("sanitizes a colour at the point of emission, not only on the way in from storage", () => {
+    const css = componentCss({
+      "review-header": {
+        background: "#fff;} html{display:none} .x{color:red",
+      },
+    });
+    expect(css).not.toContain("display:none");
+    // No safe declaration survives, so the rule is omitted entirely rather
+    // than emitted empty.
+    expect(css).toBe("");
+  });
+
+  it("still emits the declarations that are safe when only one colour is not", () => {
+    const css = componentCss({
+      "review-header": {
+        background: "#123456",
+        border: "#fff;} html{display:none}",
+      },
+    });
+    expect(css).toContain("background-color:#123456");
+    expect(css).not.toContain("display:none");
+    expect(css).not.toContain("border-color");
+  });
+
   it("strips anything that is not a registry id out of the selector", () => {
     const parsed = parseAppearance({
       components: { 'x"]{color:red}[data-liffy="y': { radius: 4 } },

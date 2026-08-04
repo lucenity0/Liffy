@@ -100,36 +100,36 @@ export function applyAppearance(config: AppearanceConfig): void {
     // Only costs the next load its pre-paint pass, not this one.
   }
 
+  // The snapshot's authoritative value, set here rather than derived from
+  // storage in getSnapshot. This is what config a caller *asked* to apply —
+  // and it is what actually landed on the DOM above — regardless of whether
+  // writeConfig's localStorage.setItem succeeded. Deriving the snapshot from
+  // storage instead meant a blocked or full store left `config` stuck at
+  // whatever last *persisted*, while the CSS and attributes had already moved
+  // on: every control on the page would visibly snap back to its previous
+  // position on the very re-render this change triggered.
+  cachedConfig = config;
+
   emit();
 }
 
 /**
  * A snapshot React can compare.
  *
- * Reads storage rather than the DOM, unlike useTheme's — the DOM carries the
- * *resolved* variables and there is no way back from `--ui-density: 0.88` to
- * "Compact" without restating the table. Storage holds the config itself, so
- * it is the cheaper source. The string is cached so `useSyncExternalStore`
- * gets a stable identity between renders; parsing it every render would
- * return a fresh object each time and loop.
+ * Set by `applyAppearance`, the sole mutator of the applied config, rather
+ * than read fresh from storage on every call — so it stays in step with what
+ * is actually on the DOM even when persistence fails, and stays a stable
+ * reference between renders so `useSyncExternalStore` does not loop re-
+ * parsing a fresh object every time. Bootstrapped from storage lazily, for
+ * the read that happens before this session has called `applyAppearance` at
+ * all — the sentinel is `undefined` rather than `DEFAULT_APPEARANCE` so that
+ * bootstrap cannot be skipped by a config that legitimately equals the
+ * defaults.
  */
-let cachedRaw: string | null = null;
-let cachedConfig: AppearanceConfig = DEFAULT_APPEARANCE;
-
-function readRaw(): string | null {
-  try {
-    return localStorage.getItem(APPEARANCE_KEY);
-  } catch {
-    return null;
-  }
-}
+let cachedConfig: AppearanceConfig | undefined;
 
 function getSnapshot(): AppearanceConfig {
-  const raw = readRaw();
-  if (raw !== cachedRaw) {
-    cachedRaw = raw;
-    cachedConfig = readAppearance();
-  }
+  if (cachedConfig === undefined) cachedConfig = readAppearance();
   return cachedConfig;
 }
 
@@ -153,9 +153,18 @@ function subscribe(listener: () => void): () => void {
 export function useAppearance() {
   const config = useSyncExternalStore(subscribe, getSnapshot);
 
-  /** Change one field. Lands immediately, in this tab and every other one. */
+  /**
+   * Change one field. Lands immediately, in this tab and every other one.
+   *
+   * Patched onto `getSnapshot()` — the config actually applied — rather than
+   * a fresh `readAppearance()` off storage. Under storage that is blocked for
+   * the whole session, every `writeConfig` throws, so re-reading storage here
+   * would rebuild `next` from the defaults each time and a second slider drag
+   * would silently discard whatever the first one changed, even though the
+   * DOM had already picked it up.
+   */
   const update = useCallback((patch: Partial<AppearanceConfig>) => {
-    const next = { ...readAppearance(), ...patch };
+    const next = { ...getSnapshot(), ...patch };
     writeConfig(next);
     applyAppearance(next);
   }, []);

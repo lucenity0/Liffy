@@ -117,6 +117,55 @@ describe("useAppearance", () => {
     expect(document.documentElement.getAttribute("data-motion")).toBe("full");
   });
 
+  /**
+   * The finding from Liffy's review: `getSnapshot` used to re-derive from
+   * `localStorage.getItem`, so a `setItem` that throws left `config` stuck at
+   * whatever was last actually persisted — even though `applyAppearance` had
+   * already written the new CSS and attributes to the DOM. Every control
+   * bound to `config` would visibly snap back to its previous position on the
+   * very re-render the change triggered. `config` now has to track what was
+   * applied regardless of whether it was persisted.
+   */
+  it("keeps config in step with what was applied when storage is fully blocked", () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("storage is blocked");
+      });
+
+    const { result } = renderHook(() => useAppearance());
+    act(() => result.current.update({ scale: 1.2 }));
+
+    expect(result.current.config.scale).toBe(1.2);
+    expect(style()?.textContent).toContain("--ui-scale:1.2");
+
+    setItem.mockRestore();
+  });
+
+  /**
+   * A second patch under the same blocked storage used to be built from
+   * `readAppearance()` — a storage read that never saw the first patch land —
+   * so it would rebuild `next` from the defaults and silently discard
+   * whatever the first change had set. It is now built from the same in-
+   * memory snapshot the page renders from.
+   */
+  it("does not let one blocked-storage patch discard an earlier one", () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("storage is blocked");
+      });
+
+    const { result } = renderHook(() => useAppearance());
+    act(() => result.current.update({ scale: 1.2 }));
+    act(() => result.current.update({ radius: 8 }));
+
+    expect(result.current.config.scale).toBe(1.2);
+    expect(result.current.config.radius).toBe(8);
+
+    setItem.mockRestore();
+  });
+
   it("follows a change made in another tab", () => {
     const { result } = renderHook(() => useAppearance());
 

@@ -392,8 +392,14 @@ export function PaletteEditor({
             aria-pressed={seeds.polarity === polarity}
             // Swapping polarity reseeds from that side's defaults: a dark ink
             // on a dark surface is not a theme anyone wants to hand-fix one
-            // field at a time.
-            onClick={() => onSeeds(DEFAULT_SEEDS[polarity])}
+            // field at a time. Pressing the polarity already selected is a
+            // no-op — it must not reset the palette being edited, which is
+            // what unconditionally reseeding did: applyPalette calls
+            // saveCustom immediately, so the lit button silently overwrote
+            // and persisted the defaults with no dirty buffer to recover from.
+            onClick={() =>
+              onSeeds(seeds.polarity === polarity ? seeds : DEFAULT_SEEDS[polarity])
+            }
             className="capitalize"
           >
             {polarity}

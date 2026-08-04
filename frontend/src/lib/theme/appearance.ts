@@ -225,6 +225,14 @@ export function appearanceCss(config: AppearanceConfig): string {
  * override reaches every instance of a component without any of them knowing
  * this file exists. `html:root` again, plus the attribute — comfortably above
  * anything a utility class will bring.
+ *
+ * Colours are checked with `isSafeColor` here, at the point of emission, not
+ * only in `parseComponents`. That parser covers storage and imported files,
+ * but the live editor's free-text hex field writes straight to `update({
+ * components })` → `applyAppearance` → this function without ever passing
+ * through it — so a value typed there, not just an imported one, could close
+ * the declaration and open another. Checking on the way into the stylesheet
+ * closes that regardless of which caller forgot to validate first.
  */
 export function componentCss(
   components: Partial<Record<string, ComponentOverride>>,
@@ -233,9 +241,12 @@ export function componentCss(
     .map(([id, override]) => {
       if (!override) return "";
       const decls: string[] = [];
-      if (override.background) decls.push(`background-color:${override.background}`);
-      if (override.border) decls.push(`border-color:${override.border}`);
-      if (override.ink) decls.push(`color:${override.ink}`);
+      if (override.background && isSafeColor(override.background))
+        decls.push(`background-color:${override.background}`);
+      if (override.border && isSafeColor(override.border))
+        decls.push(`border-color:${override.border}`);
+      if (override.ink && isSafeColor(override.ink))
+        decls.push(`color:${override.ink}`);
       if (override.radius !== undefined)
         decls.push(`border-radius:${clamp(override.radius, 0, 24)}px`);
       if (override.padding !== undefined)

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { PixelSprite } from "./PixelSprite";
+import { LiffyMark } from "./LiffyMark";
 
 /**
  * The zero state. The heading is set in font-hand because an empty page is
@@ -26,7 +26,7 @@ export function EmptyState({
   // Decorative: the heading below already says what the state is, so the
   // sprite carries no label and stays out of the accessibility tree.
   const mark =
-    icon === undefined ? <PixelSprite name="cat" cell={3} /> : icon;
+    icon === undefined ? <LiffyMark className="w-12 opacity-70" /> : icon;
 
   return (
     <div

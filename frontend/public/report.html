@@ -338,7 +338,14 @@ code, .mono {
    noticeably more width than a square sprite to read at the same weight
    beside the wordmark. */
 .cat { flex: 0 0 auto; padding-top: 0.35rem; }
-.cat svg { display: block; width: clamp(104px, 15vw, 148px); height: auto; }
+/* The mark — liffy-logo.png, the artwork as drawn. An image, not a sprite
+   map: the logo has four tones and white eyes, and tracing it into one-ink
+   rectangles turns the eyes into holes that take the surface colour, which
+   on graphite comes out as a hollow-eyed grey skull. The same file in both
+   themes: a logo that changes colour with the page is a weaker one than a
+   logo that does not, and the white eyes carry it against graphite. */
+.cat .mark { width: clamp(84px, 12vw, 118px); }
+.mark { display: block; height: auto; }
 .mast-id { flex: 1 1 18rem; min-width: 0; }
 
 .wordmark {
@@ -887,7 +894,7 @@ code, .mono {
 }
 .colo .p { font-size: 0.86rem; line-height: 1.65; color: var(--ink-sub); max-width: 60ch; }
 .colo [data-sprite] { opacity: 0.75; }
-.colo svg { width: 56px; height: auto; display: block; }
+.colo .mark { width: 44px; }
 .act-rule [data-sprite] { flex: 0 0 auto; display: block; }
 
 .colo-credit {
@@ -936,7 +943,8 @@ document.documentElement.classList.add("anim");
   <!-- ============================================================== -->
   <header class="mast">
     <div class="mast-top">
-      <div class="cat" data-sprite="cat" data-cell="6" aria-hidden="true"></div>
+      <div class="cat"><img class="mark" src="/liffy-logo.png" alt="" aria-hidden="true"
+         width="480" height="407" decoding="async" /></div>
       <div class="mast-id">
         <p class="lbl">Architecture, explained without the jargon</p>
         <h1 class="wordmark">Liffy</h1>
@@ -1878,7 +1886,7 @@ document.documentElement.classList.add("anim");
   <!-- COLOPHON                                                        -->
   <!-- ============================================================== -->
   <footer class="colo">
-    <span data-sprite="cat" data-cell="3" aria-hidden="true"></span>
+    <img class="mark" src="/liffy-logo.png" alt="" aria-hidden="true" width="480" height="407" decoding="async" />
 
     <p class="p">Set in Monaspace Argon and Neon, the two typefaces Liffy's own interface
       uses. The palette is lifted directly from the product's stylesheet &mdash; warm paper,
@@ -1909,28 +1917,6 @@ document.documentElement.classList.add("anim");
  * ==================================================================== */
 (function () {
   var MAPS = {
-    /* The sleeping cat from the under-construction page, character for
-       character — same animal on the front door and in here. Face on the
-       right, back sloping down-left, two closed-eye dashes, a paw out at
-       the bottom-left. */
-    cat: [
-      "..#.......#...............",
-      ".###.....###..............",
-      ".#.##....#.##.............",
-      ".#..##..##..##............",
-      ".#.########..##...........",
-      ".################.........",
-      ".#################........",
-      ".##################.......",
-      ".##################.......",
-      "###################.......",
-      "###################.#####.",
-      "##...####...##############",
-      "##########################",
-      "####################...###",
-      ".################.........",
-      "..#############..........."
-    ],
     key: [
       ".###.",
       "#...#",

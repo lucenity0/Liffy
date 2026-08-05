@@ -51,10 +51,10 @@
      no bytes. A CDN face would put a third-party request on every page of
      a self-hosted tool. */
   --ui-font-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
-  --ui-font-hand: "Monaspace Argon", "Monaspace Fallback", ui-monospace,
-    monospace;
-  --ui-font-code: "Monaspace Argon", "Monaspace Fallback", ui-monospace,
-    monospace;
+  --ui-font-hand:
+    "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+  --ui-font-code:
+    "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
 }
 
 /* ==================================================================== *
@@ -145,7 +145,11 @@
 
   /* Diff washes reuse the same two inks, so the diff is not a 2nd palette. */
   --diff-add: color-mix(in oklab, var(--sage) var(--diff-add-mix), var(--card));
-  --diff-del: color-mix(in oklab, var(--oxide) var(--diff-del-mix), var(--card));
+  --diff-del: color-mix(
+    in oklab,
+    var(--oxide) var(--diff-del-mix),
+    var(--card)
+  );
 
   /* The chrome plane — the nav rail, and anything else that is furniture
      rather than page.
@@ -161,6 +165,47 @@
   --chrome-ink-dim: #a49b8a; /*  5.3:1 on chrome */
   --chrome-rule: #524a40; /*  1.67:1 hairlines within the rail */
   --chrome-active: #3b3730; /*  1.23:1 the current nav item */
+
+  /* The café scene — the illustration on the sign-in screen, drawn on a
+     240x150 pixel grid by src/lib/cafeScene.ts.
+
+     Mixed out of the palette rather than written as hexes, so the picture
+     themes itself and no rung of the ladder needs its own copy. The mixes
+     are picked so the *relationship* survives the polarity flip rather
+     than the lightness: glass stays a cooler material than the wall in
+     both directions, and everything drawn on top is a palette ink, which
+     is already solved for 5–6:1 against light paper and dark graphite
+     alike. Only one thing branches on polarity, and it branches in the
+     drawing code rather than here — under a dark theme the window looks
+     out on a night, so it gets stars and a moon instead of a sun.
+
+     The landing page (docs/landing.src.html) carries the same block for
+     the same picture. Two copies, like the pixel maps in PixelSprite:
+     that page is hand-authored and shares no build with the app. */
+  --scene-wall: color-mix(in oklab, var(--recessed) 35%, var(--card));
+  --scene-wall-lo: color-mix(in oklab, var(--recessed) 70%, var(--card));
+  --scene-line: var(--rule);
+  --scene-rule: var(--rule-strong);
+  --scene-frame: var(--ink-sub);
+  --scene-frame-hi: var(--ink-dim);
+  --scene-ink: var(--ink);
+  --scene-glass: color-mix(in oklab, var(--payne) 20%, var(--card));
+  --scene-glass-lo: color-mix(in oklab, var(--ochre) 24%, var(--card));
+  /* Warm, not bright. A cloud that is *lighter* than the sky can only be
+     written one way round — the polarity flip turns it into a hole — so
+     these are lit clouds instead of white ones, and warm against a cool
+     sky reads as cloud in both directions. */
+  --scene-cloud: color-mix(in oklab, var(--ochre) 32%, var(--card));
+  --scene-far: color-mix(in oklab, var(--payne) 58%, var(--card));
+  /* The park and the trees on it are two tokens, not one: at one mix for
+     both, the trees came out as pale discs floating over the grass.
+     Distance is the only depth cue a flat drawing has, so the near thing
+     has to be the stronger mix. */
+  --scene-ground: color-mix(in oklab, var(--sage) 30%, var(--card));
+  --scene-tree: color-mix(in oklab, var(--sage) 78%, var(--card));
+  --scene-warm: var(--ochre);
+  --scene-glow: color-mix(in oklab, var(--ochre) 34%, var(--card));
+  --scene-steam: var(--ink-sub);
 
   /* Raw-CSS-only constants — deliberately not theme variables. */
   --grain-opacity: 0.032;
@@ -539,7 +584,9 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     /* Texture healing + ligatures — the reason for the variable fonts. */
-    font-feature-settings: "calt" 1, "liga" 1;
+    font-feature-settings:
+      "calt" 1,
+      "liga" 1;
   }
 
   /* Headings take the other weight knob. Both faces are variable, so this
@@ -596,7 +643,11 @@
      Checkboxes and radios keep the ring. The UA paints those itself and
      there is no border of ours to darken, so taking it away would leave them
      with no focus indicator at all. */
-  :where(input:not([type="checkbox"], [type="radio"]), textarea, select):focus-visible {
+  :where(
+    input:not([type="checkbox"], [type="radio"]),
+    textarea,
+    select
+  ):focus-visible {
     outline: none;
     border-color: var(--ink);
   }

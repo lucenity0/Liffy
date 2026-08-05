@@ -144,6 +144,60 @@ def test_default_secret_allowed_in_debug(user: User, monkeypatch: pytest.MonkeyP
     assert auth_service.decode_access_token(token) == user.id
 
 
+def test_default_secret_refused_when_verifying(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refusing to *mint* with the public default is not enough on its own.
+
+    The state this covers is reachable: run in debug long enough to sign in,
+    which puts a real row in `users`, then switch to `DEBUG=False` without ever
+    setting a key. Minting stops, so nobody can log in — but the signing key is
+    a constant published in this repository, and a forged token needs only a
+    user id, which the attacker now has a real one of. Verification has to
+    refuse the key too, or the broken-login state is also a bypass.
+    """
+    monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
+    monkeypatch.setattr(settings, "debug", False)
+
+    forged = jwt.encode(
+        {
+            "sub": str(user.id),
+            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+        },
+        DEV_JWT_SECRET,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    with pytest.raises(AuthError, match="development default"):
+        auth_service.decode_access_token(forged)
+
+
+# Forging with a short key is the point of the test; PyJWT warning that the key
+# is short is it agreeing with us, not a problem to fix.
+@pytest.mark.filterwarnings("ignore::jwt.warnings.InsecureKeyLengthWarning")
+def test_short_signing_key_refuses_to_verify(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same asymmetry, same answer: a key too weak to sign with is too weak to
+    trust a signature from."""
+    monkeypatch.setattr(settings, "jwt_secret_key", "too-short")
+
+    forged = jwt.encode({"sub": str(user.id)}, "too-short", algorithm=settings.jwt_algorithm)
+
+    with pytest.raises(AuthError, match="at least 32 bytes"):
+        auth_service.decode_access_token(forged)
+
+
+def test_check_signing_key_is_the_startup_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`main.lifespan` calls this so the instance refuses to boot, rather than
+    answering a uniform 401 that reads like ordinary bad-token noise."""
+    monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
+    monkeypatch.setattr(settings, "debug", False)
+
+    with pytest.raises(AuthError, match="development default"):
+        auth_service.check_signing_key()
+
+    monkeypatch.setattr(settings, "debug", True)
+    auth_service.check_signing_key()  # a fresh clone still boots
+
+
 # ── Refresh token lifecycle ───────────────────────────────────────────────────
 
 

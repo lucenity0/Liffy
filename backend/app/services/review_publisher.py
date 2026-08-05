@@ -6,6 +6,7 @@ the mapping and the filtering, and both are far easier to be confident about
 when a test can call them directly. ``review_service`` does the I/O.
 """
 
+import re
 from dataclasses import dataclass
 
 from app.models.review_comment import ReviewComment
@@ -84,6 +85,68 @@ def resolve_event(verdict: str | None, *, is_own_pr: bool, mode: str) -> ReviewE
     return ReviewEvent(native)
 
 
+# ── Model prose is untrusted markdown ─────────────────────────────────────────
+#
+# Every string the model returns is derived from a diff written by whoever
+# opened the pull request. On a repository that accepts outside contributions
+# that author is a stranger, so a review body is untrusted markdown even though
+# Liffy is the account posting it.
+#
+# The danger is narrow and specific. GitHub renders `![](url)` by fetching the
+# URL through its own image proxy, server-side, the moment the comment is
+# posted — no click, no viewer involvement, nothing for a maintainer to notice.
+# Sitting in the same prompt as the attacker's diff is the retrieved context:
+# real code from the private repository under review. A prompt injection that
+# gets the model to emit an image whose URL carries that context turns Liffy's
+# review into an exfiltration channel for the code it was asked to protect.
+#
+# So images are defused and links are not. A link needs a deliberate click, and
+# a reviewer citing a URL is ordinary behaviour worth keeping; silently
+# stripping those would cost real utility to close a hole that is not open.
+
+# Every markdown image spelling — inline `![a](url)`, reference `![a][ref]`,
+# collapsed `![a][]` — begins `![`. Escaping that bracket is what defuses all
+# three at once; matching the whole construct instead would miss the reference
+# forms entirely, since their URL lives elsewhere in the document.
+_MD_IMAGE_OPEN = re.compile(r"!\[")
+
+# GitHub's comment sanitiser permits a small set of raw HTML tags, and several
+# of them fetch a URL on render exactly as the markdown form does. Escaping the
+# opening angle bracket turns the tag into visible text.
+_HTML_FETCHING_TAG = re.compile(
+    r"<(?=\s*/?\s*(?:img|video|audio|picture|source|iframe|embed|object)\b)",
+    re.IGNORECASE,
+)
+
+
+def defang_model_markdown(text: str) -> str:
+    """Neutralise the auto-fetching markdown in one model-authored string.
+
+    Applied at the render boundary rather than on the way into the database:
+    the dashboard shows these same strings, and React escapes them there
+    already, so the value stored stays the model's actual words and only the
+    copy handed to GitHub is altered.
+    """
+    if not text:
+        return text
+    defanged = _MD_IMAGE_OPEN.sub(r"!\\[", text)
+    return _HTML_FETCHING_TAG.sub("&lt;", defanged)
+
+
+def _fence(text: str) -> str:
+    """A fence long enough to contain ``text``.
+
+    CommonMark closes a fenced block on the first run of backticks at least as
+    long as the one that opened it, so a fixed ``` cannot hold a suggestion
+    that itself contains ```. The system prompt forbids that, which settles it
+    for a cooperative model and not at all for an injected one — and a
+    suggestion that breaks its own fence is arbitrary markdown in the comment
+    body, which is the thing above this function exists to prevent.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
 def _comment_body(comment: ReviewComment) -> str:
     """One Liffy comment, rendered for GitHub.
 
@@ -91,9 +154,12 @@ def _comment_body(comment: ReviewComment) -> str:
     has nowhere else to put them — the dashboard shows them as badges.
     """
     head = f"**{comment.severity}** · `{comment.category}`"
-    body = f"{head}\n\n{comment.comment_text}"
+    body = f"{head}\n\n{defang_model_markdown(comment.comment_text)}"
     if comment.suggestion:
-        body += f"\n\n```suggestion\n{comment.suggestion}\n```"
+        # Not defanged: a suggestion is code inside a fence, where markdown does
+        # not render. Holding it there is `_fence`'s job.
+        fence = _fence(comment.suggestion)
+        body += f"\n\n{fence}suggestion\n{comment.suggestion}\n{fence}"
     return body
 
 
@@ -162,17 +228,20 @@ def _overview(
     """
     parts = [
         "## Pull request overview",
-        summary or "_Liffy produced no summary for this review._",
+        defang_model_markdown(summary) or "_Liffy produced no summary for this review._",
     ]
 
     if changes:
-        parts.append("**Changes:**\n" + "\n".join(f"- {c}" for c in changes))
+        parts.append(
+            "**Changes:**\n"
+            + "\n".join(f"- {defang_model_markdown(c)}" for c in changes)
+        )
 
     if files:
         # Pipes inside a cell would break the table; a path or a sentence
         # containing one is unusual but not impossible.
         def cell(text: str) -> str:
-            return text.replace("|", r"\|")
+            return defang_model_markdown(text).replace("|", r"\|")
 
         rows = "\n".join(f"| `{cell(path)}` | {cell(note)} |" for path, note in files)
         parts.append(
@@ -219,7 +288,7 @@ def build_review_body(
     if unanchorable:
         lines = "\n".join(
             f"- `{c.file_path}:{c.line_start}` — **{c.severity}** · `{c.category}` — "
-            f"{c.comment_text}"
+            f"{defang_model_markdown(c.comment_text)}"
             for c in unanchorable
         )
         parts.append(

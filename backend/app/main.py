@@ -16,6 +16,7 @@ from app.api import (
 )
 from app.config import settings
 from app.database import SessionLocal
+from app.services.auth_service import check_signing_key
 from app.services.settings_service import refresh_overrides
 
 log = structlog.get_logger(__name__)
@@ -39,6 +40,17 @@ async def lifespan(_app: FastAPI):
             refresh_overrides(db)
     except Exception as exc:  # pragma: no cover - depends on a broken database
         log.warning("settings.startup_load_failed", error=str(exc))
+
+    # After the override load, because the signing key is a stored secret and
+    # the value that matters is the effective one.
+    #
+    # Deliberately *not* swallowed like the block above. `auth_service` now
+    # refuses to verify with an untrusted key as well as to mint with one, so an
+    # instance in this state answers 401 to every request — correct, and
+    # indistinguishable from ordinary bad-token noise in a log. Refusing to boot
+    # says which of the two it is, at the one moment somebody is watching.
+    check_signing_key()
+
     yield
 
 

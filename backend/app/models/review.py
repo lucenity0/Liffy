@@ -31,59 +31,41 @@ class Review(Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The structured half of the overview: `{"changes": [...], "files": [...]}`.
     #
-    # Separate from `summary` rather than replacing it, because `summary` is
-    # the one-line preview in the reviews list — markdown headings and table
-    # pipes in that column would show up as syntax in a table cell. This is
-    # everything the pull request body and the detail panel render *around*
-    # that sentence.
-    #
-    # JSON rather than columns: the shape is presentational and expected to
-    # move, and a migration per field is a poor trade for a payload nothing
-    # queries. Null on every review written before this landed, and on any
-    # model that answered with the older three-field output.
+    # Kept separate from `summary` because `summary` is the one-line preview in
+    # the reviews list, where markdown headings and table pipes would render as
+    # syntax. JSON rather than columns: the shape is presentational and expected
+    # to move, and a migration per field is a poor trade for a payload nothing
+    # queries. Null on reviews written before this landed.
     summary_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # Wall-clock milliseconds for ``run_review``: the whole pipeline, from
-    # the first GitHub call to the review being written.
+    # Wall-clock milliseconds for ``run_review`` — the whole pipeline.
     #
-    # **A lower bound on report §8.1's time-to-review, not that figure.** §8.1
-    # measures webhook received -> review complete against a < 90s target, but
-    # the webhook only enqueues a Celery task (``review_pr_task.delay``), so
-    # queue wait happens entirely before this function is called and no
-    # placement inside it can capture that. ``total_ms`` below is that figure;
-    # this is the pipeline inside it.
+    # A *lower bound* on report §8.1's time-to-review, not that figure: the
+    # webhook only enqueues a Celery task, so queue wait happens entirely before
+    # this function is entered and no placement inside it can capture that.
+    # ``total_ms`` below is §8.1's number.
     #
-    # Milliseconds as an int rather than seconds as a float — the report talks
-    # in seconds, but a float invites formatting bugs at display time and this
-    # stores exactly.
-    #
-    # Nullable, and deliberately not backfilled: rows written before this
-    # existed genuinely have no measurement, and inventing one would poison
-    # the first analysis that reads the column.
+    # Nullable and deliberately not backfilled — rows written before this column
+    # existed have no measurement, and inventing one would poison the first
+    # analysis that reads it.
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # **Report §8.1's time-to-review**: webhook receipt -> review written,
-    # against the < 90s target. Where ``duration_ms`` is a lower bound, this is
-    # the number the report promises.
+    # against the < 90s target.
     #
     # Wall clock unavoidably, unlike ``duration_ms``: the two ends are measured
-    # in different processes — receipt in the API, completion in the worker —
-    # and ``time.monotonic()`` is only comparable within one. So METRIC-1's
-    # warning about NTP corrections applies here, and the two hosts can also
-    # simply disagree. Clamped at 0 rather than stored negative; see
-    # ``_wall_clock_ms`` in review_service.
+    # in different processes, and ``time.monotonic()`` is only comparable within
+    # one. So clock skew between hosts applies. Clamped at 0 rather than stored
+    # negative; see ``_wall_clock_ms`` in review_service.
     #
-    # Queue wait is ``total_ms - duration_ms`` — the number that says whether a
-    # missed target is Liffy's pipeline or the broker's backlog. Deliberately
-    # not stored: both operands are nullable and measured by different clocks,
-    # so a stored column would have to either ship a small negative or clamp
-    # away the evidence of skew.
+    # Queue wait is ``total_ms - duration_ms``, deliberately not stored: both
+    # operands are nullable and measured by different clocks, so a column would
+    # have to ship a small negative or clamp away the evidence of skew.
     #
-    # NULL for manual triggers and re-reviews — there is no webhook receipt,
-    # and it does **not** fall back to ``duration_ms``. Reporting a pipeline
-    # duration as an end-to-end one is the exact confusion this column exists
-    # to remove.
+    # NULL for manual triggers and re-reviews, and it does **not** fall back to
+    # ``duration_ms`` — reporting a pipeline duration as an end-to-end one is
+    # the exact confusion this column exists to remove.
     total_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # ── Delivery to GitHub (GH-2) ────────────────────────────────────────────
     #
@@ -93,26 +75,24 @@ class Review(Base):
     # ``github_review_id`` doubles as the idempotency guard. Re-review creates a
     # *new* Review row and ``synchronize`` webhooks fire on every push, so
     # without a per-row guard a PR pushed to five times accumulates five
-    # duplicate review threads and becomes unreadable.
+    # duplicate review threads.
     github_review_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     github_review_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     posted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # Why the last attempt failed. A failure that is merely *absent* is
-    # indistinguishable from never having tried, and the whole point of not
-    # failing the review on a posting error is that somebody can still find out
-    # it happened. Truncated before storing — GitHub's validation bodies are
-    # long, and this is a String column.
+    # indistinguishable from never having tried, and the point of not failing
+    # the review on a posting error is that somebody can still find out it
+    # happened. Truncated before storing — GitHub's validation bodies are long.
     post_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     # When the webhook delivery was received, stamped in the API process.
     #
-    # Written when the ``processing`` row is first created rather than at
-    # completion, so a review whose worker is killed — or which sits in
-    # ``processing`` forever — still records when it was asked for. That is
+    # Written when the ``processing`` row is created rather than at completion,
+    # so a review whose worker is killed still records when it was asked for —
     # exactly the case where queue wait is worth knowing.
     queued_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

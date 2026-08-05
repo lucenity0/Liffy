@@ -28,7 +28,7 @@ export function ReviewHeader({
   const inFlight = review.status === "pending" || review.status === "processing";
 
   return (
-    <header className="flex flex-col gap-2">
+    <header data-liffy="review-header" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
         <h1 className="font-code text-xl leading-tight break-all text-ink">
           {review.repo_full_name}

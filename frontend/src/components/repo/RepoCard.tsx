@@ -41,7 +41,10 @@ export function RepoCard({
     // No aria-label: a named <section> is a landmark, and one landmark per
     // repo would bury the real ones. The list item wrapper in RepoList is
     // what gives a screen reader the structure instead.
-    <Sheet className="flex flex-col transition-colors hover:border-rule-strong">
+    <Sheet
+      data-liffy="dashboard-card"
+      className="flex flex-col transition-colors hover:border-rule-strong"
+    >
       <Sheet.Body className="flex flex-1 flex-col gap-3">
         <div className="flex flex-col gap-0.5">
           <Link

@@ -96,6 +96,58 @@ depend on your deployment:
   that provider. See [*where your code goes*](README.md#-where-your-code-goes)
   in the README.
 
+## Known dependency advisories
+
+Audited 2026-08-03 with `pip-audit` and `npm audit`. Both audits were clean of
+everything reachable by an unauthenticated request; what remains is listed here
+rather than left for you to rediscover.
+
+The backend went from **36 advisories across 11 packages to 7 across 4**. Fixed
+by upgrading: `starlette` (10, the HTTP layer every request reaches first),
+`python-multipart` (7, request-body parsing), `pygments`, `python-dotenv`,
+`langsmith`, and most of `langchain-core`. `pytest` was also removed from
+`requirements.txt` entirely — it was pinned there as well as in
+`requirements-dev.txt`, so a test runner was being installed into production
+images for no reason.
+
+### Accepted, with reasons
+
+**`langchain` 0.3.30, `langchain-core` 0.3.86, `langchain-text-splitters`
+0.3.11, `langchain-openai` 0.2.10 — 5 advisories.**
+
+Every one is fixed only in the `1.x` line. That is not a version bump: `1.x`
+moves import paths and the chain-composition APIs that `backend/app/llm/chain.py`
+is built on, so taking it means porting the review pipeline. We have taken the
+newest `0.3` releases instead, which carry the fixes that were backported.
+
+These are reachable through prompt and document inputs — which, in Liffy, are
+the diffs and source of repositories **you** connected, on an instance **you**
+run. That is a materially narrower exposure than an unauthenticated HTTP path,
+and it is why these are the ones left rather than the starlette advisories.
+
+If you are pointing Liffy at repositories you do not control, weigh that
+differently, and treat the `1.x` migration as work worth doing.
+
+**`react-router` 7.18.2 — 1 advisory.** GHSA-qwww-vcr4-c8h2 is a CSRF bypass in
+**RSC mode**. Liffy's frontend is a Vite SPA using `createBrowserRouter`
+(`frontend/src/App.tsx`) and does not use React Server Components, so the
+vulnerable path is not present. The fix is in `8.x`, a major upgrade.
+
+**`dompurify`, via `monaco-editor` — 1 advisory, moderate.** A
+`CUSTOM_ELEMENT_HANDLING` sanitiser bypass. Monaco renders the diff viewer, and
+Liffy does not configure custom-element handling. No fixed `monaco-editor` was
+available at the time of audit.
+
+### Re-running the audit
+
+```bash
+pip-audit -r backend/requirements.txt      # or: uvx pip-audit -r ...
+cd frontend && npm audit
+```
+
+If you find one of the accepted advisories is reachable in a way we have
+misjudged, that is exactly the sort of report the process above is for.
+
 ## Supported versions
 
 Liffy is pre-1.0 and moves fast. Only `main` is supported — fixes land there,

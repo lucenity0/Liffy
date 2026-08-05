@@ -4,10 +4,12 @@ import { cn } from "@/lib/utils";
 /**
  * Liffy's pixel art, in the app.
  *
- * The cat has been on the landing page and the report since the beginning and
- * has never once appeared in the product it advertises — which left the app
- * itself with no character at all. These are the same maps, character for
- * character, so it is the same animal in all three places.
+ * Four small marks that belong to the copy beside them — a key for access, a
+ * book for the index, an eye for review, a star for the score. The same maps
+ * the landing page and the report use, character for character.
+ *
+ * The cat is not here. It is the logo now, and a logo with four tones and
+ * white eyes does not survive being traced into one ink: see LiffyMark.
  *
  * Drawn in `currentColor` on `shape-rendering: crispEdges`, so it themes for
  * free across every palette and stays monochrome — it costs nothing at any
@@ -15,24 +17,6 @@ import { cn } from "@/lib/utils";
  */
 
 const MAPS = {
-  cat: [
-    "..#.......#...............",
-    ".###.....###..............",
-    ".#.##....#.##.............",
-    ".#..##..##..##............",
-    ".#.########..##...........",
-    ".################.........",
-    ".#################........",
-    ".##################.......",
-    ".##################.......",
-    "###################.......",
-    "###################.#####.",
-    "##...####...##############",
-    "##########################",
-    "####################...###",
-    ".################.........",
-    "..#############...........",
-  ],
   key: [".###.", "#...#", "#...#", ".###.", "..#..", "..##.", "..#..", "..##."],
   book: [
     "########",
@@ -54,7 +38,15 @@ const MAPS = {
     "..####..",
     "........",
   ],
-  star: ["...#...", "...#...", ".#####.", "..###..", ".##.##.", "##...##", "#.....#"],
+  star: [
+    "...#...",
+    "...#...",
+    ".#####.",
+    "..###..",
+    ".##.##.",
+    "##...##",
+    "#.....#",
+  ],
 } as const;
 
 export type SpriteName = keyof typeof MAPS;
@@ -91,7 +83,9 @@ function runsOf(map: readonly string[]): Rect[] {
 }
 
 export function PixelSprite({
-  name = "cat",
+  /* No default worth having: the four marks mean four different things, and
+     a caller that does not name one has not decided yet. */
+  name = "key",
   cell = 4,
   className,
   title,

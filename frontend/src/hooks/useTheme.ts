@@ -163,9 +163,35 @@ function subscribe(listener: () => void): () => void {
   };
   query?.addEventListener?.("change", onSystemChange);
 
+  /**
+   * The other tabs.
+   *
+   * `storage` fires in every same-origin document *except* the one that
+   * wrote, which is exactly the fan-out wanted here: picking a theme in
+   * Settings should reach the dashboard you left open next to it. Without
+   * this the two tabs disagreed until whichever one you were not looking at
+   * happened to reload, and the toggle in the stale tab then flipped against
+   * a polarity nobody could see.
+   *
+   * Re-reads storage rather than trusting `event.newValue`, so a write from
+   * the landing page — which speaks the same key in a smaller dialect — lands
+   * the same way as one of ours.
+   */
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== null && event.key !== THEME_KEY) return;
+    const prefs = readPrefs();
+    const resolved = resolveTheme(prefs, prefersDark());
+    // The palette before the attribute, as everywhere else: the rule has to
+    // exist by the time `[data-theme="custom"]` starts matching.
+    applyCustomTheme(resolved === "custom" ? prefs.custom : null);
+    apply(resolved, prefs.custom);
+  };
+  window.addEventListener("storage", onStorage);
+
   return () => {
     listeners.delete(listener);
     query?.removeEventListener?.("change", onSystemChange);
+    window.removeEventListener("storage", onStorage);
   };
 }
 

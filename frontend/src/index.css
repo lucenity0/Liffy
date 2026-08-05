@@ -17,6 +17,47 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ==================================================================== *
+ * 0. WORKSPACE CONTROLS — the levers Appearance moves.
+ *
+ * A theme answers "what colour"; these answer "how big, how tight, how
+ * round, how loud". They are deliberately *upstream* of the scales in
+ * @theme rather than a parallel set of utilities: --text-base is
+ * `calc(14px * var(--ui-scale))`, so one variable moves the whole type
+ * ramp, and Tailwind's --spacing hangs off the same multiplier, so
+ * padding, gaps and control heights move with it. That is what makes UI
+ * Scale a single honest slider instead of forty font-size fields.
+ *
+ * Defaults here are exactly today's values — --ui-radius: 3px yields the
+ * same 2px chip and 3px sheet the design shipped with — so an install that
+ * never opens Appearance renders byte-identically.
+ *
+ * Overridden at runtime by `html:root { … }` from <style id="liffy-appearance">,
+ * which outranks this at (0,1,1) without depending on source order. The
+ * boot script in index.html writes that element before first paint and
+ * src/lib/theme/appearance.ts writes it afterwards; bootScript.test.ts
+ * holds the two to the same answer.
+ * ==================================================================== */
+:root {
+  --ui-scale: 1;
+  --ui-density: 1;
+  --ui-radius: 3px;
+  --ui-leading: 1.6;
+  --ui-heading-weight: 500;
+  --ui-body-weight: 400;
+
+  /* Indirection so a font choice is one variable rather than an edit to
+     three @theme entries. Only faces that are actually served: the two
+     Monaspace variables this app preloads, and the OS stacks, which cost
+     no bytes. A CDN face would put a third-party request on every page of
+     a self-hosted tool. */
+  --ui-font-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
+  --ui-font-hand:
+    "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+  --ui-font-code:
+    "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+}
+
+/* ==================================================================== *
  * 1. RAW PALETTE — hand-written, always emitted.
  *
  * Tailwind only emits the theme variables it sees *used in classes*, so
@@ -104,7 +145,11 @@
 
   /* Diff washes reuse the same two inks, so the diff is not a 2nd palette. */
   --diff-add: color-mix(in oklab, var(--sage) var(--diff-add-mix), var(--card));
-  --diff-del: color-mix(in oklab, var(--oxide) var(--diff-del-mix), var(--card));
+  --diff-del: color-mix(
+    in oklab,
+    var(--oxide) var(--diff-del-mix),
+    var(--card)
+  );
 
   /* The chrome plane — the nav rail, and anything else that is furniture
      rather than page.
@@ -120,6 +165,47 @@
   --chrome-ink-dim: #a49b8a; /*  5.3:1 on chrome */
   --chrome-rule: #524a40; /*  1.67:1 hairlines within the rail */
   --chrome-active: #3b3730; /*  1.23:1 the current nav item */
+
+  /* The café scene — the illustration on the sign-in screen, drawn on a
+     240x150 pixel grid by src/lib/cafeScene.ts.
+
+     Mixed out of the palette rather than written as hexes, so the picture
+     themes itself and no rung of the ladder needs its own copy. The mixes
+     are picked so the *relationship* survives the polarity flip rather
+     than the lightness: glass stays a cooler material than the wall in
+     both directions, and everything drawn on top is a palette ink, which
+     is already solved for 5–6:1 against light paper and dark graphite
+     alike. Only one thing branches on polarity, and it branches in the
+     drawing code rather than here — under a dark theme the window looks
+     out on a night, so it gets stars and a moon instead of a sun.
+
+     The landing page (docs/landing.src.html) carries the same block for
+     the same picture. Two copies, like the pixel maps in PixelSprite:
+     that page is hand-authored and shares no build with the app. */
+  --scene-wall: color-mix(in oklab, var(--recessed) 35%, var(--card));
+  --scene-wall-lo: color-mix(in oklab, var(--recessed) 70%, var(--card));
+  --scene-line: var(--rule);
+  --scene-rule: var(--rule-strong);
+  --scene-frame: var(--ink-sub);
+  --scene-frame-hi: var(--ink-dim);
+  --scene-ink: var(--ink);
+  --scene-glass: color-mix(in oklab, var(--payne) 20%, var(--card));
+  --scene-glass-lo: color-mix(in oklab, var(--ochre) 24%, var(--card));
+  /* Warm, not bright. A cloud that is *lighter* than the sky can only be
+     written one way round — the polarity flip turns it into a hole — so
+     these are lit clouds instead of white ones, and warm against a cool
+     sky reads as cloud in both directions. */
+  --scene-cloud: color-mix(in oklab, var(--ochre) 32%, var(--card));
+  --scene-far: color-mix(in oklab, var(--payne) 58%, var(--card));
+  /* The park and the trees on it are two tokens, not one: at one mix for
+     both, the trees came out as pale discs floating over the grass.
+     Distance is the only depth cue a flat drawing has, so the near thing
+     has to be the stronger mix. */
+  --scene-ground: color-mix(in oklab, var(--sage) 30%, var(--card));
+  --scene-tree: color-mix(in oklab, var(--sage) 78%, var(--card));
+  --scene-warm: var(--ochre);
+  --scene-glow: color-mix(in oklab, var(--ochre) 34%, var(--card));
+  --scene-steam: var(--ink-sub);
 
   /* Raw-CSS-only constants — deliberately not theme variables. */
   --grain-opacity: 0.032;
@@ -385,37 +471,49 @@
   --color-current: currentColor;
 
   --font-*: initial;
-  --font-hand: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
-  --font-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
-  --font-code: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+  --font-hand: var(--ui-font-hand);
+  --font-ui: var(--ui-font-ui);
+  --font-code: var(--ui-font-code);
   --default-font-family: var(--font-ui);
   --default-mono-font-family: var(--font-code);
 
+  /* Every step through --ui-scale, so the ramp moves as one. The px values
+     are the ones the design was drawn at; the multiplier defaults to 1. */
   /* Monaspace runs narrow (0.62em advance), so the ramp sits a touch
      larger than it would for a proportional face. */
   --text-*: initial;
-  --text-2xs: 10px;
-  --text-xs: 11px; /* the label idiom: uppercase + tracking-label */
-  --text-sm: 12.5px;
-  --text-base: 14px;
-  --text-md: 15px;
-  --text-lg: 18px;
-  --text-xl: 22px;
-  --text-2xl: 28px;
+  --text-2xs: calc(10px * var(--ui-scale));
+  --text-xs: calc(11px * var(--ui-scale)); /* the label idiom */
+  --text-sm: calc(12.5px * var(--ui-scale));
+  --text-base: calc(14px * var(--ui-scale));
+  --text-md: calc(15px * var(--ui-scale));
+  --text-lg: calc(18px * var(--ui-scale));
+  --text-xl: calc(22px * var(--ui-scale));
+  --text-2xl: calc(28px * var(--ui-scale));
+
+  /* Padding, gaps, control heights and icon boxes all resolve through
+     Tailwind's --spacing, which is why scaling it is what makes UI Scale
+     read as "bigger interface" rather than "bigger text in the same boxes".
+     Density rides the same variable at a much narrower range — ±12% against
+     scale's ±20% — so the two compose instead of fighting. */
+  --spacing: calc(0.25rem * var(--ui-scale) * var(--ui-density));
 
   --leading-*: initial;
   --leading-none: 1;
   --leading-tight: 1.3;
-  --leading-normal: 1.6;
+  --leading-normal: var(--ui-leading);
   --leading-relaxed: 1.75;
   --leading-rule: var(--rule-step); /* prose: one line == one ruled line */
 
   --tracking-label: 0.14em; /* ~2px at 11px — straight off the portfolio */
   --tracking-wide: 0.06em;
 
+  /* One knob, two radii, and the chip stays a hair tighter than the sheet
+     the way it was drawn. `max()` keeps it at 0 rather than negative when
+     the slider bottoms out. */
   --radius-*: initial;
-  --radius-chip: 2px;
-  --radius-sheet: 3px;
+  --radius-chip: max(0px, calc(var(--ui-radius) - 1px));
+  --radius-sheet: var(--ui-radius);
   --radius-full: 9999px;
 
   --shadow-*: initial;
@@ -481,11 +579,31 @@
     color: var(--ink);
     font-family: var(--font-ui);
     font-size: var(--text-base);
-    line-height: 1.6;
+    line-height: var(--ui-leading);
+    font-weight: var(--ui-body-weight);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     /* Texture healing + ligatures — the reason for the variable fonts. */
-    font-feature-settings: "calt" 1, "liga" 1;
+    font-feature-settings:
+      "calt" 1,
+      "liga" 1;
+  }
+
+  /* Headings take the other weight knob. Both faces are variable, so this
+     is a real axis rather than a jump to a second file.
+
+     In @layer base, so the handful of explicit `font-medium` / `font-normal`
+     utilities in components still win where someone meant a specific weight.
+     `.label` is the app's actual heading idiom — Sheet.Header renders an h2
+     wearing it — so it is named here rather than left to inherit body. */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  .label {
+    font-weight: var(--ui-heading-weight);
   }
 
   /* Hairlines are the whole visual language, and v4 defaults border-color
@@ -525,7 +643,11 @@
      Checkboxes and radios keep the ring. The UA paints those itself and
      there is no border of ours to darken, so taking it away would leave them
      with no focus indicator at all. */
-  :where(input:not([type="checkbox"], [type="radio"]), textarea, select):focus-visible {
+  :where(
+    input:not([type="checkbox"], [type="radio"]),
+    textarea,
+    select
+  ):focus-visible {
     outline: none;
     border-color: var(--ink);
   }
@@ -721,6 +843,81 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* The same backstop, asked for explicitly.
+ *
+ * The OS switch above is a *declaration of need* and is meant to stay
+ * absolute — a preference set here can add motion suppression but never take
+ * it away. Without the media guard below that was only true in intent:
+ * `html[data-motion="reduced"] *` is (0,1,1) against the OS block's bare `*`
+ * at (0,0,0), both `!important`, so specificity — not the stated invariant —
+ * decided, and "reduced" stored alongside an OS request for less motion won
+ * with its own weaker 60ms instead of the ~0ms the media query asked for.
+ * Scoped to `no-preference` so the OS block is the only one that can ever
+ * apply when the OS has actually asked for reduced motion — this rule now
+ * only fires when there is no such request to defer to.
+ *
+ * "Reduced" keeps state changes legible but stops anything from feeling
+ * animated; "off" is the full stop, matching the media query exactly, which
+ * is also why it needs no such guard — it can only ever agree with the OS
+ * block, never weaken it. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-motion="reduced"] *,
+  html[data-motion="reduced"] ::before,
+  html[data-motion="reduced"] ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 60ms !important;
+  }
+}
+
+html[data-motion="off"] *,
+html[data-motion="off"] ::before,
+html[data-motion="off"] ::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* The compact rail.
+ *
+ * Only at lg and up, because below it the rail is an off-canvas drawer that
+ * covers the page — narrowing a drawer buys nothing and makes it harder to
+ * hit. Liffy's nav rows are words rather than icons, so "compact" means a
+ * tighter measure and a smaller type size, not labels swapped for glyphs:
+ * an icons-only rail here would be five unlabelled squares.
+ *
+ * Unlayered, so it beats the `lg:w-56` utility without !important. */
+@media (width >= 64rem) {
+  html[data-nav="compact"] [data-liffy-rail] {
+    width: 11rem;
+  }
+
+  html[data-nav="compact"] [data-liffy-rail] [data-liffy="sidebar-item"] {
+    font-size: var(--text-sm);
+  }
+}
+
+/* Shadow depth, as a rebinding rather than a second set of utilities.
+ *
+ * `none` empties the colour every hard shadow is drawn in, so the offsets
+ * stay in the layout and simply stop being visible — nothing has to know
+ * whether it is wearing a shadow. `elevated` promotes the one-pixel offset
+ * to the three-pixel one, which is the same mark further from the page, not
+ * a blur: index.css's rule is that paper does not glow, and a soft shadow
+ * here would be the one element in the app lit from somewhere else. */
+html[data-shadow="none"] {
+  --shadow-edge: transparent;
+}
+
+/* The literal offset, not `var(--shadow-hard-lg)`: that one is declared in
+   `@theme inline`, which substitutes it into utilities and never emits it as
+   a custom property, so the var() would resolve to nothing here. Keep this
+   in step with --shadow-hard-lg above. */
+html[data-shadow="elevated"] .shadow-hard {
+  box-shadow: 3px 3px 0 0 var(--shadow-edge);
 }
 
 @media (prefers-contrast: more) {

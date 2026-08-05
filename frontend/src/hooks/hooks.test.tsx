@@ -589,6 +589,67 @@ describe("useTheme", () => {
   });
 
   /**
+   * The other tab.
+   *
+   * Settings open beside a dashboard is not an edge case — it is how anyone
+   * checks a theme against a page they are not on, and it was the shape of
+   * the original bug report. `storage` fires in every same-origin document
+   * except the one that wrote, so this is the whole mechanism: no listener
+   * meant the two tabs disagreed until the one nobody was looking at happened
+   * to reload.
+   */
+  it("follows a theme change made in another tab", () => {
+    document.documentElement.dataset.theme = "graphite";
+    const { result } = renderHook(() => useTheme());
+
+    // What the other tab's writePrefs would have left behind. The event
+    // itself never fires in the tab that wrote, so it is dispatched here the
+    // way the browser would deliver it.
+    localStorage.setItem(
+      THEME_KEY,
+      JSON.stringify({ mode: "fixed", theme: "paper", light: "paper", dark: "graphite" }),
+    );
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: THEME_KEY }));
+    });
+
+    expect(result.current.theme).toBe("paper");
+    expect(document.documentElement.classList.contains("light")).toBe(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+  });
+
+  it("ignores another key's storage event", () => {
+    document.documentElement.dataset.theme = "graphite";
+    const { result } = renderHook(() => useTheme());
+
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "liffy-nav-expanded" }),
+      );
+    });
+
+    expect(result.current.theme).toBe("graphite");
+  });
+
+  /**
+   * A `storage` event with a null key is what `localStorage.clear()` in
+   * another tab looks like. Treated as "everything changed" rather than
+   * ignored, or signing out in one tab would leave this one wearing a theme
+   * that no longer exists anywhere.
+   */
+  it("treats a cleared store as a change", () => {
+    document.documentElement.dataset.theme = "paper";
+    const { result } = renderHook(() => useTheme());
+
+    localStorage.clear();
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    });
+
+    expect(result.current.theme).toBe(DEFAULT_THEME);
+  });
+
+  /**
    * The key predates the theme ladder and held a bare "paper"/"graphite".
    * Anyone who had already chosen a side must keep it rather than being moved
    * onto the new default because the storage format changed under them — and

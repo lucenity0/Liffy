@@ -7,10 +7,7 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <title>liffy — how it works</title>
-    <meta
-      name="description"
-      content="How Liffy works, in plain English: signing in with GitHub, reading a whole codebase, reviewing a pull request, and scoring the result."
-    />
+    <meta name="description" content="How Liffy works, in plain English: signing in with GitHub, reading a whole codebase, reviewing a pull request, and scoring the result." />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#1d1b18" media="(prefers-color-scheme: dark)" />
@@ -21,10 +18,7 @@
     <meta property="og:site_name" content="liffy" />
     <meta property="og:url" content="https://liffy.lucenity.dev/report" />
     <meta property="og:title" content="liffy — how it works" />
-    <meta
-      property="og:description"
-      content="An illustrated walkthrough of Liffy's architecture, from GitHub sign-in to a scored code review."
-    />
+    <meta property="og:description" content="An illustrated walkthrough of Liffy's architecture, from GitHub sign-in to a scored code review." />
 
     <!--
       GENERATED FILE — do not edit. Edit docs/report.src.html instead; that
@@ -33,25 +27,54 @@
 
       The generator and the publish script are local tooling and are not in
       the repository (see .gitignore); this committed output is what ships.
-      It goes up as report/index.html on the `under-construction` branch —
-      the GitHub Pages source behind liffy.lucenity.dev — while this copy
-      stays in the source tree so the two can be diffed. Only /favicon.svg
-      and /fonts/*.woff2 are external, and both degrade cleanly.
+      It goes up on the `under-construction` branch — the GitHub Pages
+      source behind liffy.lucenity.dev — while this copy stays in the
+      source tree so the two can be diffed. Only /favicon.svg and
+      /fonts/*.woff2 are external, and both degrade cleanly.
     -->
 
-    <!-- Same contract as index.html and the WIP page: theme on <html> before
+    <!-- Same contract as index.html and the app: theme on <html> before
          first paint, same `liffy-theme` key, so moving between the front
-         door, the app and this page never flashes. try/catch because
-         localStorage throws outright when storage is partitioned, and a
-         colour preference is not worth a blank page. -->
+         door, the walkthrough and the dashboard never flashes. try/catch
+         because localStorage throws outright when storage is partitioned,
+         and a colour preference is not worth a blank page. -->
     <script>
       (function () {
+        /* These pages have one light look and one dark one, so they read
+           only the *polarity* out of the app's preference — not which of the
+           five themes it names. That is deliberate: it means adding a theme
+           to the app never touches these two files. DARK lists the dark ids
+           because polarity is not derivable from the string alone. */
+        var DARK = { graphite: 1, blackboard: 1, carbon: 1 };
         try {
-          var stored = localStorage.getItem("liffy-theme");
-          if (stored === "graphite" || stored === "paper") {
-            document.documentElement.classList.add(
-              stored === "graphite" ? "dark" : "light",
-            );
+          var raw = localStorage.getItem("liffy-theme");
+          var id = null;
+          var polarity = null;
+          if (raw) {
+            if (raw.charAt(0) === "{") {
+              var p = JSON.parse(raw);
+              id =
+                p.mode === "system"
+                  ? window.matchMedia("(prefers-color-scheme: dark)").matches
+                    ? p.dark
+                    : p.light
+                  : p.theme;
+              /* "custom" is the one id whose polarity is stored rather than
+                 declared, and DARK cannot answer for it. Reading it off the
+                 seeds instead of letting the lookup miss: `DARK["custom"]` is
+                 undefined, which used to send anyone running a dark custom
+                 theme to a light landing page. */
+              if (id === "custom" && p.custom && p.custom.seeds) {
+                polarity = p.custom.seeds.polarity === "light" ? "light" : "dark";
+              }
+            } else {
+              /* Bare string: what older versions of the app wrote. */
+              id = raw;
+            }
+          }
+          if (!polarity && id) polarity = DARK[id] ? "dark" : "light";
+          if (polarity) {
+            document.documentElement.classList.add(polarity);
           }
         } catch (e) {
           /* The media query decides, then. */
@@ -136,23 +159,20 @@
  * comments are the ones measured there, against --paper.
  * ==================================================================== */
 :root {
-  --paper: #f4f1ea;
-  --card: #faf8f3;
-  --recessed: #efebe2;
-  --rule: #ded8cb;
-  --rule-strong: #c9c1b0;
-  --shadow-edge: #c9c1b0;
-
-  --ink: #2b2925;      /* 12.9:1 */
-  --ink-dim: #6b6459;  /*  5.2:1 */
-  --ink-sub: #8e8678;  /*  3.2:1 — large text and non-text only */
-
-  --oxide: #9a3f2b;    /* critical · request_changes · failed */
-  --sage: #4a6b4a;     /* approve · completed · indexed */
-  --ochre: #7d6019;    /* warning · processing */
-  --payne: #3f5a73;    /* info · comment */
-
-  --tint: 9%;
+  --paper: #f0ece3;
+  --card: #fbf9f5;
+  --recessed: #e4dfd3;
+  --rule: #c5bca9;
+  --rule-strong: #a89e8b;
+  --shadow-edge: #bdb3a0;
+  --ink: #2b2925;
+  --ink-dim: #524b3e;
+  --ink-sub: #696154;
+  --oxide: #9a3f2b;
+  --sage: #456646;
+  --ochre: #775b17;
+  --payne: #3b5670;
+  --tint: 18%;
   --oxide-tint: color-mix(in oklab, var(--oxide) var(--tint), var(--card));
   --sage-tint: color-mix(in oklab, var(--sage) var(--tint), var(--card));
   --ochre-tint: color-mix(in oklab, var(--ochre) var(--tint), var(--card));
@@ -184,17 +204,14 @@
     --rule: #423d36;
     --rule-strong: #5a5349;
     --shadow-edge: #0d0c0a;
-
     --ink: #e6e1d6;
-    --ink-dim: #9c9280;
-    --ink-sub: #786f60;
-
+    --ink-dim: #b2a898;
+    --ink-sub: #958c7c;
     --oxide: #dd8462;
     --sage: #7ba171;
     --ochre: #bd9433;
     --payne: #84a5c2;
-
-    --tint: 17%;
+    --tint: 18%;
     --grain-opacity: 0.05;
     --grain-blend: screen;
   }
@@ -207,17 +224,14 @@
   --rule: #423d36;
   --rule-strong: #5a5349;
   --shadow-edge: #0d0c0a;
-
   --ink: #e6e1d6;
-  --ink-dim: #9c9280;
-  --ink-sub: #786f60;
-
+  --ink-dim: #b2a898;
+  --ink-sub: #958c7c;
   --oxide: #dd8462;
   --sage: #7ba171;
   --ochre: #bd9433;
   --payne: #84a5c2;
-
-  --tint: 17%;
+  --tint: 18%;
   --grain-opacity: 0.05;
   --grain-blend: screen;
 }
@@ -324,7 +338,14 @@ code, .mono {
    noticeably more width than a square sprite to read at the same weight
    beside the wordmark. */
 .cat { flex: 0 0 auto; padding-top: 0.35rem; }
-.cat svg { display: block; width: clamp(104px, 15vw, 148px); height: auto; }
+/* The mark — liffy-logo.png, the artwork as drawn. An image, not a sprite
+   map: the logo has four tones and white eyes, and tracing it into one-ink
+   rectangles turns the eyes into holes that take the surface colour, which
+   on graphite comes out as a hollow-eyed grey skull. The same file in both
+   themes: a logo that changes colour with the page is a weaker one than a
+   logo that does not, and the white eyes carry it against graphite. */
+.cat .mark { width: clamp(84px, 12vw, 118px); }
+.mark { display: block; height: auto; }
 .mast-id { flex: 1 1 18rem; min-width: 0; }
 
 .wordmark {
@@ -873,7 +894,7 @@ code, .mono {
 }
 .colo .p { font-size: 0.86rem; line-height: 1.65; color: var(--ink-sub); max-width: 60ch; }
 .colo [data-sprite] { opacity: 0.75; }
-.colo svg { width: 56px; height: auto; display: block; }
+.colo .mark { width: 44px; }
 .act-rule [data-sprite] { flex: 0 0 auto; display: block; }
 
 .colo-credit {
@@ -922,7 +943,8 @@ document.documentElement.classList.add("anim");
   <!-- ============================================================== -->
   <header class="mast">
     <div class="mast-top">
-      <div class="cat" data-sprite="cat" data-cell="6" aria-hidden="true"></div>
+      <div class="cat"><img class="mark" src="/liffy-logo.png" alt="" aria-hidden="true"
+         width="480" height="407" decoding="async" /></div>
       <div class="mast-id">
         <p class="lbl">Architecture, explained without the jargon</p>
         <h1 class="wordmark">Liffy</h1>
@@ -937,9 +959,9 @@ document.documentElement.classList.add("anim");
     </p>
 
     <div class="mast-meta">
-      <p class="lbl">Built by <span>Nafees&nbsp;S &amp; Gajalakshmi</span></p>
-      <p class="lbl">Report <span>v1.0</span></p>
-      <p class="lbl">Status <span>Working end to end</span></p>
+      <p class="lbl">Built by <span>Nafees&nbsp;S &amp; S&nbsp;Gaja&nbsp;Lakshmi</span></p>
+      <p class="lbl">Report <span>v2.0</span></p>
+      <p class="lbl">Status <span>All fifteen steps running</span></p>
     </div>
   </header>
 
@@ -1047,8 +1069,7 @@ document.documentElement.classList.add("anim");
             <p class="cast-tech">Scoring engine &middot; Feedback store</p>
           </div>
           <p class="cast-what">Collects the thumbs-up and thumbs-down a developer gives each
-            comment, and turns them into a score for how good Liffy's reviews actually are.
-            <span class="pill warn">being built now</span></p>
+            comment, and turns them into a score for how good Liffy's reviews actually are.</p>
         </div>
       </div>
 
@@ -1530,8 +1551,9 @@ document.documentElement.classList.add("anim");
 
       <p class="p sub tight" style="font-size:0.82rem;margin-bottom:1.5rem">Note the clock:
         two minutes, against a target of ninety seconds. That gap is the honest reason the
-        timing measurement described in Plate 04 is being built &mdash; a target nobody measures
-        properly is a target nobody misses.</p>
+        timing measurement described in Plate 04 exists &mdash; a target nobody measures
+        properly is a target nobody misses. Liffy now records both numbers on every review,
+        the working time and the full wait, and reports the median of each.</p>
 
       <h3 class="h3" style="margin-bottom:0.4rem">The one that mattered</h3>
       <p class="p dim tight" style="font-size:0.92rem">Liffy rated this <span class="pill crit">critical</span>
@@ -1619,7 +1641,7 @@ document.documentElement.classList.add("anim");
     </div>
     <div class="plate-bd">
       <div class="act-hd">
-        <p class="lbl">Steps 14 and 15 &mdash; currently being built</p>
+        <p class="lbl">Steps 14 and 15 &mdash; the loop that closes</p>
         <h2 class="h2">A review nobody scores cannot improve</h2>
         <p class="p dim">Everything up to here produces a review. This last act is what stops
           the quality being a matter of opinion. Without it, there would be no way to answer
@@ -1632,9 +1654,9 @@ document.documentElement.classList.add("anim");
           <div class="dg-arrow"></div>
           <div class="dg-box fill"><span class="dg-t">Stored against<br>the comment</span><span class="dg-s">Database</span></div>
           <div class="dg-arrow"></div>
-          <div class="dg-box dash"><span class="dg-t">Weekly job<br>scores reviews</span><span class="dg-s">Celery beat</span></div>
+          <div class="dg-box fill"><span class="dg-t">Weekly job<br>scores reviews</span><span class="dg-s">Celery beat</span></div>
           <div class="dg-arrow"></div>
-          <div class="dg-box dash"><span class="dg-t">Bad reviews<br>flagged</span><span class="dg-s">Examiner</span></div>
+          <div class="dg-box fill"><span class="dg-t">Bad reviews<br>flagged</span><span class="dg-s">Examiner</span></div>
           <div class="dg-arrow"></div>
           <div class="dg-box dash"><span class="dg-t">Briefing<br>rewritten</span><span class="dg-s">Humans</span></div>
         </div>
@@ -1679,8 +1701,8 @@ document.documentElement.classList.add("anim");
           <span class="pill none">target &gt; 70%</span>
         </div>
         <div class="board-row">
-          <div class="board-t">How often Liffy raises a non-issue<small>False positive rate</small></div>
-          <span class="pill none">target &lt; 20%</span>
+          <div class="board-t">How often Liffy raises a non-issue<small>False positive rate &middot; the complement of the above</small></div>
+          <span class="pill none">not the operative target</span>
         </div>
         <div class="board-row">
           <div class="board-t">Whether "critical" really means critical<small>Severity calibration</small></div>
@@ -1697,15 +1719,19 @@ document.documentElement.classList.add("anim");
       </div>
 
       <div class="note">
-        <p class="lbl">A contradiction found in our own specification</p>
+        <p class="lbl">A contradiction found in our own specification &mdash; and settled</p>
         <p class="p">The first two targets cannot both be met as written. If a developer's only
           options are thumbs up and thumbs down, then "comments marked as not an issue" is
           exactly "comments not given a thumbs up" &mdash; so the second number is always
           100% minus the first. Asking for above 70% <i>and</i> below 20% asks for
-          <span class="mono">70&nbsp;+&nbsp;80&nbsp;=&nbsp;150%</span>. Fixing it means either
-          adding a third option to the vote or admitting the two metrics are one. This was
-          caught while writing the code, and is being resolved and documented rather than
-          quietly implemented wrong.</p>
+          <span class="mono">70&nbsp;+&nbsp;80&nbsp;=&nbsp;150%</span>. It was caught while
+          writing the code, and written down rather than quietly implemented wrong.</p>
+        <p class="p">The resolution: both numbers are still stored, because they are the two
+          columns the schema promises, but <b>approval rate is the operative target</b> and
+          false-positive rate is recorded as its arithmetic complement, not as a second
+          opinion. Telling the two genuinely apart needs a third answer in the vote &mdash;
+          "wrong" as distinct from "not useful" &mdash; which is a schema change worth making
+          when there is enough feedback for the finer number to mean anything.</p>
       </div>
     </div>
   </section>
@@ -1777,15 +1803,15 @@ document.documentElement.classList.add("anim");
   <section class="plate">
     <div class="plate-hd">
       <span class="plate-no">PLATE 09</span>
-      <span class="plate-ti">What is built, and what is next</span>
+      <span class="plate-ti">What is built, and what is not</span>
     </div>
     <div class="plate-bd">
       <div class="act-hd">
-        <h2 class="h2">Thirteen of the fifteen steps run today</h2>
+        <h2 class="h2">All fifteen steps run today</h2>
         <p class="p dim">Steps 1 to 13 &mdash; sign in, connect a project, read it, receive a pull
           request, retrieve context, write the review, display it &mdash; all work end to end
-          against real repositories and a real AI. Steps 14 and 15, the scoring loop, are the
-          milestone currently in progress.</p>
+          against real repositories and a real AI. So do steps 14 and 15: comments are rated,
+          a weekly job turns those ratings into scores, and an analytics page shows them.</p>
       </div>
 
       <div class="board">
@@ -1809,17 +1835,25 @@ document.documentElement.classList.add("anim");
           <div class="board-t">Dashboard with inline comments on the diff<small>Act III &middot; step 13</small></div>
           <span class="pill ok">done</span>
         </div>
-        <div class="board-row now">
+        <div class="board-row done">
           <div class="board-t">Thumbs up / down on every comment<small>Act IV &middot; step 14</small></div>
-          <span class="pill warn">in progress</span>
+          <span class="pill ok">done</span>
         </div>
-        <div class="board-row now">
+        <div class="board-row done">
           <div class="board-t">Weekly scoring job and an analytics page<small>Act IV &middot; step 15</small></div>
-          <span class="pill warn">in progress</span>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row done">
+          <div class="board-t">Posting the review back onto the GitHub pull request<small>Deliberately last &mdash; see below</small></div>
+          <span class="pill ok">done</span>
+        </div>
+        <div class="board-row done">
+          <div class="board-t">Settings, model providers and themes inside the app<small>No .env editing, and a subscription plan works as a provider</small></div>
+          <span class="pill ok">done</span>
         </div>
         <div class="board-row now">
-          <div class="board-t">Posting the review back onto the GitHub pull request<small>Deliberately last &mdash; see below</small></div>
-          <span class="pill warn">in progress</span>
+          <div class="board-t">Teams, organisation accounts, anything outside a GitHub pull request<small>Not built &mdash; and not planned</small></div>
+          <span class="pill none">not built</span>
         </div>
       </div>
 
@@ -1829,19 +1863,22 @@ document.documentElement.classList.add("anim");
           day one. It deliberately did not. An automated reviewer that starts commenting on
           people's work before anyone has established whether it is any good is just noise &mdash;
           and noise gets muted permanently. The dashboard came first so the quality could be
-          judged privately. Now that a real review has been checked comment by comment, posting
-          is being added &mdash; switched off by default.</p>
+          judged privately. Only once a real review had been checked comment by comment did
+          posting go in &mdash; and it ships switched off. Turn it on and it still only leaves
+          a comment; approving a pull request or formally blocking a merge is a second,
+          separate opt-in. An automated reviewer that can hold up a human's work uninvited is
+          the kind of tool people mute permanently.</p>
       </div>
 
       <div class="stats">
-        <div class="stat"><span class="stat-v">655</span><span class="lbl">Automated tests</span></div>
-        <div class="stat"><span class="stat-v">130</span><span class="lbl">Commits</span></div>
-        <div class="stat"><span class="stat-v">37</span><span class="lbl">Merged changes</span></div>
+        <div class="stat"><span class="stat-v">1,347</span><span class="lbl">Automated tests</span></div>
+        <div class="stat"><span class="stat-v">274</span><span class="lbl">Commits</span></div>
+        <div class="stat"><span class="stat-v">68</span><span class="lbl">Pull requests merged</span></div>
         <div class="stat"><span class="stat-v">2</span><span class="lbl">People</span></div>
       </div>
-      <p class="p sub tight" style="font-size:0.82rem;margin-top:0.85rem">Every one of those 655
-        tests runs automatically before any change is allowed into the project. Nothing merges
-        red.</p>
+      <p class="p sub tight" style="font-size:0.82rem;margin-top:0.85rem">Every one of those
+        1,347 tests runs automatically before any change is allowed into the project. Nothing
+        merges red.</p>
     </div>
   </section>
 
@@ -1849,7 +1886,7 @@ document.documentElement.classList.add("anim");
   <!-- COLOPHON                                                        -->
   <!-- ============================================================== -->
   <footer class="colo">
-    <span data-sprite="cat" data-cell="3" aria-hidden="true"></span>
+    <img class="mark" src="/liffy-logo.png" alt="" aria-hidden="true" width="480" height="407" decoding="async" />
 
     <p class="p">Set in Monaspace Argon and Neon, the two typefaces Liffy's own interface
       uses. The palette is lifted directly from the product's stylesheet &mdash; warm paper,
@@ -1858,14 +1895,14 @@ document.documentElement.classList.add("anim");
 
     <div class="colo-credit">
       <span class="lbl">Architecture &amp; Project Report</span>
-      <span class="colo-credit-v">Version 1.0</span>
-      <span class="colo-credit-v">Nafees&nbsp;S &amp; Gajalakshmi</span>
+      <span class="colo-credit-v">Version 2.0</span>
+      <span class="colo-credit-v">Nafees&nbsp;S &amp; S&nbsp;Gaja&nbsp;Lakshmi</span>
     </div>
 
     <div class="colo-foot">
       <p class="lbl">Source <span>github.com/lucenity0/Liffy</span></p>
       <p class="lbl">Read the flow <span>liffy.lucenity.dev/report</span></p>
-      <p class="lbl">Steps live <span>13 of 15</span></p>
+      <p class="lbl">Steps live <span>15 of 15</span></p>
     </div>
   </footer>
 
@@ -1880,28 +1917,6 @@ document.documentElement.classList.add("anim");
  * ==================================================================== */
 (function () {
   var MAPS = {
-    /* The sleeping cat from the under-construction page, character for
-       character — same animal on the front door and in here. Face on the
-       right, back sloping down-left, two closed-eye dashes, a paw out at
-       the bottom-left. */
-    cat: [
-      "..#.......#...............",
-      ".###.....###..............",
-      ".#.##....#.##.............",
-      ".#..##..##..##............",
-      ".#.########..##...........",
-      ".################.........",
-      ".#################........",
-      ".##################.......",
-      ".##################.......",
-      "###################.......",
-      "###################.#####.",
-      "##...####...##############",
-      "##########################",
-      "####################...###",
-      ".################.........",
-      "..#############..........."
-    ],
     key: [
       ".###.",
       "#...#",
@@ -2035,7 +2050,16 @@ document.documentElement.classList.add("anim");
           root.classList.toggle("dark", next);
           root.classList.toggle("light", !next);
           try {
-            localStorage.setItem("liffy-theme", next ? "graphite" : "paper");
+            /* Writes the app's format, preserving whatever it already held —
+               these pages know about polarity, so flipping here must not
+               silently reset someone's chosen theme on the other side. */
+            var raw = localStorage.getItem("liffy-theme");
+            var p = raw && raw.charAt(0) === "{" ? JSON.parse(raw) : {};
+            p.mode = "fixed";
+            p.light = p.light || "paper";
+            p.dark = p.dark || "blackboard";
+            p.theme = next ? p.dark : p.light;
+            localStorage.setItem("liffy-theme", JSON.stringify(p));
           } catch (e) {
             /* Session-only, then. */
           }

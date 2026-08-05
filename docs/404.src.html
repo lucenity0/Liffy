@@ -1,0 +1,694 @@
+<title>Liffy — are you lost?</title>
+
+<style>
+/* ==================================================================== *
+ * Fonts — Monaspace, the two faces Liffy itself ships. The src values
+ * are filled in by build-site.py.
+ * ==================================================================== */
+@font-face {
+  font-family: "Monaspace Neon";
+  src: __NEON_SRC__;
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Monaspace Argon";
+  src: __ARGON_SRC__;
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Monaspace Fallback";
+  src: local("SF Mono"), local("SFMono-Regular"), local("Menlo"),
+       local("Consolas"), local("DejaVu Sans Mono");
+  size-adjust: 103.3%;
+  ascent-override: 94.5%;
+  descent-override: 20%;
+  line-gap-override: 10%;
+}
+
+/* ==================================================================== *
+ * Palette — the app's ink, plus the night-scene keys.
+ *
+ * The `--scene-*` set is the one the under-construction page used, kept
+ * verbatim. That page is gone now, replaced by the real front door, and
+ * this is where its drawing went to live: same 160x90 grid, same stars,
+ * same moon, same cat. A visitor who saw the site before launch meets
+ * the same animal here.
+ * ==================================================================== */
+:root {
+  __PALETTE_LIGHT__
+
+  --f-display: "Monaspace Argon", "Monaspace Fallback", ui-monospace, monospace;
+  --f-ui: "Monaspace Neon", "Monaspace Fallback", ui-monospace, monospace;
+
+  --scene-sky-top: #f4f1ea;
+  --scene-sky-bottom: #f4f1ea;
+  --scene-ground: #ded8cb;
+  --scene-ground-line: #c9c1b0;
+  --scene-far: #c9c1b0;
+  --scene-mid: #8e8678;
+  --scene-dim: #6b6459;
+  --scene-subject: #2b2925;
+  --scene-subject-hi: #6b6459;
+  --scene-star: #8e8678;
+  --scene-star-dim: #c9c1b0;
+  --scene-sign: #efebe2;
+  --scene-cast: #c9c1b0;
+  --scene-accent: #7d6019;
+
+  --grain-opacity: 0.034;
+  --grain-blend: multiply;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) {
+    __PALETTE_DARK__
+
+    --scene-sky-top: #141311;
+    --scene-sky-bottom: #1d1b18;
+    --scene-ground: #28251f;
+    --scene-ground-line: #423d36;
+    --scene-far: #423d36;
+    --scene-mid: #5a5349;
+    --scene-dim: #9c9280;
+    --scene-subject: #e6e1d6;
+    --scene-subject-hi: #f2eee4;
+    --scene-star: #e6e1d6;
+    --scene-star-dim: #786f60;
+    --scene-sign: #141311;
+    --scene-cast: #0d0c0a;
+    --scene-accent: #bd9433;
+
+    --grain-opacity: 0.05;
+    --grain-blend: screen;
+  }
+}
+:root[data-theme="dark"],
+:root.dark {
+  __PALETTE_DARK__
+
+  --scene-sky-top: #141311;
+  --scene-sky-bottom: #1d1b18;
+  --scene-ground: #28251f;
+  --scene-ground-line: #423d36;
+  --scene-far: #423d36;
+  --scene-mid: #5a5349;
+  --scene-dim: #9c9280;
+  --scene-subject: #e6e1d6;
+  --scene-subject-hi: #f2eee4;
+  --scene-star: #e6e1d6;
+  --scene-star-dim: #786f60;
+  --scene-sign: #141311;
+  --scene-cast: #0d0c0a;
+  --scene-accent: #bd9433;
+
+  --grain-opacity: 0.05;
+  --grain-blend: screen;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-ui);
+  font-size: 14px;
+  line-height: 1.6;
+  font-feature-settings: "calt" 1, "liga" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 40px);
+  overflow-x: hidden;
+}
+
+/* Paper grain — the same turbulence and blend modes as the app's
+   `paper-grain` utility, so the two surfaces match. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+}
+
+main {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 760px;
+}
+
+/* A sheet: hairline rule, 3px radius, hard offset shadow, zero blur.
+   Paper does not glow. */
+.sheet {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: 3px 3px 0 0 var(--shadow-edge);
+  padding: clamp(14px, 3vw, 26px);
+}
+
+.label {
+  font-size: 11px;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-dim);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.topbar .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Oxide, not ochre. The under-construction page blinked ochre because a
+   build in progress is a job that has not finished; a 404 is not a job at
+   all, it is a wrong turn, and oxide is the ink this palette uses to say
+   so. */
+.blip {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--oxide);
+  display: inline-block;
+}
+
+.stage {
+  position: relative;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--recessed);
+  aspect-ratio: 160 / 90;
+}
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+/* No scanlines: a vignette is the most a sheet of paper will take. */
+.stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 120% at 50% 30%,
+    transparent 58%,
+    color-mix(in oklab, var(--ink) 12%, transparent) 100%
+  );
+}
+
+.wordmark {
+  font-family: var(--f-display);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-sub);
+  margin: 22px 0 6px;
+}
+.headline {
+  font-family: var(--f-display);
+  margin: 0;
+  font-size: clamp(19px, 5.4vw, 34px);
+  font-weight: 700;
+  letter-spacing: clamp(1px, 0.7vw, 4px);
+  line-height: 1.1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 0.3em;
+}
+.headline .caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.9em;
+  background: var(--ink);
+  transform: translateY(0.06em);
+}
+.sub {
+  font-family: var(--f-display);
+  margin: 14px 0 0;
+  color: var(--ink-dim);
+  font-size: 15px;
+  line-height: 28px; /* one line == one ruled line, as in the app */
+  max-width: 60ch;
+  text-wrap: pretty;
+}
+
+/* Where the progress bar used to be. A 404 has nothing to report the
+   progress of, and the one thing this page exists to offer is the way
+   back — so the row that carried the bar carries the door instead. */
+.ways {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 22px 0 2px;
+}
+.go {
+  font-family: var(--f-ui);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  background: var(--ink);
+  color: var(--paper);
+  text-decoration: none;
+  box-shadow: 2px 2px 0 0 var(--shadow-edge);
+  transition: background-color 0.1s, border-color 0.1s;
+}
+.go:hover {
+  background: var(--ink-dim);
+  border-color: var(--ink-dim);
+}
+.go .arrow {
+  /* The same glyph the signpost is drawing, at text size. */
+  font-family: var(--f-ui);
+}
+.go-alt {
+  font-family: var(--f-ui);
+  font-size: 13px;
+  color: var(--ink-dim);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 1px;
+}
+.go-alt:hover {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--ink-sub);
+}
+footer a {
+  color: var(--ink-dim);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule);
+}
+footer a:hover {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+/* The generator injects the theme script and binds it to this id. Styled
+   as a footer link because that is where it sits here, rather than in a
+   nav the way the landing page carries it. */
+#theme-toggle {
+  font: inherit;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-dim);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0 0 1px;
+  cursor: pointer;
+}
+#theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+::selection {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .blip {
+    animation: blip 1.8s ease-in-out infinite;
+  }
+  .caret {
+    animation: caret 1s steps(1) infinite;
+  }
+}
+@keyframes blip {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-contrast: more) {
+  body::before {
+    display: none;
+  }
+}
+</style>
+
+<main>
+  <div class="sheet">
+    <div class="topbar label">
+      <span>// liffy.lucenity.dev</span>
+      <span class="status"><i class="blip"></i>status: 404 &middot; not found</span>
+    </div>
+
+    <div class="stage">
+      <canvas
+        id="scene"
+        width="160"
+        height="90"
+        role="img"
+        aria-label="Pixel-art night scene: a signpost pointing home, a sleeping cat, stars and a crescent moon"
+      ></canvas>
+    </div>
+
+    <p class="wordmark">liffy &middot; self-hosted ai code review</p>
+    <h1 class="headline">ARE YOU LOST?<span class="caret"></span></h1>
+    <p class="sub" id="sub">
+      liffy will guide you home. the cat is asleep — it has been a long
+      launch — but the sign still points the right way :3
+    </p>
+
+    <div class="ways">
+      <a class="go" href="/"><span class="arrow" aria-hidden="true">&larr;</span> back to liffy</a>
+      <a class="go-alt" href="/report">or read how liffy works</a>
+    </div>
+
+    <footer class="label">
+      <span>&copy; 2026 &middot; liffy</span>
+      <span>
+        <a href="https://github.com/lucenity0/Liffy">github.com/lucenity0/Liffy</a>
+      </span>
+      <button id="theme-toggle" type="button" aria-pressed="false">graphite</button>
+    </footer>
+  </div>
+</main>
+
+<script>
+  (() => {
+    const cv = document.getElementById("scene");
+    const g = cv.getContext("2d");
+    if (!g) return; // decorative; the copy above already says everything
+    const VW = cv.width,
+      VH = cv.height; // 160 x 90 virtual pixels
+    const root = document.documentElement;
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // ---- palette: read straight off the CSS custom properties ---------
+    // One table, in CSS, shared with the chrome. Re-read on theme change.
+    const KEYS = [
+      "sky-top",
+      "sky-bottom",
+      "ground",
+      "ground-line",
+      "far",
+      "mid",
+      "dim",
+      "subject",
+      "subject-hi",
+      "star",
+      "star-dim",
+      "sign",
+      "cast",
+      "accent",
+    ];
+    let C = {};
+    function readPalette() {
+      const s = getComputedStyle(root);
+      for (const k of KEYS) {
+        // "sky-top" -> C.skyTop
+        const prop = k.replace(/-(\w)/g, (_, c) => c.toUpperCase());
+        C[prop] = s.getPropertyValue("--scene-" + k).trim();
+      }
+    }
+    readPalette();
+
+    const px = (x, y, w, h, c) => {
+      g.fillStyle = c;
+      g.fillRect(x | 0, y | 0, w | 0, h | 0);
+    };
+
+    // ---- sprite helper: draw a string bitmap --------------------------
+    // map: chars -> colour (space/'.' = transparent)
+    function sprite(rows, ox, oy, map, flip = false) {
+      for (let r = 0; r < rows.length; r++) {
+        const line = rows[r];
+        for (let c = 0; c < line.length; c++) {
+          const col = map[line[c]];
+          if (!col) continue;
+          const x = flip ? ox + (line.length - 1 - c) : ox + c;
+          px(x, oy + r, 1, 1, col);
+        }
+      }
+    }
+
+    // ---- the cat, character for character as the site has always drawn it
+    const CAT = [
+      "..#.......#...............",
+      ".###.....###..............",
+      ".#.##....#.##.............",
+      ".#..##..##..##............",
+      ".#.########..##...........",
+      ".################.........",
+      ".#################........",
+      ".##################.......",
+      ".##################.......",
+      "###################.......",
+      "###################.#####.",
+      "##...####...##############",
+      "##########################",
+      "####################...###",
+      ".################.........",
+      "..#############...........",
+    ];
+
+    // ---- little "Z" glyph (3x5) --------------------------------------
+    const Z = ["###", "..#", ".#.", "#..", "###"];
+    function drawZ(cx, cy, s, alpha) {
+      g.globalAlpha = alpha;
+      for (let r = 0; r < 5; r++)
+        for (let c = 0; c < 3; c++)
+          if (Z[r][c] === "#") px(cx + c * s, cy + r * s, s, s, C.subject);
+      g.globalAlpha = 1;
+    }
+
+    // ---- static star field -------------------------------------------
+    // Same seed as the old page, so the sky is literally the same sky.
+    const stars = [];
+    (function seed() {
+      let s = 1337;
+      const rnd = () =>
+        (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      for (let i = 0; i < 34; i++) {
+        const x = 4 + Math.floor(rnd() * (VW - 8));
+        const y = 3 + Math.floor(rnd() * 44);
+        if (x > 112 && x < 150 && y < 26) continue; // keep clear of the moon
+        stars.push({
+          x,
+          y,
+          ph: rnd() * Math.PI * 2,
+          sp: 0.6 + rnd() * 1.6,
+          big: rnd() > 0.86,
+        });
+      }
+    })();
+
+    const GROUND_Y = 70; // horizon line
+
+    function draw(t) {
+      // sky
+      px(0, 0, VW, VH, C.skyBottom);
+      px(0, 0, VW, 42, C.skyTop);
+
+      // stars (twinkle)
+      for (const st of stars) {
+        const tw = reduce
+          ? 0.8
+          : 0.45 + 0.55 * Math.sin(t * 0.002 * st.sp + st.ph);
+        if (tw < 0.28) continue;
+        const col = tw > 0.55 ? C.star : C.starDim;
+        px(st.x, st.y, 1, 1, col);
+        if (st.big && tw > 0.7) {
+          px(st.x - 1, st.y, 1, 1, C.starDim);
+          px(st.x + 1, st.y, 1, 1, C.starDim);
+          px(st.x, st.y - 1, 1, 1, C.starDim);
+          px(st.x, st.y + 1, 1, 1, C.starDim);
+        }
+      }
+
+      // crescent moon (top-right) — cut out of the sky it sits on
+      const mx = 132,
+        my = 15,
+        mr = 8;
+      g.fillStyle = C.dim;
+      g.beginPath();
+      g.arc(mx, my, mr, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = C.skyTop;
+      g.beginPath();
+      g.arc(mx + 3.4, my - 1.6, mr, 0, Math.PI * 2);
+      g.fill();
+      px(mx - 4, my + 2, 1, 1, C.mid);
+      px(mx - 6, my - 2, 1, 1, C.mid);
+
+      // ---- ground ----
+      px(0, GROUND_Y, VW, VH - GROUND_Y, C.ground);
+      px(0, GROUND_Y, VW, 1, C.groundLine);
+      // sparse ground texture
+      for (let x = 3; x < VW; x += 11) {
+        px(x, GROUND_Y + 4 + ((x * 7) % 5), 1, 1, C.far);
+      }
+
+      // ---- the signpost: what replaced the crane and the barrier -------
+      // Board pointed at the left end, post under its right end, so the
+      // arm cantilevers back the way the visitor came. The old page put a
+      // blinking warning lamp on the barrier; the same lamp sits on top of
+      // the post here, because a sign nobody can see at night is not a sign.
+      (function signpost() {
+        const sx = 24, // board's left edge before the point steps in
+          sy = 38,
+          sw = 34,
+          sh = 11;
+        const postX = 50;
+
+        // post, and a contact shadow where it meets the ground
+        px(postX, sy + sh, 2, GROUND_Y - (sy + sh), C.mid);
+        px(postX - 3, GROUND_Y - 1, 8, 1, C.cast);
+
+        // Board: a rectangle whose left edge steps in row by row to a point
+        // at the middle, which is the whole arrow. Two pixels of inset per
+        // row, not one — at one the eleven-row board came to a five-pixel
+        // point, which is a bevelled corner rather than an arrowhead. The
+        // slope has to beat the height or the shape does not read.
+        const mid = (sh - 1) / 2;
+        const insetAt = (y) => Math.round(Math.abs(mid - y) * 2);
+        for (let y = 0; y < sh; y++) {
+          const inset = insetAt(y);
+          px(sx + inset, sy + y, sw - inset, 1, C.subject);
+        }
+        // frame highlight along the top, the way the barrier had one
+        px(sx + insetAt(0), sy, sw - insetAt(0), 1, C.subjectHi);
+
+        // three short dashes standing in for a word. At one pixel per pixel
+        // no real lettering survives, and a legible-looking smudge reads as
+        // a sign far better than four unreadable glyphs would.
+        px(sx + 14, sy + 4, 7, 1, C.sign);
+        px(sx + 14, sy + 6, 11, 1, C.sign);
+        px(sx + 14, sy + 8, 5, 1, C.sign);
+
+        // Blinking lamp, seated on the board's top edge rather than hovering
+        // over it — at three pixels tall it has to start at sy-3 to touch.
+        const on = reduce ? true : Math.sin(t * 0.006) > 0;
+        px(postX - 1, sy - 3, 4, 3, on ? C.accent : C.mid);
+        if (on) {
+          px(postX - 2, sy - 2, 1, 1, C.dim);
+          px(postX + 3, sy - 2, 1, 1, C.dim);
+        }
+      })();
+
+      // ---- a trail of paw prints, cat to signpost ---------------------
+      // The gap between the two was thirty-odd empty pixels, and the page is
+      // about being shown the way back — so the ground says which way that
+      // is. Drawn in the far tone: a hint underfoot, not a second subject.
+      for (let i = 0; i < 6; i++) {
+        const pxs = 88 - i * 6;
+        const py = GROUND_Y + 3 + (i % 2) * 2; // alternating, like a gait
+        px(pxs, py, 2, 1, C.far);
+        px(pxs, py - 1, 1, 1, C.far);
+      }
+
+      // ---- the sleeping cat ----
+      const breathe = reduce ? 0 : Math.sin(t * 0.0022) > 0.3 ? -1 : 0;
+      const catX = 94,
+        catY = GROUND_Y - 13 + breathe;
+      px(catX + 3, GROUND_Y - 1, 15, 1, C.cast); // contact shadow
+      sprite(CAT, catX, catY, { "#": C.subject });
+
+      // ---- Zzz rising above the cat's head (head is upper-left) ----
+      if (!reduce) {
+        const cyc = 2600;
+        for (let i = 0; i < 3; i++) {
+          const p = ((t + i * 860) % cyc) / cyc; // 0..1
+          const a = p < 0.18 ? p / 0.18 : p > 0.7 ? (1 - p) / 0.3 : 1;
+          drawZ(catX + 9 + p * 6, catY - 1 - p * 16, 1 + (i > 1 ? 1 : 0), Math.max(0, a));
+        }
+      } else {
+        drawZ(catX + 11, catY - 5, 2, 0.9);
+      }
+    }
+
+    if (reduce) {
+      draw(1800);
+    } else {
+      const start = performance.now();
+      (function loop(now) {
+        draw(now - start);
+        requestAnimationFrame(loop);
+      })(start);
+    }
+
+    // A theme flip has to reach the canvas too. The rAF loop picks the new
+    // palette up on its own; the reduced-motion path draws exactly once, so
+    // it needs the explicit redraw. The button the generator injects flips a
+    // class on <html>, which is why this watches the element and not only
+    // the media query.
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      readPalette();
+      if (reduce) draw(1800);
+    });
+    new MutationObserver(() => {
+      readPalette();
+      if (reduce) draw(1800);
+    }).observe(root, { attributes: true, attributeFilter: ["class", "data-theme"] });
+  })();
+</script>

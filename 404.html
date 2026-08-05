@@ -352,6 +352,11 @@ canvas {
   );
 }
 
+/* The mark, in the lockup the rest of the site uses: artwork then word,
+   centred on each other. The landing page carries it in the nav and the
+   footer and the walkthrough in the masthead and the colophon — twice each,
+   because both are long pages you can arrive in the middle of. This is one
+   short sheet, so once is the whole job. */
 .wordmark {
   font-family: var(--f-display);
   font-size: 11px;
@@ -359,6 +364,17 @@ canvas {
   text-transform: uppercase;
   color: var(--ink-sub);
   margin: 22px 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+/* Sized by height, never width: the file is 480x407, and pinning the side
+   that varies is what keeps it on the same baseline as the text. */
+.mark {
+  display: block;
+  width: auto;
+  height: 1rem;
+  flex: 0 0 auto;
 }
 .headline {
   font-family: var(--f-display);
@@ -538,7 +554,11 @@ footer a:hover {
       ></canvas>
     </div>
 
-    <p class="wordmark">liffy &middot; self-hosted ai code review</p>
+    <p class="wordmark">
+      <img class="mark" src="/liffy-logo.png" alt="" aria-hidden="true"
+           width="480" height="407" decoding="async" />
+      liffy &middot; self-hosted ai code review
+    </p>
     <h1 class="headline">ARE YOU LOST?<span class="caret"></span></h1>
     <p class="sub" id="sub">
       liffy will guide you home. the cat is asleep — it has been a long

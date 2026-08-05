@@ -155,11 +155,21 @@ def upsert_user(db: Session, gh_user: GitHubUser, access_token: str | None = Non
 
 
 def _signing_key() -> str:
-    """Return the HMAC key, refusing to sign with one that cannot be trusted.
+    """Return the HMAC key, refusing to use one that cannot be trusted.
 
-    Checked when minting rather than when verifying: a weak key makes *new*
-    tokens forgeable, whereas verification with a bad key simply rejects
-    everything, which already fails safe.
+    Checked on both the minting and the verifying path, which took a correction.
+    The original reasoning was that verification could skip the check because a
+    bad key "simply rejects everything, which already fails safe" — true of a
+    key that is merely weak, and false of the one case that matters. The dev
+    default is a constant in this repository, so verifying against it does not
+    reject everything: it accepts anything an attacker signs with the value they
+    just read in `config.py`.
+
+    Minting failing does not cover that. An instance that ran in debug long
+    enough to create users and was then switched to `DEBUG=False` without a real
+    key has both a populated `users` table and a published signing key, and a
+    forged token needs nothing else. Raising here fails every request closed
+    instead, which is the correct answer to a key nobody should trust.
     """
     key = settings.jwt_secret_key
     if len(key.encode()) < _MIN_SIGNING_KEY_BYTES:
@@ -176,6 +186,16 @@ def _signing_key() -> str:
             "Set a real secret before running with DEBUG=False."
         )
     return key
+
+
+def check_signing_key() -> None:
+    """Raise unless the configured signing key is one worth trusting.
+
+    The same check `_signing_key` makes, exposed for startup so a misconfigured
+    instance refuses to boot rather than serving a uniform 401 and leaving the
+    operator to guess why signing in stopped working.
+    """
+    _signing_key()
 
 
 def create_access_token(user: User) -> tuple[str, int]:
@@ -199,7 +219,7 @@ def decode_access_token(token: str) -> uuid.UUID:
     try:
         claims = jwt.decode(
             token,
-            settings.jwt_secret_key,
+            _signing_key(),
             algorithms=[settings.jwt_algorithm],
         )
     except jwt.PyJWTError as exc:

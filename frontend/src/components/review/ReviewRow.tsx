@@ -29,6 +29,7 @@ export function ReviewRow({
     <li>
       <Sheet.Row
         to={`/reviews/${review.id}`}
+        data-liffy="review-row"
         className={cn(
           "flex-col items-stretch gap-1.5",
           // A failed review is worth spotting while scanning, but it is not

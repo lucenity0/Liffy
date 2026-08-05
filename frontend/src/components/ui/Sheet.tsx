@@ -129,7 +129,13 @@ function SheetList({ as = "div", className, children, ...rest }: SheetListProps)
   );
 }
 
-interface SheetRowProps extends ComponentPropsWithoutRef<"div"> {
+/**
+ * `HTMLAttributes<HTMLElement>` rather than the div's own props, because a
+ * row is a div *or* an anchor depending on `to` — and handlers narrowed to
+ * HTMLDivElement cannot be forwarded to a Link. Same reason SheetList is
+ * typed this way.
+ */
+interface SheetRowProps extends HTMLAttributes<HTMLElement> {
   /** Present => the whole row is a Link. Absent => a plain div. */
   to?: string;
   active?: boolean;
@@ -146,8 +152,13 @@ function SheetRow({ to, active, className, children, ...rest }: SheetRowProps) {
   if (to) {
     // No `block` here: it would beat the `flex` above in the cascade and
     // silently kill every `ml-auto` a caller puts on a trailing cell.
+    //
+    // `rest` forwarded on this branch as well as the div one. It used to be
+    // dropped here, so any attribute a caller set — `data-liffy`, an id, a
+    // test hook — silently vanished on exactly the rows that are links,
+    // which is most of them.
     return (
-      <Link to={to} className={cn(classes, "text-ink no-underline")}>
+      <Link to={to} className={cn(classes, "text-ink no-underline")} {...rest}>
         {children}
       </Link>
     );

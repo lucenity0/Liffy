@@ -174,11 +174,26 @@ export function buildCustomTheme(
   return { seeds, overrides, tokens: resolveCustom({ seeds, overrides }) };
 }
 
-/** The `[data-theme="custom"]` rule body, for the pre-paint <style> tag. */
+/**
+ * The `html[data-theme="custom"]` rule body, for the pre-paint <style> tag.
+ *
+ * `html[…]` rather than the bare attribute, and that type selector is
+ * load-bearing. index.css warns that `:root` and `[data-theme=…]` are both
+ * (0,1,0) so a theme block only wins by sitting *second* — which the built-in
+ * blocks do, being in the same file. This rule is not: it lives in a separate
+ * <style> whose position is set by whoever injected it. The boot script
+ * appends it while the parser is still above Vite's stylesheet <link>, so on
+ * every fresh load it landed *first* and `:root` — the Paper palette — won
+ * the tie. The custom theme rendered light no matter what its seeds said, and
+ * only the tab that had just saved it looked right, because there
+ * `applyCustomTheme` appends after index.css is already in the document.
+ *
+ * The extra element name makes it (0,1,1) and takes source order out of it.
+ */
 export function customThemeCss(theme: CustomTheme): string {
   // Re-derives rather than trusting the cache: this runs in the app, where
   // the seeds are authoritative and the cost is nothing.
   const tokens = resolveCustom(theme);
   const body = TOKENS.map((name) => `--${name}:${tokens[name]};`).join("");
-  return `[data-theme="custom"]{color-scheme:${theme.seeds.polarity};${body}}`;
+  return `html[data-theme="custom"]{color-scheme:${theme.seeds.polarity};${body}}`;
 }

@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parsePrefs, resolveTheme, THEME_KEY } from "@/hooks/useTheme";
+import {
+  buildCustomTheme,
+  customThemeCss,
+  DEFAULT_SEEDS,
+} from "@/lib/theme/derive";
 import { DEFAULT_THEME, THEMES, themeSpec, type ThemeId } from "@/lib/themes";
 
 /**
@@ -127,6 +132,39 @@ describe("the index.html boot script", () => {
       expect(boot).toContain(spec.id);
       expect(boot).toContain(spec.color);
     }
+  });
+
+  /**
+   * The regression that shipped: this rule is injected into a <style> that
+   * the parser has not yet reached Vite's stylesheet <link> to follow, so at
+   * (0,1,0) it tied with index.css's `:root` — the Paper palette — and lost
+   * on source order. Every fresh load of a custom theme came up light, in
+   * every tab except the one that had just saved it. The `html` prefix is
+   * what takes source order out of it, on both sides of the duplication.
+   */
+  it("writes the custom palette at the same specificity customThemeCss does", () => {
+    const custom = buildCustomTheme(DEFAULT_SEEDS.dark, {});
+    localStorage.setItem(
+      THEME_KEY,
+      JSON.stringify({ mode: "fixed", theme: "custom", custom }),
+    );
+
+    runBoot();
+
+    const style = document.getElementById("liffy-custom-theme");
+    expect(style).not.toBeNull();
+    expect(style?.textContent?.startsWith('html[data-theme="custom"]{')).toBe(
+      true,
+    );
+    expect(customThemeCss(custom).startsWith('html[data-theme="custom"]{')).toBe(
+      true,
+    );
+
+    // And the palette it wrote is the dark one it was given, not Paper.
+    expect(style?.textContent).toContain(`--paper:${DEFAULT_SEEDS.dark.surface}`);
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+
+    style?.remove();
   });
 
   it("falls back to the default when localStorage throws outright", () => {

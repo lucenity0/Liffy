@@ -91,9 +91,12 @@ describe("buildCustomTheme", () => {
 });
 
 describe("customThemeCss", () => {
-  it("scopes to [data-theme=custom] and declares its own color-scheme", () => {
+  it("scopes to html[data-theme=custom] and declares its own color-scheme", () => {
     const css = customThemeCss(buildCustomTheme(DEFAULT_SEEDS.light, {}));
-    expect(css.startsWith('[data-theme="custom"]{')).toBe(true);
+    // `html` is not cosmetic. Without it this rule ties with :root at (0,1,0)
+    // and loses on source order to the stylesheet Vite injects after the boot
+    // script — which rendered every freshly loaded custom theme as Paper.
+    expect(css.startsWith('html[data-theme="custom"]{')).toBe(true);
     // Native controls and scrollbars do not read custom properties, so the
     // palette has to say which way round it is.
     expect(css).toContain("color-scheme:light");

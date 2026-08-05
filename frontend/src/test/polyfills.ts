@@ -89,3 +89,14 @@ if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.sho
     this.dispatchEvent(new Event("close"));
   };
 }
+
+/**
+ * jsdom has no 2d context and answers getContext() by logging "Not
+ * implemented" to the console and returning null. The null is the right
+ * answer — CafeScene is decorative and guards on it, so the sign-in screen
+ * simply renders without its illustration — but the log is noise on every
+ * test that mounts one. Returning the same null quietly.
+ */
+if (typeof HTMLCanvasElement !== "undefined") {
+  HTMLCanvasElement.prototype.getContext = () => null;
+}

@@ -23,21 +23,16 @@ MAX_FILE_BYTES = 200_000
 # Chunks embedded and upserted per round trip.
 #
 # A memory control, not a throughput knob: the local embedder holds a batch's
-# text and activations at once, so this number decides whether the worker
-# survives a large repository.
-#
-# Measured on this repository (281 files, ~3k chunks), worker RSS:
+# text and activations at once, so this decides whether the worker survives a
+# large repository. Measured here (281 files, ~3k chunks), worker RSS:
 #
 #   unbatched   ~430MB through the walk, then one step to 5.5GB → SIGKILL
 #   batch=128   ~450MB through the walk, then 2.9GB → 4.6GB → completes
 #
-# Read that second row honestly: batching turned a fatal spike into a run that
-# finishes, but peak is still ~4.6GB and it *climbs across batches* rather than
-# returning to baseline between them. The per-batch cost is bounded; something
-# in the embedder or its runtime is not releasing between calls. A machine with
-# less headroom than 8GB would still die here, and a bigger repository may yet.
-# The remaining growth is worth chasing separately — this constant only buys the
-# room to get there.
+# Peak still *climbs across batches* rather than returning to baseline, so
+# something in the embedder is not releasing between calls. Under 8GB of
+# headroom this can still die, and a bigger repository may yet — the constant
+# buys room to chase that separately, it does not fix it.
 EMBED_BATCH = 128
 
 # The first logger in the backend. Celery captures stdlib loggers on the worker,
@@ -174,25 +169,17 @@ def index_repository(
             to_embed.append(chunk)
 
     # A run in which nothing could be read is not an index, and must not be
-    # reported as one. `repo.indexed_at` below is what the API turns into
-    # `status="indexed"`, and `useRepoStatus` stops polling the moment it sees
-    # that — so a first index whose every fetch failed would sit at
-    # "Indexed - 0 chunks" with nothing behind it and no poll left running to
-    # correct it. Every review against that repository then retrieves no
-    # context and quietly gets worse.
+    # reported as one: `indexed_at` is what the API turns into
+    # `status="indexed"`, and the frontend stops polling the moment it sees
+    # that — leaving "Indexed · 0 chunks" with nothing behind it, and every
+    # review against that repository silently retrieving no context. Skipping a
+    # *single* file is fine precisely because the rest of the run still produced
+    # an index; when there is no rest, that premise is gone.
     #
-    # Skipping a file is the right call precisely because the *rest* of the run
-    # still produced an index. When there is no rest, the premise is gone.
-    #
-    # Raised here rather than just before `indexed_at`: Chroma is not
-    # transactional. A file that also dropped out of the listing is not
-    # preserved by `keep_existing_chunks`, so the stale-cleanup below would
-    # already have deleted its vectors by then, and rolling the Postgres
-    # transaction back would leave rows pointing at vectors that no longer
-    # exist. Nothing has been written yet at this point.
-    #
-    # `files_seen` guards the empty repository, which is legitimately indexed
-    # with zero chunks.
+    # Raised here rather than just before `indexed_at` because Chroma is not
+    # transactional — by then the stale-cleanup below would have deleted
+    # vectors, and a Postgres rollback would leave rows pointing at nothing.
+    # `files_seen` guards the empty repository, legitimately indexed with zero.
     if result.files_seen and result.files_failed == result.files_seen:
         raise IndexingError(
             f"every file failed ({result.files_failed} of {result.files_seen}); "
@@ -201,18 +188,12 @@ def index_repository(
 
     if to_embed:
         now = datetime.now(timezone.utc)
-        # Batched, and the batch size is the difference between this working
-        # and the worker being killed.
-        #
-        # Embedding every changed chunk in one call meant the model held the
-        # whole repository's worth of text and activations at once: a flat
-        # ~430MB for the entire file walk, then a single step to 5.5GB the
-        # moment this ran — straight into the OOM killer, taking the task with
-        # it and leaving no row and no error anywhere. Re-indexing this
-        # repository had never once completed.
-        #
-        # The upsert is batched for the same reason: it carries every document
-        # body a second time, over HTTP to Chroma.
+        # Batched because embedding every changed chunk in one call held the
+        # whole repository's text and activations at once and went straight into
+        # the OOM killer — no row, no error, and re-indexing this repository had
+        # never once completed. See EMBED_BATCH for the measurements. The upsert
+        # is batched for the same reason: it carries every document body a
+        # second time, over HTTP to Chroma.
         for start in range(0, len(to_embed), EMBED_BATCH):
             batch = to_embed[start : start + EMBED_BATCH]
             vectors = embedder.embed_texts([c.text for c in batch])

@@ -18,7 +18,7 @@ export function SeverityCalibration({
   rows: SeverityCalibrationRow[];
 }) {
   return (
-    <Sheet aria-label="Severity calibration">
+    <Sheet aria-label="Severity calibration" data-liffy="analytics-chart">
       <Sheet.Header title="Severity calibration" />
 
       <div className="overflow-x-auto">

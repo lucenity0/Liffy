@@ -75,7 +75,14 @@
            live in storage rather than in index.css, so this writes the rule
            out here and the app's applyCustomTheme replaces the same element
            afterwards. It restates deriveTokens' output, not its logic — the
-           tokens are stored already resolved. */
+           tokens are stored already resolved.
+
+           `html[data-theme]`, not `[data-theme]`: this <style> is appended
+           while the parser is still above Vite's stylesheet <link>, so at
+           (0,1,0) it tied with :root and *lost on source order* — the Paper
+           palette won and every freshly loaded custom theme rendered light,
+           in every tab except the one that had just saved it. Keep this
+           selector in step with customThemeCss in src/lib/theme/derive.ts. */
         if (id === "custom" && custom) {
           polarity = custom.seeds.polarity === "light" ? "light" : "dark";
           color = custom.seeds.surface;
@@ -88,7 +95,11 @@
           var style = document.createElement("style");
           style.id = "liffy-custom-theme";
           style.textContent =
-            '[data-theme="custom"]{color-scheme:' + polarity + ";" + body + "}";
+            'html[data-theme="custom"]{color-scheme:' +
+            polarity +
+            ";" +
+            body +
+            "}";
           document.head.appendChild(style);
         }
 
@@ -96,6 +107,40 @@
         root.classList.add(polarity);
         var meta = document.querySelector('meta[name="theme-color"]');
         if (meta && color) meta.setAttribute("content", color);
+
+        /* The workspace shape — UI scale, density, radius, weights, fonts.
+           Same pre-paint reason as the palette, and a louder one: --ui-scale
+           drives the type ramp *and* Tailwind's --spacing, so applying it a
+           render late reflows every page on load rather than merely
+           recolouring it.
+
+           The rule body is read out of `liffy-appearance-css`, a cache that
+           applyAppearance writes and nothing else reads — see the note on
+           APPEARANCE_CSS_KEY in src/hooks/useAppearance.ts. So this script
+           duplicates no mapping at all; it only has to know that the value
+           is a stylesheet and where to put it. `html:root` inside outranks
+           index.css's `:root` on specificity, so unlike the palette above it
+           does not care where in <head> it lands.
+
+           The three attributes are stored verbatim on the config, so they
+           are copied rather than derived. Separate try/catch: a config that
+           will not parse must not cost the page its palette, which is
+           already applied by the time this runs. */
+        try {
+          var css = localStorage.getItem("liffy-appearance-css");
+          if (css) {
+            var uiStyle = document.createElement("style");
+            uiStyle.id = "liffy-appearance";
+            uiStyle.textContent = css;
+            document.head.appendChild(uiStyle);
+          }
+          var cfg = JSON.parse(localStorage.getItem("liffy-appearance") || "{}");
+          root.setAttribute("data-motion", cfg.motion || "full");
+          root.setAttribute("data-shadow", cfg.shadow || "hard");
+          root.setAttribute("data-nav", cfg.nav || "rail");
+        } catch (e) {
+          /* Defaults, which are what index.css already says. */
+        }
       })();
     </script>
 

@@ -1,6 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { ButtonLink } from "@/components/ui/Button";
-import { PixelSprite } from "@/components/ui/PixelSprite";
+import { LiffyMark } from "@/components/ui/LiffyMark";
 
 export function NotFound() {
   const { pathname } = useLocation();
@@ -8,7 +8,7 @@ export function NotFound() {
   return (
     <div className="flex flex-col items-start gap-4 py-16">
       {/* Decorative — "404" and the heading below both already say it. */}
-      <PixelSprite name="cat" cell={4} className="text-ink-sub" />
+      <LiffyMark className="w-16 opacity-70" />
       <p className="label">404</p>
       <h1 className="font-hand text-2xl leading-tight text-ink">
         Nothing filed here

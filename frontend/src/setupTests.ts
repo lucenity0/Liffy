@@ -6,8 +6,11 @@ import { server } from "./mocks/server";
 
 // jsdom has no layout, so it throws "Not implemented" for these. React
 // Router's <ScrollRestoration> calls scrollTo on every navigation.
+// scrollBy is absent outright rather than stubbed to throw — the live
+// preview scrolls its own container with it.
 window.scrollTo = () => {};
 Element.prototype.scrollIntoView = () => {};
+Element.prototype.scrollBy = () => {};
 
 // Vitest's `globals: true` does not imply RTL auto-cleanup.
 afterEach(() => {

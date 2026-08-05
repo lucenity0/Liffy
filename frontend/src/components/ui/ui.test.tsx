@@ -104,9 +104,45 @@ describe("Sheet", () => {
     expect(screen.getByText("custom")).toBeInTheDocument();
     expect(screen.queryByText("ignored")).toBeNull();
   });
+
+  /**
+   * Appearance's component overrides are CSS rules selecting on `data-liffy`,
+   * so an attribute that a primitive quietly swallows is an override that
+   * silently does nothing. `Sheet.Row` did exactly that on its link branch —
+   * which is most rows — and no test caught it because the registry check
+   * only reads the source, where the attribute is plainly written.
+   */
+  it("forwards arbitrary attributes to the DOM, link branch included", () => {
+    render(
+      <MemoryRouter>
+        <Sheet data-liffy="settings-group">
+          <Sheet.List>
+            <Sheet.Row to="/reviews/1" data-liffy="review-row">
+              linked
+            </Sheet.Row>
+            <Sheet.Row data-liffy="review-row">plain</Sheet.Row>
+          </Sheet.List>
+        </Sheet>
+      </MemoryRouter>,
+    );
+
+    expect(
+      document.querySelectorAll('[data-liffy="review-row"]'),
+    ).toHaveLength(2);
+    expect(
+      document.querySelector('[data-liffy="settings-group"]')?.tagName,
+    ).toBe("SECTION");
+  });
 });
 
 describe("Badge", () => {
+  it("carries the component-registry attribute the overrides select on", () => {
+    render(<Badge>3 critical</Badge>);
+    expect(
+      screen.getByText("3 critical").closest('[data-liffy="finding-badge"]'),
+    ).not.toBeNull();
+  });
+
   it("applies a distinct class set for every tone and variant", () => {
     const tones = ["neutral", "oxide", "sage", "ochre", "payne", "ink"] as const;
     const variants = ["tint", "outline", "solid"] as const;

@@ -69,7 +69,7 @@ export function CategoryDistribution({
   const scale = (value: number) => (max === 0 ? 0 : (value / max) * plotW);
 
   return (
-    <Sheet aria-label="Category distribution">
+    <Sheet aria-label="Category distribution" data-liffy="analytics-chart">
       <Sheet.Header title="Category distribution" />
       <Sheet.Body className="flex flex-col gap-3">
         <svg

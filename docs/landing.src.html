@@ -621,6 +621,16 @@ a { color: inherit; }
 }
 
 .frame {
+  /* Written out rather than left to the UA. Both scrolly frames are a
+     <figure>, and nothing here resets one, so they have always carried
+     `margin: 1em 40px` — 80px of horizontal inset that no other panel on
+     the page has. Wide, that reads as matting and it is kept. Narrow, it
+     was a quarter of a 375px screen: the frame sat visibly short of the
+     rail directly above it and of the .sr panel further down (a plain
+     <div>, so full width), and the diff inside was ellipsising lines it
+     had the room for. Stated here so the 52rem block below can take it
+     back without the override looking like it came from nowhere. */
+  margin: 1em 40px;
   border: 1px solid var(--rule);
   background: var(--card);
   box-shadow: 4px 4px 0 var(--shadow-edge);
@@ -774,8 +784,15 @@ a { color: inherit; }
 
      `flex: 0 1 auto` with it: stacked, the frame should be as tall as its
      contents and no taller. Growing into the whole pane just reopened the
-     same gap lower down, as slack inside the file list and the store. */
-  .frame { flex: 0 1 auto; max-height: 42rem; }
+     same gap lower down, as slack inside the file list and the store.
+
+     The inset goes with the second column. Flush to .pg, the frame lines
+     up with the rail above it and with every other panel on the page, and
+     a 375px phone gets 338px of frame instead of 258. The block margin
+     goes too: .stick already sets the gap between the rail and the frame,
+     and the 1em was ~32px of the sticky pane spent twice over — height
+     this frame is short of, not height it has to spare. */
+  .frame { margin: 0; flex: 0 1 auto; max-height: 42rem; }
   .frame-in { grid-template-columns: minmax(0, 1fr); }
   .ctx {
     flex: 0 0 auto;

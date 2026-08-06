@@ -59,3 +59,5 @@ journal/
 # tracked in assets/; the 5 MB original is not worth carrying in history
 # when nothing builds from it.
 assets/*.mp4
+export/
+landing_page_ss/

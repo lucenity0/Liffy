@@ -80,6 +80,17 @@ tree-sitter-dart==0.1.0          # .dart
 # needed for either to be reachable.
 tree-sitter-objc==3.0.2          # .m .mm
 tree-sitter-matlab==1.3.0        # .m
+# Markup, config and query formats. Not programming languages, so the unit each
+# is chunked by is a choice rather than a given — see `_DEFINITION_TYPES`.
+tree-sitter-sql==0.3.11          # .sql
+tree-sitter-css==0.25.0          # .css .scss
+tree-sitter-yaml==0.7.2          # .yml .yaml
+tree-sitter-json==0.24.8         # .json
+tree-sitter-html==0.23.2         # .html .htm
+tree-sitter-markdown==0.5.1      # .md .markdown
+# 0.2.0 is the only release and returns the old integer language handle, which
+# `Language()` accepts with a DeprecationWarning. Suppressed at the call site.
+tree-sitter-dockerfile==0.2.0    # .dockerfile
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 pydantic==2.10.2

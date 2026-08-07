@@ -66,8 +66,11 @@ def test_oversized_chunk_is_split() -> None:
 
 
 def test_fallback_line_windows_for_unknown_extension() -> None:
+    # `.nolang` rather than a real extension: this test previously used `.md`
+    # and stopped exercising the fallback the moment Markdown was registered.
+    assert ".nolang" not in _LANGUAGES
     source = "\n".join(f"line {i}" for i in range(1, 201))
-    chunks = chunk_source("notes.md", source)
+    chunks = chunk_source("notes.nolang", source)
     assert [c.kind for c in chunks] == ["block", "block", "block"]
     assert (chunks[0].start_line, chunks[0].end_line) == (1, 80)
     assert (chunks[2].start_line, chunks[2].end_line) == (161, 200)
@@ -373,6 +376,13 @@ _LANGUAGE_SAMPLES: dict[str, tuple[str, str]] = {
     ".hs": ("area", "module App where\n\narea :: Int -> Int\narea x = x\n"),
     ".dart": ("Rect", "class Rect {\n  final double w;\n  double area() => w;\n}\n"),
     ".mm": ("Widget", "@interface Widget : NSObject\n- (void)draw;\n@end\n"),
+    ".sql": ("users", "CREATE TABLE users (\n  id INT\n);\n"),
+    ".css": (".review", ".review {\n  color: red;\n}\n"),
+    ".yml": ("jobs", "name: CI\njobs:\n  build:\n    runs-on: ubuntu\n"),
+    ".json": ("name", '{\n  "name": "liffy"\n}\n'),
+    ".md": ("Setup", "# Setup\n\nInstall it.\n"),
+    ".html": ("html", "<html>\n<body><p>x</p></body>\n</html>\n"),
+    ".dockerfile": ("builder", "FROM node:20 AS builder\nRUN npm ci\n"),
 }
 
 
@@ -559,3 +569,70 @@ def test_lua_constants_are_not_mistaken_for_functions() -> None:
         chunks = chunk_source("a.lua", source)
         assert all(c.name is None for c in chunks), source
         assert all(c.kind == "module" for c in chunks), source
+
+
+def test_oversized_definitions_split_at_their_members() -> None:
+    """A class too large to stand as one chunk is cut at its methods.
+
+    The alternative is `_split_oversized` cutting at a character count, which
+    lands mid-method and produces fragments that embed as neither one thing nor
+    the other. Names carry the enclosing type so retrieval keeps it.
+    """
+    body = "".join(
+        f"    public void method{i}() {{\n" + f"        int x{i} = {i};\n" * 20 + "    }\n"
+        for i in range(8)
+    )
+    chunks = chunk_source("W.java", f"public class Widget {{\n{body}}}\n")
+    names = [c.name for c in chunks]
+
+    assert "Widget.method0" in names
+    assert "Widget.method7" in names
+    assert all(len(c.text) <= MAX_CHUNK_CHARS for c in chunks)
+
+
+def test_a_class_that_fits_is_left_whole() -> None:
+    """Subdivision applies only when a definition is oversized.
+
+    Keeping the unit of retrieval as large as it usefully can be is the point,
+    and this is what makes the change additive rather than a rewrite of every
+    existing language's output.
+    """
+    chunks = chunk_source("app/sample.py", PY_SOURCE)
+    greeter = next(c for c in chunks if c.name == "Greeter")
+
+    assert "def __init__" in greeter.text and "def greet" in greeter.text
+
+
+def test_markdown_sections_subdivide_at_headings() -> None:
+    """Markdown nests: `##` is a child of `#`, so a document is one section.
+
+    Without subdivision a long document is a single chunk sliced at the
+    character budget, which is worse than the fixed windows it replaced.
+    """
+    source = "# Guide\n\n" + ("introductory prose. " * 30) + "\n\n" + "".join(
+        f"## Section {i}\n\n" + ("body prose for this section. " * 30) + "\n\n"
+        for i in range(4)
+    )
+    assert len(source) > MAX_CHUNK_CHARS, "sample must be oversized to subdivide"
+    names = [c.name for c in chunk_source("guide.md", source)]
+
+    assert "Guide.Section 0" in names
+    assert "Guide.Section 3" in names
+
+
+def test_config_keys_are_named_without_their_quoting() -> None:
+    """JSON keys are string literals; the quotes are syntax, not the name."""
+    assert [c.name for c in chunk_source("a.json", '{\n  "name": "liffy"\n}\n')] == ["name"]
+    assert [c.name for c in chunk_source("a.yml", "name: CI\n")] == ["name"]
+
+
+def test_dockerfile_indexes_stages_not_steps() -> None:
+    """`RUN` and `COPY` are steps inside a stage, not definitions.
+
+    Registering them would make every line of the file its own chunk, which is
+    the bash `command` mistake in another grammar.
+    """
+    source = "FROM node:20 AS builder\nRUN npm ci\nCOPY . .\n\nFROM nginx AS runtime\n"
+    named = [c.name for c in chunk_source("Dockerfile.dockerfile", source) if c.name]
+
+    assert named == ["builder", "runtime"]

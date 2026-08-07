@@ -1,0 +1,20 @@
+# Line endings, pinned per launcher rather than repo-wide.
+#
+# Deliberately no `* text=auto`: that would renormalise every tracked file on
+# the next checkout, which is a large and unrelated diff to hide inside a
+# Windows-support change.
+#
+# The two that actually break:
+#
+#   *.sh with CRLF — a Windows clone with core.autocrlf=true (the default the
+#   Git for Windows installer recommends) rewrites liffy.sh's endings on
+#   checkout. bash then reads the shebang as `/bin/bash\r` and reports
+#   "bad interpreter: No such file or directory", which names a file that
+#   plainly exists. Anyone running liffy.sh under WSL or Git Bash hits this.
+#
+#   *.bat with LF — cmd.exe reads batch files line by line as it executes
+#   them, and LF-only endings break that badly enough to run the wrong line.
+#   liffy.bat is one command today, but pinning it costs nothing.
+*.sh  text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

@@ -71,10 +71,27 @@ liffy/
 ```bash
 git clone https://github.com/lucenity0/Liffy.git
 cd Liffy
-cp .env.example backend/.env   # fill in your keys
 ```
 
-Then three terminals (from the right directories, with the backend venv active):
+**One command, everything in Docker.** Needs Docker Desktop and Node — no
+Postgres, Redis, or Python on your machine. The launcher creates `backend/.env`
+with a generated JWT secret on first run.
+
+```bash
+./liffy.sh          # macOS / Linux
+```
+```cmd
+liffy               :: Windows
+```
+
+Both take the same subcommands: `down` to stop, `logs` to tail, `check` to
+confirm your repo data survived a rebuild. On Windows `liffy.bat` is a shim
+around `liffy.ps1` — use it rather than the `.ps1` directly, or PowerShell's
+execution policy blocks the script before it starts.
+
+**Or run the services yourself** — `cp .env.example backend/.env`, fill in your
+keys, then three terminals (from the right directories, with the backend venv
+active):
 - `cd backend && uvicorn app.main:app --reload`
 - `cd backend && celery -A app.workers.celery_app worker --loglevel=info` (macOS and Windows: add `--pool=solo`)
 - `cd frontend && npm run dev`
@@ -115,11 +132,11 @@ up.
 `LLM_PROVIDER`, done. The CLI reads its own credentials from your home directory
 and Liffy never touches them.
 
-**Running Liffy through `./liffy.sh`** (Docker) needs one extra step, because the
-worker container has no home directory holding those credentials. `./liffy.sh`
-always builds the worker image with both CLIs installed — so changing provider in
-the settings page applies to the next review with no restart, and no rebuild. By
-hand that is
+**Running Liffy through `./liffy.sh`** — `liffy` on Windows — (Docker) needs one
+extra step, because the worker container has no home directory holding those
+credentials. The launcher always builds the worker image with both CLIs installed
+— so changing provider in the settings page applies to the next review with no
+restart, and no rebuild. By hand that is
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --build
@@ -141,7 +158,7 @@ For **`codex`**, there is no equivalent — and that is worth being clear about
 rather than papering over. The Codex CLI has no auth environment variable, and
 `codex login --with-access-token` refuses a ChatGPT subscription token. The only
 thing that authenticates it is a real `auth.json`, so containerised Codex needs
-`~/.codex` mounted into the worker. `./liffy.sh` adds `docker-compose.codex.yml`
+`~/.codex` mounted into the worker. The launcher adds `docker-compose.codex.yml`
 whenever that directory exists on the host — which is what keeps a switch to
 Codex restart-free, and also means the worker can read your ChatGPT tokens on
 runs that never touch Codex. Inspect that file before starting if you want to

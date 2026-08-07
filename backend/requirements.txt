@@ -88,21 +88,32 @@ tree-sitter-yaml==0.7.2          # .yml .yaml
 tree-sitter-json==0.24.8         # .json
 tree-sitter-html==0.23.2         # .html .htm
 tree-sitter-markdown==0.5.1      # .md .markdown
-# Dockerfile is the one grammar with an incomplete distribution. 0.2.0 publishes
-# wheels for macOS arm64 and Linux x86_64 only, with no source distribution, so
-# it cannot be installed in an arm64 Linux container — which is what Docker
-# Desktop builds on Apple Silicon. The marker skips it there; `_parser_for`
-# degrades to line windows and logs when the package is absent, so the build
-# succeeds everywhere and the loss is announced rather than silent.
+# Dockerfile is the one grammar with an incomplete distribution. Every other
+# package here publishes wheels for macOS, Linux and Windows on both
+# architectures, plus a source distribution to build from. 0.2.0 publishes two
+# wheels and no sdist:
 #
-# The consequence worth knowing: Dockerfiles are chunked semantically on macOS
-# and on x86_64 Linux, and windowed on arm64 Linux. That is a platform-dependent
-# index, which is a real wart. Remove this line and the registry entry if you
-# would rather have one behaviour everywhere.
+#   macosx_11_0_arm64          Apple Silicon only, not Intel Macs
+#   manylinux_2_17_x86_64      Intel/AMD Linux only, not arm64
+#
+# So there is nothing to install and nothing to build on arm64 Linux (Docker
+# Desktop on Apple Silicon), on Intel Macs, or on Windows at all. The marker
+# below is written to match that list exactly rather than to exclude the one
+# platform that happened to fail first: an earlier `platform_machine !=
+# "aarch64"` unbroke the arm64 image and would still have failed a Windows
+# host install, where platform_machine is "AMD64".
+#
+# Where it is skipped, `_parser_for` degrades to fixed line windows and logs,
+# so the install succeeds and the loss is announced rather than silent.
+#
+# The consequence worth knowing: Dockerfiles chunk semantically on Apple Silicon
+# and x86_64 Linux, and window everywhere else. That is a platform-dependent
+# index and a real wart. Deleting this line and the `.dockerfile` registry entry
+# is the alternative, and buys one behaviour everywhere.
 #
 # It also returns the old integer language handle, which `Language()` accepts
 # with a DeprecationWarning. Suppressed at the call site.
-tree-sitter-dockerfile==0.2.0; platform_machine != "aarch64"    # .dockerfile
+tree-sitter-dockerfile==0.2.0; (sys_platform == "darwin" and platform_machine == "arm64") or (sys_platform == "linux" and platform_machine == "x86_64")    # .dockerfile
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 pydantic==2.10.2

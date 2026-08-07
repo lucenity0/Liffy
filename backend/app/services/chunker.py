@@ -7,10 +7,13 @@ diff-side chunking later.
 """
 
 import hashlib
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from tree_sitter import Language, Node, Parser
+
+logger = logging.getLogger(__name__)
 
 # Chunks larger than this are split on line boundaries (embedding quality
 # degrades on very long inputs; text-embedding-3-small caps at 8191 tokens).
@@ -640,13 +643,43 @@ _LANGUAGES: dict[str, tuple[str, Callable[[], Language]]] = {
 }
 
 _parsers: dict[str, Parser] = {}
+# Extensions whose grammar package is registered but will not load here. Held so
+# the warning is emitted once rather than per file.
+_unavailable: set[str] = set()
 
 
 def _parser_for(extension: str) -> Parser | None:
+    """The parser for an extension, or None if the file should be windowed.
+
+    A registered grammar whose package will not load degrades to None rather
+    than raising. Grammar packages are per-platform wheels and not every one is
+    published for every platform: `tree-sitter-dockerfile` 0.2.0 ships macOS
+    arm64 and Linux x86_64 only, with no source distribution, so it cannot be
+    installed in an arm64 Linux container at all. Without this the indexer would
+    raise `ImportError` on the first Dockerfile it met and abort the run for the
+    whole repository.
+
+    The failure is logged once per extension. Falling back silently is the one
+    thing not to do here, because a windowed file is indistinguishable from a
+    correctly indexed one at every layer that reports status.
+    """
     if extension not in _LANGUAGES:
         return None
+    if extension in _unavailable:
+        return None
     if extension not in _parsers:
-        _parsers[extension] = Parser(_LANGUAGES[extension][1]())
+        try:
+            _parsers[extension] = Parser(_LANGUAGES[extension][1]())
+        except Exception as exc:  # ImportError, or an ABI mismatch at load
+            _unavailable.add(extension)
+            logger.warning(
+                "grammar for %s could not be loaded (%s: %s); files with this "
+                "extension will be chunked as fixed line windows",
+                extension,
+                type(exc).__name__,
+                exc,
+            )
+            return None
     return _parsers[extension]
 
 

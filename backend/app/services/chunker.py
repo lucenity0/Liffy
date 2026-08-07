@@ -179,6 +179,33 @@ _DEFINITION_TYPES["dart"] = frozenset(
     {"class_definition", "enum_declaration", "mixin_declaration", "extension_declaration"}
 )
 
+# The formats below are not programming languages, so "definition" is a choice
+# rather than a given. Each is the unit somebody would search for: a table, a
+# selector, a build stage, a config key, a documentation section.
+_DEFINITION_TYPES["sql"] = frozenset(
+    {
+        "create_table",
+        "create_view",
+        "create_function",
+        "create_procedure",
+        "create_index",
+        "create_type",
+        "create_schema",
+        "create_trigger",
+    }
+)
+_DEFINITION_TYPES["css"] = frozenset({"rule_set", "media_statement", "keyframes_statement"})
+# Only `FROM`, which opens a build stage. `RUN` and `COPY` are steps within one,
+# and registering them would make every line of the file its own chunk.
+_DEFINITION_TYPES["dockerfile"] = frozenset({"from_instruction"})
+_DEFINITION_TYPES["yaml"] = frozenset({"block_mapping_pair"})
+_DEFINITION_TYPES["json"] = frozenset({"pair"})
+# HTML has no definitions. `element` is registered so a page divides at its
+# structural boundaries rather than at a line count, and the name is the tag,
+# which is weak. This is coverage, not parity with the code grammars.
+_DEFINITION_TYPES["html"] = frozenset({"element", "script_element", "style_element"})
+_DEFINITION_TYPES["markdown"] = frozenset({"section"})
+
 # Values that make a `const` binding a function rather than a constant.
 _CALLABLE_VALUES = frozenset({"arrow_function", "function_expression"})
 
@@ -206,6 +233,8 @@ _CLASS_NODES = frozenset(
         "record_declaration",
         "union_specifier",
         "union_item",
+        "create_table",  # SQL
+        "create_type",  # SQL
     }
 )
 _INTERFACE_NODES = frozenset(
@@ -226,6 +255,8 @@ _INTERFACE_NODES = frozenset(
         "trait_definition",  # Scala
         "type_definition",  # Scala
         "type_alias",  # Haskell
+        "create_view",  # SQL
+        "create_index",  # SQL
     }
 )
 # A namespace is a container rather than a definition. Where it has a body it is
@@ -260,7 +291,52 @@ _DECLARATOR_NAMES = frozenset(
 # Containers that hold the definitions directly rather than behind a `body`
 # field. Haskell puts every top-level declaration inside one `declarations`
 # node, so without expanding it a module is a single chunk regardless of size.
-_INLINE_CONTAINER_NODES = frozenset({"declarations"})
+_INLINE_CONTAINER_NODES = frozenset(
+    {
+        "declarations",  # Haskell
+        "statement",  # SQL wraps every CREATE in one
+        "document",  # YAML
+        "block_node",  # YAML
+        "block_mapping",  # YAML
+        "object",  # JSON
+    }
+)
+
+# Node types whose name is the *text of a named child* rather than an
+# identifier: a CSS selector, a Dockerfile build-stage alias, a heading's
+# inline content. The child's text is the closest thing each format has to a
+# symbol, and it is what someone searching would actually type.
+# Reported as kind "module" without being expanded. `_MODULE_NODES` above drives
+# `_expand_containers`, and a Markdown section expanded into its contents would
+# lose the heading that names it, so the two sets are deliberately separate.
+_MODULE_KIND_NODES = frozenset(
+    {"section", "block_mapping_pair", "pair", "element", "rule_set", "from_instruction"}
+)
+
+# The node a definition keeps its members in, where the grammar does not expose
+# it as a `body` field. Used only to subdivide a definition that is too large to
+# stand as one chunk.
+_BODY_NODES = frozenset(
+    {
+        "class_body",
+        "declaration_list",
+        "block",
+        "body_statement",
+        "interface_body",
+        "enum_body",
+        "class_interface",
+        "field_declaration_list",
+        "template_body",
+    }
+)
+
+_NAME_FROM_CHILD = {
+    "rule_set": "selectors",
+    "media_statement": "keyword_query",
+    "from_instruction": "image_alias",
+    "atx_heading": "inline",
+    "setext_heading": "paragraph",
+}
 
 # Node types whose name is the first `identifier` child rather than a `name`
 # field. Zig declares a struct as `const Point = struct {...}`, and Objective-C
@@ -437,6 +513,58 @@ def _dart_language() -> Language:
     return Language(tree_sitter_dart.language())
 
 
+def _sql_language() -> Language:
+    import tree_sitter_sql
+
+    return Language(tree_sitter_sql.language())
+
+
+def _css_language() -> Language:
+    import tree_sitter_css
+
+    return Language(tree_sitter_css.language())
+
+
+def _dockerfile_language() -> Language:
+    import warnings
+
+    import tree_sitter_dockerfile
+
+    # 0.2.0 is the only release and it returns the old integer handle, which
+    # `Language()` accepts with a DeprecationWarning. Parsing is unaffected; the
+    # warning is the package's packaging, not ours, and suppressing it here
+    # keeps it from being mistaken for a problem in this file. If a future
+    # tree-sitter removes integer support this raises instead, which is the
+    # correct moment to notice.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return Language(tree_sitter_dockerfile.language())
+
+
+def _yaml_language() -> Language:
+    import tree_sitter_yaml
+
+    return Language(tree_sitter_yaml.language())
+
+
+def _json_language() -> Language:
+    import tree_sitter_json
+
+    return Language(tree_sitter_json.language())
+
+
+def _html_language() -> Language:
+    import tree_sitter_html
+
+    return Language(tree_sitter_html.language())
+
+
+def _markdown_language() -> Language:
+    import tree_sitter_markdown
+
+    return Language(tree_sitter_markdown.language())
+
+
 # Language registry: extension -> (language name, grammar factory). Adding a
 # language is one entry here and its grammar package in requirements.txt.
 #
@@ -498,6 +626,17 @@ _LANGUAGES: dict[str, tuple[str, Callable[[], Language]]] = {
     # when the file shows no Objective-C syntax, which is the only way MATLAB
     # is reachable at all: `.m` is the only extension it has.
     ".matlab": ("matlab", _matlab_language),
+    ".sql": ("sql", _sql_language),
+    ".css": ("css", _css_language),
+    ".scss": ("css", _css_language),
+    ".yml": ("yaml", _yaml_language),
+    ".yaml": ("yaml", _yaml_language),
+    ".json": ("json", _json_language),
+    ".html": ("html", _html_language),
+    ".htm": ("html", _html_language),
+    ".md": ("markdown", _markdown_language),
+    ".markdown": ("markdown", _markdown_language),
+    ".dockerfile": ("dockerfile", _dockerfile_language),
 }
 
 _parsers: dict[str, Parser] = {}
@@ -635,6 +774,38 @@ def _name_node(node: Node) -> Node | None:
     if node.type == "impl_item":
         return node.child_by_field_name("type")
 
+    # `key` is what the mapping formats call their name.
+    key = node.child_by_field_name("key")
+    if key is not None:
+        return key
+
+    child_type = _NAME_FROM_CHILD.get(node.type)
+    if child_type is not None:
+        return next((c for c in node.named_children if c.type == child_type), None)
+
+    if node.type in {"element", "script_element", "style_element"}:
+        start = next((c for c in node.named_children if c.type == "start_tag"), None)
+        if start is None:
+            return None
+        return next((c for c in start.named_children if c.type == "tag_name"), None)
+
+    if node.type == "section":
+        # Markdown names a section by its heading, which is a child rather than
+        # an attribute, and the heading's own name is its inline content.
+        heading = next(
+            (c for c in node.named_children if c.type in {"atx_heading", "setext_heading"}),
+            None,
+        )
+        return _name_node(heading) if heading is not None else None
+
+    if node.type.startswith("create_"):
+        # SQL puts the created object's identifier on an `object_reference`
+        # somewhere below the CREATE, not on the statement itself.
+        for child in node.named_children:
+            if child.type == "object_reference":
+                return child.child_by_field_name("name") or child
+        return None
+
     if node.type in _FIRST_IDENTIFIER_NAMED:
         # Zig declares a type as `const Point = struct {...}` and Objective-C
         # lists the class before its superclass, so in both the first
@@ -690,7 +861,10 @@ def _node_name(node: Node, source: bytes) -> str | None:
     name_node = _name_node(target)
     if name_node is None:
         return None
-    return source[name_node.start_byte : name_node.end_byte].decode("utf-8", "replace")
+    text = source[name_node.start_byte : name_node.end_byte].decode("utf-8", "replace")
+    # JSON and YAML keys arrive as string literals. The quotes are syntax, not
+    # part of the name somebody would search for.
+    return text.strip().strip('"\'') or None
 
 
 def _node_kind(node: Node) -> str:
@@ -702,7 +876,7 @@ def _node_kind(node: Node) -> str:
         return "class"
     if target.type in _INTERFACE_NODES:
         return "interface"
-    if target.type in _MODULE_NODES:
+    if target.type in _MODULE_NODES or target.type in _MODULE_KIND_NODES:
         return "module"
     return "function"
 
@@ -735,6 +909,70 @@ def _expand_containers(nodes: list[Node]) -> list[Node]:
             out.append(node)
         else:
             out.extend(_expand_containers(body.named_children))
+    return out
+
+
+def _body_of(node: Node) -> Node | None:
+    """The node holding a definition's members, if it has one."""
+    body = node.child_by_field_name("body")
+    if body is not None:
+        return body
+    for child in node.named_children:
+        if child.type in _BODY_NODES:
+            return child
+    return None
+
+
+def _subdivide(
+    node: Node, definition_types: frozenset[str], parent: str | None, source: bytes
+) -> list[tuple[str, int, int, str, str | None]] | None:
+    """Split one oversized definition at its members, or None if it cannot be.
+
+    Only oversized definitions are subdivided. A class that fits stays whole,
+    which keeps the unit of retrieval as large as it can usefully be and leaves
+    every existing language's output unchanged.
+
+    When a class does not fit, the alternative is `_split_oversized` cutting it
+    at a character count, which lands mid-method and produces fragments that
+    embed as neither one thing nor the other. Cutting at the members instead
+    gives chunks that are whole definitions, named `Class.method` so the
+    enclosing type survives into retrieval.
+    """
+    # Most languages keep members in a body node. Markdown does not: a section's
+    # subsections are its direct children, so the node itself is the container.
+    body = _body_of(node) or node
+
+    members = [
+        child
+        for child in body.named_children
+        if child.type in definition_types and _definition_node(child) is not None
+    ]
+    if not members:
+        return None
+
+    out: list[tuple[str, int, int, str, str | None]] = []
+    # The declaration line and anything before the first member: `class Foo {`,
+    # a docstring, field declarations. Dropping it would lose the type's own
+    # signature, which is often the most informative line in the file.
+    header = source[node.start_byte : members[0].start_byte].decode("utf-8", "replace")
+    if header.strip():
+        out.append(
+            (header, node.start_point[0] + 1, members[0].start_point[0], "module", parent)
+        )
+
+    for member in members:
+        name = _node_name(member, source)
+        qualified = f"{parent}.{name}" if parent and name else (name or parent)
+        text = source[member.start_byte : member.end_byte].decode("utf-8", "replace")
+        out.append(
+            (
+                text,
+                member.start_point[0] + 1,
+                member.end_point[0] + 1,
+                _node_kind(member),
+                qualified,
+            )
+        )
     return out
 
 
@@ -799,15 +1037,28 @@ def chunk_source(file_path: str, source: str) -> list[CodeChunk]:
             if child.type in definition_types and _definition_node(child) is not None:
                 flush_pending()
                 text = source_bytes[child.start_byte : child.end_byte].decode("utf-8", "replace")
-                raw.append(
-                    (
-                        text,
-                        child.start_point[0] + 1,
-                        child.end_point[0] + 1,
-                        _node_kind(child),
-                        _node_name(child, source_bytes),
-                    )
+                name = _node_name(child, source_bytes)
+                # Oversized definitions are cut at their members rather than at
+                # a character count. Languages that nest their methods inside a
+                # type — Java, C#, Kotlin, Swift — and Markdown, whose sections
+                # nest, would otherwise be sliced mid-definition.
+                parts = (
+                    _subdivide(child, definition_types, name, source_bytes)
+                    if len(text) > MAX_CHUNK_CHARS
+                    else None
                 )
+                if parts is not None:
+                    raw.extend(parts)
+                else:
+                    raw.append(
+                        (
+                            text,
+                            child.start_point[0] + 1,
+                            child.end_point[0] + 1,
+                            _node_kind(child),
+                            name,
+                        )
+                    )
             else:
                 pending.append(child)
         flush_pending()

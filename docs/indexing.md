@@ -6,17 +6,80 @@ and TypeScript chunking (#161) landed.
 
 ## Languages
 
-Semantic, function-level chunking via Tree-sitter:
+Semantic chunking via Tree-sitter. 29 languages across 47 extensions.
 
-| Extension | Grammar |
+**Programming languages**
+
+| Language | Extensions |
 |---|---|
-| `.py` | `tree-sitter-python` |
-| `.ts` | `tree-sitter-typescript` (typescript) |
-| `.tsx` | `tree-sitter-typescript` (**tsx** — a separate grammar; the plain one reads `<Foo>` as a type assertion and mis-parses JSX) |
-| `.js` `.jsx` `.mjs` `.cjs` | `tree-sitter-javascript` |
+| Python | `.py` |
+| TypeScript | `.ts`, `.tsx` (**two separate grammars** — the plain one reads `<Foo>` as a type assertion and mis-parses JSX) |
+| JavaScript | `.js` `.jsx` `.mjs` `.cjs` |
+| Java | `.java` |
+| Go | `.go` |
+| Rust | `.rs` |
+| C | `.c` `.h` |
+| C++ | `.cpp` `.cc` `.cxx` `.hpp` `.hh` |
+| C# | `.cs` |
+| Ruby | `.rb` |
+| PHP | `.php` |
+| Swift | `.swift` |
+| Kotlin | `.kt` `.kts` |
+| Scala | `.scala` `.sc` |
+| Dart | `.dart` |
+| Lua | `.lua` |
+| Elixir | `.ex` `.exs` |
+| Haskell | `.hs` |
+| Zig | `.zig` |
+| Objective-C | `.m` `.mm` |
+| MATLAB | `.m` |
+| Shell | `.sh` `.bash` |
+
+`.m` belongs to two languages and is resolved by reading the file: anything
+containing `@interface`, `@implementation`, `@protocol`, `@end` or `#import` is
+Objective-C, everything else is MATLAB. Mapping it by name alone would leave
+MATLAB unreachable, since `.m` is the only extension it has.
+
+**Markup, config and query formats**
+
+These are not programming languages, so the unit each is chunked by is a choice
+rather than a given. Each is the thing someone would search for.
+
+| Format | Extensions | Chunked by |
+|---|---|---|
+| Markdown | `.md` `.markdown` | section, named by its heading |
+| HTML | `.html` `.htm` | element, named by tag |
+| CSS | `.css` `.scss` | rule set, named by selector |
+| JSON | `.json` | top-level key |
+| YAML | `.yml` `.yaml` | mapping key (GitHub Actions job names land here) |
+| SQL | `.sql` | `CREATE TABLE` / `VIEW` / `FUNCTION` / … |
+| Dockerfile | `.dockerfile` | build stage (`FROM … AS x`) |
+
+HTML is coverage rather than parity with the code grammars: an element is not a
+definition and a tag is a weak name.
 
 Every other text file falls back to fixed 80-line windows, which is why some
 chunks below have `kind = "block"`.
+
+### Not supported
+
+**R** and **COBOL** have no `tree-sitter-*` package on PyPI at all, so neither
+can be added by declaring a dependency the way every language above was. Adding
+either means vendoring and building a grammar, which is a different kind of job
+from registering one.
+
+Both fall back to 80-line windows, which means they are still indexed, still
+retrieved and still reviewed — a pull request in either language gets a review.
+What is lost is definition-level retrieval, so the review is grounded about as
+well as a diff-only tool would manage. That distinction is worth keeping
+straight: the grammar set bounds where Liffy's *distinguishing* property holds,
+not where it runs.
+
+If you want either, the pattern to follow is in `backend/app/services/chunker.py`
+and a contribution would be welcome. The one rule that matters: read the node
+names off the grammar by parsing a real file rather than guessing them. A wrong
+node type never matches, the file quietly falls to the windowing path, and the
+only symptom is a lower named fraction.
 
 ## Measured on `lucenity0/Liffy`
 

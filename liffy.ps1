@@ -55,11 +55,13 @@ $FrontendPort     = 5173
 # about to be concatenated with `/.codex` inside a YAML volume spec; `C:/Users/x`
 # is the form Docker Desktop parses without ambiguity.
 if (-not $env:HOME) {
-    $env:HOME = ($env:USERPROFILE -replace '\\', '/')
+    $env:HOME = $env:USERPROFILE
 }
+$env:HOME = ($env:HOME -replace '\\', '/')
 
-# The Windows home directory, in native form, for the existence checks below.
-$UserHome = $env:USERPROFILE
+# The same directory the codex overlay will mount, so the existence check below
+# and the bind-mount source cannot disagree.
+$UserHome = $env:HOME
 
 # Every docker-compose service: data stores + API + the workers that
 # actually execute reviews (worker) and the weekly scheduler (beat).

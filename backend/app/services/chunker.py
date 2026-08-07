@@ -125,15 +125,20 @@ _DEFINITION_TYPES["bash"] = frozenset({"function_definition"})
 # Swift `struct`, `class` and `enum` likewise. The kind reported is therefore
 # "class" for all of them, which is coarser than the source but not wrong, and
 # the name is unaffected.
+# `property_declaration` is deliberately absent from both. A top-level `val x = 1`
+# is a constant, not a definition, and the file already treats constants that way:
+# `export const EDGE = {a: 1}` is excluded in TypeScript by `_definition_node` and
+# joins the surrounding module text. Registering it here also indexed badly, since
+# Kotlin puts the identifier under a nested `variable_declaration` rather than on a
+# `name` field, so the chunk came out anonymous and kinded `function`.
 _DEFINITION_TYPES["kotlin"] = frozenset(
-    {"class_declaration", "object_declaration", "function_declaration", "property_declaration"}
+    {"class_declaration", "object_declaration", "function_declaration"}
 )
 _DEFINITION_TYPES["swift"] = frozenset(
     {
         "class_declaration",
         "protocol_declaration",
         "function_declaration",
-        "property_declaration",
         "typealias_declaration",
     }
 )
@@ -174,8 +179,10 @@ _INTERFACE_NODES = frozenset(
         "typealias_declaration",  # Swift
     }
 )
-# A namespace is a container rather than a definition, but it carries a name and
-# is the only top-level node in a conventionally-formatted C#, C++ or PHP file.
+# A namespace is a container rather than a definition. Where it has a body it is
+# expanded into its contents by `_expand_containers`; where it is only a header
+# (`namespace App;` in C# and PHP) the types are already siblings and it stands
+# on its own as a small named region.
 _MODULE_NODES = frozenset(
     {
         "namespace_declaration",
@@ -183,6 +190,21 @@ _MODULE_NODES = frozenset(
         "namespace_definition",
         "module",  # Ruby
         "mod_item",  # Rust
+    }
+)
+
+# The node types that terminate the C/C++ declarator chain. `identifier` alone
+# covers a free function and nothing else: an out-of-line member definition,
+# which is most of a real translation unit, ends at `qualified_identifier`, and
+# destructors and operator overloads have their own types again. Stopping short
+# returns no name, so the definition indexes anonymously and nothing reports it.
+_DECLARATOR_NAMES = frozenset(
+    {
+        "identifier",
+        "field_identifier",
+        "qualified_identifier",
+        "destructor_name",
+        "operator_name",
     }
 )
 
@@ -418,7 +440,7 @@ def _name_node(node: Node) -> Node | None:
         for _ in range(4):
             if current is None:
                 return None
-            if current.type == "identifier":
+            if current.type in _DECLARATOR_NAMES:
                 return current
             current = current.child_by_field_name("declarator")
         return None
@@ -459,6 +481,34 @@ def _node_kind(node: Node) -> str:
     if target.type in _MODULE_NODES:
         return "module"
     return "function"
+
+
+def _expand_containers(nodes: list[Node]) -> list[Node]:
+    """Replace namespace-like containers with their contents.
+
+    The walk in ``chunk_source`` is top-level only, so without this a
+    conventionally-formatted C#, C++ or Rust file is *one* node: the namespace.
+    It would be emitted whole and then sliced at the character budget, which is
+    fixed windowing with a name attached, for exactly the languages where
+    namespaces are universal.
+
+    Only containers that actually have a body are expanded. C# `namespace App;`
+    and PHP `namespace App;` carry no body and their types are already siblings,
+    so those are left alone.
+
+    The cost is that the container's own header text, ``namespace App {``, sits
+    outside every child node and is therefore dropped. That is a real loss and
+    the alternative is worse: the classes inside carry the names retrieval
+    matches on, and one chunk per file carries none of them.
+    """
+    out: list[Node] = []
+    for node in nodes:
+        body = node.child_by_field_name("body") if node.type in _MODULE_NODES else None
+        if body is None:
+            out.append(node)
+        else:
+            out.extend(_expand_containers(body.named_children))
+    return out
 
 
 def _split_oversized(text: str, start_line: int) -> list[tuple[str, int, int]]:
@@ -513,7 +563,7 @@ def chunk_source(file_path: str, source: str) -> list[CodeChunk]:
                 )
             pending.clear()
 
-        for child in tree.root_node.children:
+        for child in _expand_containers(tree.root_node.children):
             # Two gates, not one: the node type has to be a candidate *and*
             # actually contain a definition. `export const x = {a: 1}` clears
             # the first and fails the second, so it joins the surrounding

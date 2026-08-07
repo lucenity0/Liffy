@@ -346,7 +346,9 @@ _LANGUAGE_SAMPLES: dict[str, tuple[str, str]] = {
     ".java": ("Widget", "public class Widget {\n    public void draw() {}\n}\n"),
     ".go": ("Area", "package main\n\nfunc Area(w float64) float64 { return w }\n"),
     ".rs": ("area", "pub fn area(w: f64) -> f64 { w }\n"),
-    ".cs": ("App", "namespace App {\n    public class Rect {}\n}\n"),
+    # `Rect`, not `App`: the namespace is expanded into its contents, so the
+    # class is the definition and the namespace is not one.
+    ".cs": ("Rect", "namespace App {\n    public class Rect {}\n}\n"),
     ".c": ("add", "int add(int a, int b) { return a + b; }\n"),
     ".cpp": ("Widget", "class Widget {\npublic:\n    void draw();\n};\n"),
     ".rb": ("Widget", "class Widget\n  def area; 2; end\nend\n"),
@@ -405,3 +407,70 @@ def test_bash_indexes_functions_but_not_commands() -> None:
 
     assert [c.name for c in functions] == ["greet"]
     assert all(c.name is None for c in commands)
+
+
+def test_cpp_out_of_line_member_definitions_are_named() -> None:
+    """`identifier` alone terminates the chain for free functions only.
+
+    Out-of-line member definitions are the bulk of a real translation unit and
+    end at `qualified_identifier`; destructors and operator overloads have types
+    of their own again. Stopping short returns no name, so the definition
+    indexes anonymously and nothing anywhere reports it — the silent failure the
+    named-chunk fraction exists to catch, reintroduced one node type at a time.
+    """
+    cases = {
+        "int add(int a) { return a; }": "add",
+        "void Widget::draw() {}": "Widget::draw",
+        "Widget::~Widget() {}": "Widget::~Widget",
+        "bool Widget::operator==(const Widget& o) const { return true; }": "Widget::operator==",
+        "char *Widget::dup(char *s) { return s; }": "Widget::dup",
+    }
+    for source, expected in cases.items():
+        assert [c.name for c in chunk_source("a.cpp", source)] == [expected], source
+
+
+def test_namespace_body_is_expanded_into_its_definitions() -> None:
+    """A namespace is a container, not a definition.
+
+    Emitting it whole makes a conventionally-formatted C# or C++ file a single
+    chunk that is then sliced at the character budget, which is fixed windowing
+    with a name attached for precisely the languages where namespaces are
+    universal.
+    """
+    source = (
+        "namespace App {\n"
+        "    public class A { public void M() {} }\n"
+        "    public class B { public void N() {} }\n"
+        "}\n"
+    )
+    named = {c.name: c for c in chunk_source("a.cs", source) if c.name}
+
+    assert sorted(named) == ["A", "B"]
+    assert named["A"].kind == "class"
+    assert "namespace" not in named
+
+
+def test_header_only_namespaces_are_left_alone() -> None:
+    """`namespace App;` has no body and its types are already siblings.
+
+    Expanding on the presence of a `body` field rather than on the node type
+    keeps this case working: there is nothing to descend into, and the types
+    must not be lost.
+    """
+    named = {c.name for c in chunk_source("a.cs", "namespace App;\nclass A {}\nclass B {}\n") if c.name}
+
+    assert {"A", "B"} <= named
+
+
+def test_top_level_property_is_not_a_definition() -> None:
+    """A top-level `val` is a constant, and constants join the module text.
+
+    The same rule TypeScript already applies to `export const EDGE = {a: 1}`.
+    Registering `property_declaration` also indexed badly in Kotlin, where the
+    identifier sits under a nested `variable_declaration` rather than on a
+    `name` field, so the chunk came out anonymous *and* kinded `function`.
+    """
+    for path, source in [("a.kt", "val x = 1\n"), ("a.swift", "var x: Int = 1\n")]:
+        chunks = chunk_source(path, source)
+        assert [c.kind for c in chunks] == ["module"], path
+        assert all(c.name is None for c in chunks), path

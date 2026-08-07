@@ -142,18 +142,64 @@ _DEFINITION_TYPES["swift"] = frozenset(
         "typealias_declaration",
     }
 )
+_DEFINITION_TYPES["scala"] = frozenset(
+    {
+        "class_definition",  # also `case class`
+        "object_definition",
+        "trait_definition",
+        "function_definition",
+        "type_definition",
+        "val_definition",
+    }
+)
+# `assignment_statement` and its wrapper are candidates rather than definitions:
+# `local x = 1` shares their node type with `M.area = function(w)`, and only the
+# assigned value separates the two. `_definition_node` decides, exactly as it
+# does for `export const` in JavaScript.
+_DEFINITION_TYPES["lua"] = frozenset(
+    {"function_declaration", "assignment_statement", "variable_declaration"}
+)
+_DEFINITION_TYPES["matlab"] = frozenset({"function_definition", "class_definition"})
+_DEFINITION_TYPES["zig"] = frozenset({"function_declaration", "variable_declaration"})
+_DEFINITION_TYPES["objc"] = frozenset(
+    {"class_interface", "class_implementation", "protocol_declaration", "function_definition"}
+)
+_DEFINITION_TYPES["elixir"] = frozenset({"call"})
+_DEFINITION_TYPES["haskell"] = frozenset(
+    {"function", "signature", "data_type", "class", "type_alias", "newtype"}
+)
+# Dart's top-level functions parse as a `function_signature` followed by a
+# sibling `function_body`, so registering the signature would name a chunk
+# holding no implementation and leave the body in a separate anonymous one.
+# Class-level constructs span their whole body and are registered instead;
+# top-level functions join the module text intact, which keeps the code
+# together at the cost of the label. Dart is class-oriented enough that this is
+# the better trade.
+_DEFINITION_TYPES["dart"] = frozenset(
+    {"class_definition", "enum_declaration", "mixin_declaration", "extension_declaration"}
+)
 
 # Values that make a `const` binding a function rather than a constant.
 _CALLABLE_VALUES = frozenset({"arrow_function", "function_expression"})
 
 _CLASS_NODES = frozenset(
     {
+        # Python, Dart, Scala and MATLAB all spell it `class_definition`.
         "class_definition",
         "class_declaration",
         "abstract_class_declaration",
         "class_specifier",
-        "class",  # Ruby
+        # Ruby's node is bare `class`. Haskell's typeclass node is *also* bare
+        # `class`; it is nearer an interface, but the two are indistinguishable
+        # by type and this set is checked first, so a typeclass reports "class".
+        # The name is unaffected, which is what retrieval matches on.
+        "class",
         "object_declaration",  # Kotlin `object Foo { }`
+        "object_definition",  # Scala
+        "class_interface",  # Objective-C
+        "class_implementation",  # Objective-C
+        "data_type",  # Haskell
+        "newtype",  # Haskell
         "struct_specifier",
         "struct_declaration",
         "struct_item",
@@ -175,8 +221,11 @@ _INTERFACE_NODES = frozenset(
         "type_item",
         "type_declaration",  # Go: struct or interface, decided by the type_spec
         "delegate_declaration",
-        "protocol_declaration",  # Swift
+        "protocol_declaration",  # Swift, Objective-C
         "typealias_declaration",  # Swift
+        "trait_definition",  # Scala
+        "type_definition",  # Scala
+        "type_alias",  # Haskell
     }
 )
 # A namespace is a container rather than a definition. Where it has a body it is
@@ -206,6 +255,26 @@ _DECLARATOR_NAMES = frozenset(
         "destructor_name",
         "operator_name",
     }
+)
+
+# Containers that hold the definitions directly rather than behind a `body`
+# field. Haskell puts every top-level declaration inside one `declarations`
+# node, so without expanding it a module is a single chunk regardless of size.
+_INLINE_CONTAINER_NODES = frozenset({"declarations"})
+
+# Node types whose name is the first `identifier` child rather than a `name`
+# field. Zig declares a struct as `const Point = struct {...}`, and Objective-C
+# puts the class name first among several identifiers on the interface line.
+_FIRST_IDENTIFIER_NAMED = frozenset(
+    {"variable_declaration", "class_interface", "class_implementation"}
+)
+
+# Elixir has no definition syntax: `defmodule`, `def` and friends are macro
+# calls, so every one of them parses as `call` and so does `IO.puts`. The type
+# alone cannot separate them and the macro name has to be read from the source,
+# which is what `_elixir_definition_name` does.
+_ELIXIR_DEFINING_MACROS = frozenset(
+    {"defmodule", "def", "defp", "defmacro", "defmacrop", "defprotocol", "defimpl", "defstruct"}
 )
 
 
@@ -320,6 +389,54 @@ def _swift_language() -> Language:
     return Language(tree_sitter_swift.language())
 
 
+def _scala_language() -> Language:
+    import tree_sitter_scala
+
+    return Language(tree_sitter_scala.language())
+
+
+def _lua_language() -> Language:
+    import tree_sitter_lua
+
+    return Language(tree_sitter_lua.language())
+
+
+def _matlab_language() -> Language:
+    import tree_sitter_matlab
+
+    return Language(tree_sitter_matlab.language())
+
+
+def _zig_language() -> Language:
+    import tree_sitter_zig
+
+    return Language(tree_sitter_zig.language())
+
+
+def _objc_language() -> Language:
+    import tree_sitter_objc
+
+    return Language(tree_sitter_objc.language())
+
+
+def _elixir_language() -> Language:
+    import tree_sitter_elixir
+
+    return Language(tree_sitter_elixir.language())
+
+
+def _haskell_language() -> Language:
+    import tree_sitter_haskell
+
+    return Language(tree_sitter_haskell.language())
+
+
+def _dart_language() -> Language:
+    import tree_sitter_dart
+
+    return Language(tree_sitter_dart.language())
+
+
 # Language registry: extension -> (language name, grammar factory). Adding a
 # language is one entry here and its grammar package in requirements.txt.
 #
@@ -364,6 +481,23 @@ _LANGUAGES: dict[str, tuple[str, Callable[[], Language]]] = {
     ".kt": ("kotlin", _kotlin_language),
     ".kts": ("kotlin", _kotlin_language),
     ".swift": ("swift", _swift_language),
+    ".scala": ("scala", _scala_language),
+    ".sc": ("scala", _scala_language),
+    ".lua": ("lua", _lua_language),
+    # `.m` is resolved by content, not by this entry — see `_language_for`. The
+    # entry names Objective-C because that is the fallback when the file offers
+    # no evidence either way.
+    ".m": ("objc", _objc_language),
+    ".mm": ("objc", _objc_language),
+    ".zig": ("zig", _zig_language),
+    ".ex": ("elixir", _elixir_language),
+    ".exs": ("elixir", _elixir_language),
+    ".hs": ("haskell", _haskell_language),
+    ".dart": ("dart", _dart_language),
+    # Not a real file extension. `.m` resolves here through `_language_for`
+    # when the file shows no Objective-C syntax, which is the only way MATLAB
+    # is reachable at all: `.m` is the only extension it has.
+    ".matlab": ("matlab", _matlab_language),
 }
 
 _parsers: dict[str, Parser] = {}
@@ -375,6 +509,31 @@ def _parser_for(extension: str) -> Parser | None:
     if extension not in _parsers:
         _parsers[extension] = Parser(_LANGUAGES[extension][1]())
     return _parsers[extension]
+
+
+# `.m` is MATLAB's only extension and Objective-C's principal one, so mapping it
+# to either language by name alone makes the other unreachable. These markers
+# are Objective-C syntax that is not valid MATLAB, checked in preference order:
+# a file containing any of them is not a MATLAB script.
+_OBJC_MARKERS = ("@interface", "@implementation", "@protocol", "@end", "#import")
+
+
+def _language_for(extension: str, source: str) -> tuple[str, Parser] | None:
+    """Resolve one file to (language name, parser), or None to window it.
+
+    Extension alone decides every language but one. Rather than let `.m` pick a
+    winner and silently strip the loser of its only extension, the ambiguous
+    case is settled by looking at the file.
+    """
+    if extension == ".m" and not any(marker in source for marker in _OBJC_MARKERS):
+        parser = _parser_for(".matlab")
+        if parser is not None:
+            return "matlab", parser
+
+    parser = _parser_for(extension)
+    if parser is None:
+        return None
+    return _LANGUAGES[extension][0], parser
 
 
 def _definition_node(node: Node) -> Node | None:
@@ -402,7 +561,29 @@ def _definition_node(node: Node) -> Node | None:
         inner = node.child_by_field_name("declaration")
         return _definition_node(inner) if inner is not None else None
 
+    if node.type == "assignment_statement":
+        # The arrow-function trap again, in Lua. `M.area = function(w) ... end`
+        # is how a large share of real Lua defines its functions, and matching
+        # only `function_declaration` misses every one: 263 of them in a single
+        # mid-sized plugin, all landing in module text unnamed.
+        value = node.child_by_field_name("value")
+        return node if value is not None and value.type == "function_definition" else None
+
     if node.type in {"lexical_declaration", "variable_declaration"}:
+        # Lua wraps `local f = function() end` in a declaration around the
+        # assignment, so the decision belongs to the assignment below it.
+        inner = next(
+            (c for c in node.named_children if c.type == "assignment_statement"), None
+        )
+        if inner is not None:
+            return _definition_node(inner)
+
+        # Zig reaches here too, because `const Point = struct {...}` is also a
+        # `variable_declaration`, and it has no `variable_declarator` children
+        # at all. Falling through to the JS rule would return None and drop
+        # every Zig type, so a node with no declarators is treated as itself.
+        if not any(c.type == "variable_declarator" for c in node.named_children):
+            return node
         for child in node.named_children:
             if child.type != "variable_declarator":
                 continue
@@ -454,10 +635,53 @@ def _name_node(node: Node) -> Node | None:
     if node.type == "impl_item":
         return node.child_by_field_name("type")
 
+    if node.type in _FIRST_IDENTIFIER_NAMED:
+        # Zig declares a type as `const Point = struct {...}` and Objective-C
+        # lists the class before its superclass, so in both the first
+        # identifier is the declared name and any later one is a reference.
+        for child in node.named_children:
+            if child.type == "identifier":
+                return child
+        return None
+
     return None
 
 
+def _elixir_definition(node: Node, source: bytes) -> Node | None:
+    """The name node of an Elixir definition, or None if this call is not one.
+
+    Elixir has no definition syntax: `defmodule Foo do` and `IO.puts "x"` are
+    both a `call`, so the node type cannot separate a definition from any other
+    expression and the macro being invoked has to be read out of the source.
+    """
+    target = node.child_by_field_name("target")
+    if target is None or target.type != "identifier":
+        return None
+    macro = source[target.start_byte : target.end_byte].decode("utf-8", "replace")
+    if macro not in _ELIXIR_DEFINING_MACROS:
+        return None
+
+    # `arguments` is a named child rather than a field on this grammar, so it
+    # has to be found by type. Asking for the field returns None and silently
+    # unnames every definition in the file.
+    arguments = next((c for c in node.named_children if c.type == "arguments"), None)
+    if arguments is None or not arguments.named_children:
+        return None
+    first = arguments.named_children[0]
+    # `defmodule App.Shape` names an alias; `def area(w)` wraps the name in a
+    # further call carrying the parameter list.
+    if first.type == "call":
+        return first.child_by_field_name("target")
+    return first
+
+
 def _node_name(node: Node, source: bytes) -> str | None:
+    if node.type == "call":
+        name_node = _elixir_definition(node, source)
+        if name_node is None:
+            return None
+        return source[name_node.start_byte : name_node.end_byte].decode("utf-8", "replace")
+
     target = _definition_node(node)
     if target is None:
         return None
@@ -503,6 +727,9 @@ def _expand_containers(nodes: list[Node]) -> list[Node]:
     """
     out: list[Node] = []
     for node in nodes:
+        if node.type in _INLINE_CONTAINER_NODES:
+            out.extend(_expand_containers(node.named_children))
+            continue
         body = node.child_by_field_name("body") if node.type in _MODULE_NODES else None
         if body is None:
             out.append(node)
@@ -540,11 +767,12 @@ def chunk_source(file_path: str, source: str) -> list[CodeChunk]:
         return []
 
     extension = "." + file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
-    parser = _parser_for(extension)
-    # Read off the same registry entry the parser came from — `parser` is
-    # non-None exactly when the extension is registered, so the name and the
-    # grammar cannot disagree about which language this is.
-    definition_types = _DEFINITION_TYPES[_LANGUAGES[extension][0]] if parser else frozenset()
+    resolved = _language_for(extension, source)
+    # Name and parser come from one resolution rather than two lookups, so they
+    # cannot disagree about which language this is — which matters now that one
+    # extension is settled by content rather than by the registry alone.
+    parser = resolved[1] if resolved else None
+    definition_types = _DEFINITION_TYPES[resolved[0]] if resolved else frozenset()
     raw: list[tuple[str, int, int, str, str | None]] = []  # (text, start, end, kind, name)
 
     if parser is not None:

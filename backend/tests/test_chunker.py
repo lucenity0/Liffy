@@ -258,10 +258,15 @@ def test_unknown_extension_still_falls_back() -> None:
     supported language. Deriving it from `_LANGUAGES` means adding a grammar
     can no longer quietly invalidate the case.
     """
-    extension = ".hs"  # Haskell: no grammar registered, and none planned
+    # A synthetic extension, not a real language. This test has now been broken
+    # twice by registering the language it happened to use as its example, once
+    # for Ruby and once for Haskell, and on both occasions it had silently
+    # stopped testing the fallback long before anyone noticed. Nothing will ever
+    # claim `.nolang`, so it cannot happen a third time.
+    extension = ".nolang"
     assert extension not in _LANGUAGES, f"{extension} is registered; pick another"
 
-    chunks = chunk_source(f"app/script{extension}", "hello :: IO ()\nhello = putStrLn \"hi\"\n")
+    chunks = chunk_source(f"app/script{extension}", "define hello\n  print 'hi'\nend\n")
 
     assert [c.kind for c in chunks] == ["block"]
     assert all(c.name is None for c in chunks)
@@ -361,6 +366,13 @@ _LANGUAGE_SAMPLES: dict[str, tuple[str, str]] = {
     # badly-written fixture.
     ".kt": ("Widget", "class Widget {\n    fun draw() {}\n}\n"),
     ".swift": ("Point", "struct Point {\n    var x: Int\n}\n"),
+    ".scala": ("Rect", "class Rect(val w: Double) {\n  def area: Double = w\n}\n"),
+    ".lua": ("M.area", "function M.area(w)\n  return w\nend\n"),
+    ".zig": ("Point", "pub const Point = struct {\n    x: i32,\n};\n"),
+    ".ex": ("App.Shape", "defmodule App.Shape do\n  def area(w) do\n    w\n  end\nend\n"),
+    ".hs": ("area", "module App where\n\narea :: Int -> Int\narea x = x\n"),
+    ".dart": ("Rect", "class Rect {\n  final double w;\n  double area() => w;\n}\n"),
+    ".mm": ("Widget", "@interface Widget : NSObject\n- (void)draw;\n@end\n"),
 }
 
 
@@ -474,3 +486,76 @@ def test_top_level_property_is_not_a_definition() -> None:
         chunks = chunk_source(path, source)
         assert [c.kind for c in chunks] == ["module"], path
         assert all(c.name is None for c in chunks), path
+
+
+def test_dot_m_is_resolved_by_content_not_by_extension() -> None:
+    """`.m` is MATLAB's only extension and Objective-C's principal one.
+
+    Mapping it to either by name alone leaves the other unreachable, and for
+    MATLAB that means unreachable entirely. The file decides instead: anything
+    carrying Objective-C syntax is Objective-C, and everything else is MATLAB.
+    """
+    objc = "#import <Foundation/Foundation.h>\n@implementation Widget\n- (void)draw {}\n@end\n"
+    matlab = "function r = area(w)\n    r = w * w;\nend\n"
+
+    assert "Widget" in {c.name for c in chunk_source("a.m", objc)}
+    assert [c.name for c in chunk_source("a.m", matlab)] == ["area"]
+
+
+def test_elixir_definitions_are_told_apart_from_ordinary_calls() -> None:
+    """Elixir has no definition syntax, so the node type cannot decide.
+
+    `defmodule Foo do` and `IO.puts "x"` are both a `call`. The macro name has
+    to be read out of the source, which means an ordinary call must come back
+    unnamed rather than being indexed as a definition of itself.
+    """
+    defined = chunk_source("a.ex", "defmodule App.Shape do\n  def area(w) do\n    w\n  end\nend\n")
+    assert [c.name for c in defined] == ["App.Shape"]
+
+    called = chunk_source("a.ex", 'IO.puts "hello"\nEnum.map([1], fn x -> x end)\n')
+    assert all(c.name is None for c in called)
+
+
+def test_zig_types_are_not_swallowed_by_the_javascript_rule() -> None:
+    """`const Point = struct {}` is a `variable_declaration`, same as JS.
+
+    The JavaScript branch of `_definition_node` looks for a `variable_declarator`
+    to decide whether a binding is a function, and Zig has none, so falling
+    through it would return None and drop every Zig type.
+    """
+    chunks = chunk_source("a.zig", "pub const Point = struct {\n    x: i32,\n};\n\npub fn main() void {}\n")
+
+    assert {"Point", "main"} <= {c.name for c in chunks if c.name}
+
+
+def test_haskell_declarations_container_is_expanded() -> None:
+    """Haskell nests every top-level declaration inside one `declarations` node.
+
+    Without expanding it, a module of any size is a single chunk, which is the
+    namespace problem in a different grammar.
+    """
+    source = "module App where\n\ndata Shape = Rect Double\n\narea :: Int -> Int\narea x = x\n"
+    named = {c.name for c in chunk_source("a.hs", source) if c.name}
+
+    assert {"Shape", "area"} <= named
+
+
+def test_lua_function_valued_bindings_are_named() -> None:
+    """The arrow-function trap, in Lua.
+
+    `M.area = function(w) ... end` is how a large share of real Lua defines its
+    functions, and it shares a node type with `local x = 1`. Matching only
+    `function_declaration` missed 263 of them in a single mid-sized plugin, all
+    landing in module text unnamed, which lifted that repository's named
+    fraction from 47.8% to 55.7% once handled.
+    """
+    assert [c.name for c in chunk_source("a.lua", "M.area = function(w)\n  return w\nend\n")] == ["M.area"]
+    assert [c.name for c in chunk_source("a.lua", "local f = function(w)\n  return w\nend\n")] == ["f"]
+
+
+def test_lua_constants_are_not_mistaken_for_functions() -> None:
+    """Keeps the test above honest: the value, not the node type, decides."""
+    for source in ("local x = 1\n", 'local M = require("plenary")\n'):
+        chunks = chunk_source("a.lua", source)
+        assert all(c.name is None for c in chunks), source
+        assert all(c.kind == "module" for c in chunks), source

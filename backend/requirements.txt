@@ -69,6 +69,17 @@ tree-sitter-php==0.24.1          # .php
 tree-sitter-bash==0.25.1         # .sh .bash
 tree-sitter-kotlin==1.1.0        # .kt .kts
 tree-sitter-swift==0.7.3         # .swift
+tree-sitter-scala==0.26.0        # .scala .sc
+tree-sitter-lua==0.5.0           # .lua
+tree-sitter-zig==1.1.2           # .zig
+tree-sitter-elixir==0.3.5        # .ex .exs
+tree-sitter-haskell==0.23.1      # .hs
+tree-sitter-dart==0.1.0          # .dart
+# `.m` is MATLAB's only extension and Objective-C's principal one, so the two
+# are separated by content in `_language_for` rather than by name. Both are
+# needed for either to be reachable.
+tree-sitter-objc==3.0.2          # .m .mm
+tree-sitter-matlab==1.3.0        # .m
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 pydantic==2.10.2

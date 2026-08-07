@@ -636,3 +636,39 @@ def test_dockerfile_indexes_stages_not_steps() -> None:
     named = [c.name for c in chunk_source("Dockerfile.dockerfile", source) if c.name]
 
     assert named == ["builder", "runtime"]
+
+
+def test_a_grammar_that_will_not_load_degrades_to_windows() -> None:
+    """A registered grammar whose package is missing must not abort the run.
+
+    Grammar packages are per-platform wheels and not every one is published for
+    every platform: `tree-sitter-dockerfile` 0.2.0 ships macOS arm64 and Linux
+    x86_64 only, with no source distribution, so it cannot be installed in an
+    arm64 Linux container. Before this the indexer raised `ImportError` on the
+    first such file and lost the whole repository's run.
+
+    Asserted through the registry rather than by uninstalling a package, so the
+    test holds on every platform including the ones where the grammar loads.
+    """
+    from app.services import chunker
+
+    def explode():
+        raise ImportError("no module named tree_sitter_nonexistent")
+
+    original = dict(chunker._LANGUAGES)
+    chunker._LANGUAGES[".broken"] = ("python", explode)
+    chunker._DEFINITION_TYPES.setdefault("python", frozenset())
+    try:
+        chunker._parsers.pop(".broken", None)
+        chunker._unavailable.discard(".broken")
+
+        chunks = chunker.chunk_source("a.broken", "def hello():\n    pass\n")
+
+        assert chunks, "the file must still be indexed, as fixed windows"
+        assert all(c.kind == "block" for c in chunks)
+        assert ".broken" in chunker._unavailable, "the failure must be recorded once"
+    finally:
+        chunker._LANGUAGES.clear()
+        chunker._LANGUAGES.update(original)
+        chunker._parsers.pop(".broken", None)
+        chunker._unavailable.discard(".broken")

@@ -48,12 +48,142 @@ _DEFINITION_TYPES["typescript"] = _DEFINITION_TYPES["javascript"] | frozenset(
     }
 )
 
+# The node names below were read off each grammar rather than assumed. Three of
+# them are not what the language's own vocabulary suggests: Ruby's class and
+# module nodes are bare `class` and `module`, Rust suffixes everything `_item`,
+# and C calls a struct a `struct_specifier`. Guessing here is silent — a wrong
+# name simply never matches, the file falls to the module path, and the only
+# visible symptom is a lower named fraction.
+_DEFINITION_TYPES["java"] = frozenset(
+    {
+        "class_declaration",
+        "interface_declaration",
+        "enum_declaration",
+        "record_declaration",
+        "annotation_type_declaration",
+        # Never top-level in Java, so these only matter for a fragment, but
+        # costing nothing is cheaper than reasoning about when they appear.
+        "method_declaration",
+        "constructor_declaration",
+    }
+)
+_DEFINITION_TYPES["go"] = frozenset(
+    {"function_declaration", "method_declaration", "type_declaration"}
+)
+_DEFINITION_TYPES["rust"] = frozenset(
+    {
+        "function_item",
+        "struct_item",
+        "trait_item",
+        "enum_item",
+        "impl_item",
+        "mod_item",
+        "union_item",
+        "type_item",
+        "macro_definition",
+    }
+)
+_DEFINITION_TYPES["c_sharp"] = frozenset(
+    {
+        # Block-scoped namespaces nest every type one level down, and the walk
+        # is top-level only, so without this a conventional C# file yields one
+        # anonymous region. File-scoped `namespace App;` puts types at the top.
+        "namespace_declaration",
+        "file_scoped_namespace_declaration",
+        "class_declaration",
+        "interface_declaration",
+        "struct_declaration",
+        "enum_declaration",
+        "record_declaration",
+        "delegate_declaration",
+        "method_declaration",
+    }
+)
+_DEFINITION_TYPES["c"] = frozenset(
+    {"function_definition", "struct_specifier", "enum_specifier", "union_specifier", "type_definition"}
+)
+_DEFINITION_TYPES["cpp"] = _DEFINITION_TYPES["c"] | frozenset(
+    {"namespace_definition", "class_specifier", "template_declaration"}
+)
+_DEFINITION_TYPES["ruby"] = frozenset({"module", "class", "method", "singleton_method"})
+_DEFINITION_TYPES["php"] = frozenset(
+    {
+        "namespace_definition",
+        "class_declaration",
+        "interface_declaration",
+        "trait_declaration",
+        "enum_declaration",
+        "function_definition",
+    }
+)
+# Shell functions only. `command` also carries a `name` field, so including it
+# would index every invocation in a script as a definition and report a named
+# fraction near 100% on files containing no functions at all.
+_DEFINITION_TYPES["bash"] = frozenset({"function_definition"})
+# Both of these collapse several source-level keywords onto one node type:
+# Kotlin `class`, `interface` and `enum class` are all `class_declaration`, and
+# Swift `struct`, `class` and `enum` likewise. The kind reported is therefore
+# "class" for all of them, which is coarser than the source but not wrong, and
+# the name is unaffected.
+_DEFINITION_TYPES["kotlin"] = frozenset(
+    {"class_declaration", "object_declaration", "function_declaration", "property_declaration"}
+)
+_DEFINITION_TYPES["swift"] = frozenset(
+    {
+        "class_declaration",
+        "protocol_declaration",
+        "function_declaration",
+        "property_declaration",
+        "typealias_declaration",
+    }
+)
+
 # Values that make a `const` binding a function rather than a constant.
 _CALLABLE_VALUES = frozenset({"arrow_function", "function_expression"})
 
-_CLASS_NODES = frozenset({"class_definition", "class_declaration", "abstract_class_declaration"})
+_CLASS_NODES = frozenset(
+    {
+        "class_definition",
+        "class_declaration",
+        "abstract_class_declaration",
+        "class_specifier",
+        "class",  # Ruby
+        "object_declaration",  # Kotlin `object Foo { }`
+        "struct_specifier",
+        "struct_declaration",
+        "struct_item",
+        "record_declaration",
+        "union_specifier",
+        "union_item",
+    }
+)
 _INTERFACE_NODES = frozenset(
-    {"interface_declaration", "type_alias_declaration", "enum_declaration"}
+    {
+        "interface_declaration",
+        "type_alias_declaration",
+        "enum_declaration",
+        "enum_specifier",
+        "enum_item",
+        "trait_item",
+        "trait_declaration",
+        "type_definition",
+        "type_item",
+        "type_declaration",  # Go: struct or interface, decided by the type_spec
+        "delegate_declaration",
+        "protocol_declaration",  # Swift
+        "typealias_declaration",  # Swift
+    }
+)
+# A namespace is a container rather than a definition, but it carries a name and
+# is the only top-level node in a conventionally-formatted C#, C++ or PHP file.
+_MODULE_NODES = frozenset(
+    {
+        "namespace_declaration",
+        "file_scoped_namespace_declaration",
+        "namespace_definition",
+        "module",  # Ruby
+        "mod_item",  # Rust
+    }
 )
 
 
@@ -100,6 +230,74 @@ def _javascript_language() -> Language:
     return Language(tree_sitter_javascript.language())
 
 
+def _java_language() -> Language:
+    import tree_sitter_java
+
+    return Language(tree_sitter_java.language())
+
+
+def _go_language() -> Language:
+    import tree_sitter_go
+
+    return Language(tree_sitter_go.language())
+
+
+def _rust_language() -> Language:
+    import tree_sitter_rust
+
+    return Language(tree_sitter_rust.language())
+
+
+def _c_sharp_language() -> Language:
+    import tree_sitter_c_sharp
+
+    return Language(tree_sitter_c_sharp.language())
+
+
+def _c_language() -> Language:
+    import tree_sitter_c
+
+    return Language(tree_sitter_c.language())
+
+
+def _cpp_language() -> Language:
+    import tree_sitter_cpp
+
+    return Language(tree_sitter_cpp.language())
+
+
+def _ruby_language() -> Language:
+    import tree_sitter_ruby
+
+    return Language(tree_sitter_ruby.language())
+
+
+def _php_language() -> Language:
+    import tree_sitter_php
+
+    # `language_php` parses a file containing `<?php` tags, which is what a
+    # `.php` file is. The sibling `language_php_only` expects tagless source.
+    return Language(tree_sitter_php.language_php())
+
+
+def _bash_language() -> Language:
+    import tree_sitter_bash
+
+    return Language(tree_sitter_bash.language())
+
+
+def _kotlin_language() -> Language:
+    import tree_sitter_kotlin
+
+    return Language(tree_sitter_kotlin.language())
+
+
+def _swift_language() -> Language:
+    import tree_sitter_swift
+
+    return Language(tree_sitter_swift.language())
+
+
 # Language registry: extension -> (language name, grammar factory). Adding a
 # language is one entry here and its grammar package in requirements.txt.
 #
@@ -123,6 +321,27 @@ _LANGUAGES: dict[str, tuple[str, Callable[[], Language]]] = {
     ".jsx": ("javascript", _javascript_language),
     ".mjs": ("javascript", _javascript_language),
     ".cjs": ("javascript", _javascript_language),
+    ".java": ("java", _java_language),
+    ".go": ("go", _go_language),
+    ".rs": ("rust", _rust_language),
+    ".cs": ("c_sharp", _c_sharp_language),
+    ".c": ("c", _c_language),
+    # `.h` is ambiguous and is far more often C than C++, so it takes the C
+    # grammar. `.hpp` is unambiguous and takes the C++ one. The cost of being
+    # wrong is asymmetric: C read as C++ mostly parses, C++ read as C does not.
+    ".h": ("c", _c_language),
+    ".cpp": ("cpp", _cpp_language),
+    ".cc": ("cpp", _cpp_language),
+    ".cxx": ("cpp", _cpp_language),
+    ".hpp": ("cpp", _cpp_language),
+    ".hh": ("cpp", _cpp_language),
+    ".rb": ("ruby", _ruby_language),
+    ".php": ("php", _php_language),
+    ".sh": ("bash", _bash_language),
+    ".bash": ("bash", _bash_language),
+    ".kt": ("kotlin", _kotlin_language),
+    ".kts": ("kotlin", _kotlin_language),
+    ".swift": ("swift", _swift_language),
 }
 
 _parsers: dict[str, Parser] = {}
@@ -178,13 +397,51 @@ def _definition_node(node: Node) -> Node | None:
     return node
 
 
+def _name_node(node: Node) -> Node | None:
+    """The node holding the declared identifier, or None.
+
+    Most grammars expose it on a `name` field and stop here. Three do not, and
+    each is a definition that would otherwise index as anonymous:
+
+        int add(int a) {}      C/C++  -> name is under the declarator chain
+        type Shape interface   Go     -> name is on the nested type_spec
+        impl Shape for Point   Rust   -> the subject is on the `type` field
+    """
+    direct = node.child_by_field_name("name")
+    if direct is not None:
+        return direct
+
+    if node.type == "function_definition":
+        # `int *f(void)` nests a pointer_declarator around the function one, so
+        # follow the chain rather than assuming a fixed depth.
+        current = node.child_by_field_name("declarator")
+        for _ in range(4):
+            if current is None:
+                return None
+            if current.type == "identifier":
+                return current
+            current = current.child_by_field_name("declarator")
+        return None
+
+    if node.type == "type_declaration":
+        for child in node.named_children:
+            if child.type == "type_spec":
+                return child.child_by_field_name("name")
+        return None
+
+    if node.type == "impl_item":
+        return node.child_by_field_name("type")
+
+    return None
+
+
 def _node_name(node: Node, source: bytes) -> str | None:
     target = _definition_node(node)
     if target is None:
         return None
     # `variable_declarator` carries the binding name, so an arrow component is
     # named after its const rather than landing as an anonymous blob.
-    name_node = target.child_by_field_name("name")
+    name_node = _name_node(target)
     if name_node is None:
         return None
     return source[name_node.start_byte : name_node.end_byte].decode("utf-8", "replace")
@@ -199,6 +456,8 @@ def _node_kind(node: Node) -> str:
         return "class"
     if target.type in _INTERFACE_NODES:
         return "interface"
+    if target.type in _MODULE_NODES:
+        return "module"
     return "function"
 
 

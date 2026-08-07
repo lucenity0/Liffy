@@ -44,14 +44,31 @@ tiktoken==0.8.0                  # Token counting for OpenAI models
 fastembed==0.8.0                 # Local ONNX embeddings — no key, and no torch
 
 # ── AST parsing (semantic chunking) ────────────────────────────────────────────
-# Grammar packages declare a tree-sitter range and a mismatch fails at import
-# with an unhelpful ABI error rather than at install time, so these are pinned
-# to the 0.23 series alongside the runtime above. tree-sitter-javascript 0.25
-# and tree-sitter-typescript 0.24+ want tree-sitter >= 0.25.
-tree-sitter==0.23.2              # Language-agnostic AST parser (BASE-5 indexer)
-tree-sitter-python==0.23.6       # Python grammar
+# A grammar built against a newer ABI than the runtime fails at `Language()`
+# with "Incompatible Language version N", not at install time, and the package
+# metadata does not prevent it: every grammar below declares its tree-sitter
+# range under a `core` extra that pip does not enforce. Compatibility here was
+# established by loading each grammar and parsing a sample. On the previous
+# 0.23 runtime that check rejected the current release of five of them.
+#
+# Raising the runtime is therefore the prerequisite for raising any grammar.
+# Verified on the 0.26 runtime: semantic chunking over the reference corpus is
+# byte-identical to the 0.23 pin, so this upgrade changed compatibility only.
+tree-sitter==0.26.0              # Language-agnostic AST parser (BASE-5 indexer)
+tree-sitter-python==0.25.0       # .py
 tree-sitter-typescript==0.23.2   # .ts and .tsx (two separate grammars) — LANG-1
-tree-sitter-javascript==0.23.1   # .js, .jsx, .mjs, .cjs — LANG-1
+tree-sitter-javascript==0.25.0   # .js, .jsx, .mjs, .cjs — LANG-1
+tree-sitter-java==0.23.5         # .java
+tree-sitter-go==0.25.0           # .go
+tree-sitter-rust==0.24.2         # .rs
+tree-sitter-c-sharp==0.23.5      # .cs
+tree-sitter-c==0.24.2            # .c .h
+tree-sitter-cpp==0.23.4          # .cpp .cc .cxx .hpp .hh
+tree-sitter-ruby==0.23.1         # .rb
+tree-sitter-php==0.24.1          # .php
+tree-sitter-bash==0.25.1         # .sh .bash
+tree-sitter-kotlin==1.1.0        # .kt .kts
+tree-sitter-swift==0.7.3         # .swift
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 pydantic==2.10.2

@@ -1,4 +1,4 @@
-from app.services.chunker import MAX_CHUNK_CHARS, chunk_source
+from app.services.chunker import _LANGUAGES, MAX_CHUNK_CHARS, chunk_source
 
 PY_SOURCE = '''\
 import os
@@ -249,7 +249,19 @@ def test_every_javascript_flavour_chunks_semantically() -> None:
 
 
 def test_unknown_extension_still_falls_back() -> None:
-    chunks = chunk_source("app/script.rb", "def hello\n  puts 'hi'\nend\n")
+    """A file with no registered grammar windows rather than failing.
+
+    The extension is asserted absent from the registry rather than hardcoded on
+    trust. This test previously used `.rb`, which silently stopped testing
+    anything the moment Ruby was registered: the fallback assertion started
+    failing for the right reason, but only because the example had become a
+    supported language. Deriving it from `_LANGUAGES` means adding a grammar
+    can no longer quietly invalidate the case.
+    """
+    extension = ".hs"  # Haskell: no grammar registered, and none planned
+    assert extension not in _LANGUAGES, f"{extension} is registered; pick another"
+
+    chunks = chunk_source(f"app/script{extension}", "hello :: IO ()\nhello = putStrLn \"hi\"\n")
 
     assert [c.kind for c in chunks] == ["block"]
     assert all(c.name is None for c in chunks)
@@ -324,3 +336,72 @@ def test_every_registered_language_has_definition_types() -> None:
     names = {name for name, _ in _LANGUAGES.values()}
 
     assert names <= _DEFINITION_TYPES.keys(), sorted(names - _DEFINITION_TYPES.keys())
+
+
+# One representative file per grammar added in LANG-3. Each is written so the
+# top-level nodes are exactly what the walk sees, since `chunk_source` iterates
+# the root's children and does not recurse: a Java method lives inside its
+# class and is therefore part of the class chunk, not a chunk of its own.
+_LANGUAGE_SAMPLES: dict[str, tuple[str, str]] = {
+    ".java": ("Widget", "public class Widget {\n    public void draw() {}\n}\n"),
+    ".go": ("Area", "package main\n\nfunc Area(w float64) float64 { return w }\n"),
+    ".rs": ("area", "pub fn area(w: f64) -> f64 { w }\n"),
+    ".cs": ("App", "namespace App {\n    public class Rect {}\n}\n"),
+    ".c": ("add", "int add(int a, int b) { return a + b; }\n"),
+    ".cpp": ("Widget", "class Widget {\npublic:\n    void draw();\n};\n"),
+    ".rb": ("Widget", "class Widget\n  def area; 2; end\nend\n"),
+    ".php": ("helper", "<?php\nfunction helper(int $x): int { return $x; }\n"),
+    ".sh": ("greet", "#!/usr/bin/env bash\ngreet() { echo hi; }\n"),
+    # Newlines inside the class body are load-bearing for Kotlin: the grammar
+    # separates declarations on them, so `class W { fun d() {} }` on one line
+    # parses to an ERROR node while the same code across three lines does not.
+    # A one-line sample here would look like a broken grammar rather than a
+    # badly-written fixture.
+    ".kt": ("Widget", "class Widget {\n    fun draw() {}\n}\n"),
+    ".swift": ("Point", "struct Point {\n    var x: Int\n}\n"),
+}
+
+
+def test_each_added_language_chunks_semantically() -> None:
+    """Every grammar added in LANG-3 yields a *named* chunk.
+
+    The name is the assertion that matters. A wrong node type in
+    ``_DEFINITION_TYPES`` does not raise: the node simply never matches, the
+    file falls through to the module path, and the only symptom is a chunk that
+    is anonymous. That is precisely the silent failure the named-chunk fraction
+    exists to expose, so it is pinned here per language rather than trusted.
+    """
+    for extension, (expected_name, source) in _LANGUAGE_SAMPLES.items():
+        chunks = chunk_source(f"app/sample{extension}", source)
+        names = {c.name for c in chunks if c.name}
+
+        assert chunks, extension
+        assert expected_name in names, (extension, sorted(names))
+
+
+def test_c_and_cpp_names_come_from_the_declarator_chain() -> None:
+    """`function_definition` carries no `name` field in the C family.
+
+    The identifier sits under `declarator`, one level down for a plain function
+    and two for a pointer return, so a fixed-depth lookup would name one and
+    not the other.
+    """
+    plain = chunk_source("app/a.c", "int add(int a) { return a; }\n")
+    pointer = chunk_source("app/b.c", "char *dup(char *s) { return s; }\n")
+
+    assert [c.name for c in plain] == ["add"]
+    assert [c.name for c in pointer] == ["dup"]
+
+
+def test_bash_indexes_functions_but_not_commands() -> None:
+    """`command` also has a `name` field, so including it would name everything.
+
+    A script of bare invocations must produce no named chunks at all; without
+    this distinction the named fraction reads near 100% on files defining
+    nothing.
+    """
+    functions = chunk_source("app/f.sh", "greet() { echo hi; }\n")
+    commands = chunk_source("app/c.sh", "set -euo pipefail\necho hello\nls -la\n")
+
+    assert [c.name for c in functions] == ["greet"]
+    assert all(c.name is None for c in commands)

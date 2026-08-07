@@ -1,4 +1,4 @@
-from app.services.chunker import MAX_CHUNK_CHARS, chunk_source
+from app.services.chunker import _LANGUAGES, MAX_CHUNK_CHARS, chunk_source
 
 PY_SOURCE = '''\
 import os
@@ -249,7 +249,19 @@ def test_every_javascript_flavour_chunks_semantically() -> None:
 
 
 def test_unknown_extension_still_falls_back() -> None:
-    chunks = chunk_source("app/script.rb", "def hello\n  puts 'hi'\nend\n")
+    """A file with no registered grammar windows rather than failing.
+
+    The extension is asserted absent from the registry rather than hardcoded on
+    trust. This test previously used `.rb`, which silently stopped testing
+    anything the moment Ruby was registered: the fallback assertion started
+    failing for the right reason, but only because the example had become a
+    supported language. Deriving it from `_LANGUAGES` means adding a grammar
+    can no longer quietly invalidate the case.
+    """
+    extension = ".hs"  # Haskell: no grammar registered, and none planned
+    assert extension not in _LANGUAGES, f"{extension} is registered; pick another"
+
+    chunks = chunk_source(f"app/script{extension}", "hello :: IO ()\nhello = putStrLn \"hi\"\n")
 
     assert [c.kind for c in chunks] == ["block"]
     assert all(c.name is None for c in chunks)
@@ -324,3 +336,141 @@ def test_every_registered_language_has_definition_types() -> None:
     names = {name for name, _ in _LANGUAGES.values()}
 
     assert names <= _DEFINITION_TYPES.keys(), sorted(names - _DEFINITION_TYPES.keys())
+
+
+# One representative file per grammar added in LANG-3. Each is written so the
+# top-level nodes are exactly what the walk sees, since `chunk_source` iterates
+# the root's children and does not recurse: a Java method lives inside its
+# class and is therefore part of the class chunk, not a chunk of its own.
+_LANGUAGE_SAMPLES: dict[str, tuple[str, str]] = {
+    ".java": ("Widget", "public class Widget {\n    public void draw() {}\n}\n"),
+    ".go": ("Area", "package main\n\nfunc Area(w float64) float64 { return w }\n"),
+    ".rs": ("area", "pub fn area(w: f64) -> f64 { w }\n"),
+    # `Rect`, not `App`: the namespace is expanded into its contents, so the
+    # class is the definition and the namespace is not one.
+    ".cs": ("Rect", "namespace App {\n    public class Rect {}\n}\n"),
+    ".c": ("add", "int add(int a, int b) { return a + b; }\n"),
+    ".cpp": ("Widget", "class Widget {\npublic:\n    void draw();\n};\n"),
+    ".rb": ("Widget", "class Widget\n  def area; 2; end\nend\n"),
+    ".php": ("helper", "<?php\nfunction helper(int $x): int { return $x; }\n"),
+    ".sh": ("greet", "#!/usr/bin/env bash\ngreet() { echo hi; }\n"),
+    # Newlines inside the class body are load-bearing for Kotlin: the grammar
+    # separates declarations on them, so `class W { fun d() {} }` on one line
+    # parses to an ERROR node while the same code across three lines does not.
+    # A one-line sample here would look like a broken grammar rather than a
+    # badly-written fixture.
+    ".kt": ("Widget", "class Widget {\n    fun draw() {}\n}\n"),
+    ".swift": ("Point", "struct Point {\n    var x: Int\n}\n"),
+}
+
+
+def test_each_added_language_chunks_semantically() -> None:
+    """Every grammar added in LANG-3 yields a *named* chunk.
+
+    The name is the assertion that matters. A wrong node type in
+    ``_DEFINITION_TYPES`` does not raise: the node simply never matches, the
+    file falls through to the module path, and the only symptom is a chunk that
+    is anonymous. That is precisely the silent failure the named-chunk fraction
+    exists to expose, so it is pinned here per language rather than trusted.
+    """
+    for extension, (expected_name, source) in _LANGUAGE_SAMPLES.items():
+        chunks = chunk_source(f"app/sample{extension}", source)
+        names = {c.name for c in chunks if c.name}
+
+        assert chunks, extension
+        assert expected_name in names, (extension, sorted(names))
+
+
+def test_c_and_cpp_names_come_from_the_declarator_chain() -> None:
+    """`function_definition` carries no `name` field in the C family.
+
+    The identifier sits under `declarator`, one level down for a plain function
+    and two for a pointer return, so a fixed-depth lookup would name one and
+    not the other.
+    """
+    plain = chunk_source("app/a.c", "int add(int a) { return a; }\n")
+    pointer = chunk_source("app/b.c", "char *dup(char *s) { return s; }\n")
+
+    assert [c.name for c in plain] == ["add"]
+    assert [c.name for c in pointer] == ["dup"]
+
+
+def test_bash_indexes_functions_but_not_commands() -> None:
+    """`command` also has a `name` field, so including it would name everything.
+
+    A script of bare invocations must produce no named chunks at all; without
+    this distinction the named fraction reads near 100% on files defining
+    nothing.
+    """
+    functions = chunk_source("app/f.sh", "greet() { echo hi; }\n")
+    commands = chunk_source("app/c.sh", "set -euo pipefail\necho hello\nls -la\n")
+
+    assert [c.name for c in functions] == ["greet"]
+    assert all(c.name is None for c in commands)
+
+
+def test_cpp_out_of_line_member_definitions_are_named() -> None:
+    """`identifier` alone terminates the chain for free functions only.
+
+    Out-of-line member definitions are the bulk of a real translation unit and
+    end at `qualified_identifier`; destructors and operator overloads have types
+    of their own again. Stopping short returns no name, so the definition
+    indexes anonymously and nothing anywhere reports it — the silent failure the
+    named-chunk fraction exists to catch, reintroduced one node type at a time.
+    """
+    cases = {
+        "int add(int a) { return a; }": "add",
+        "void Widget::draw() {}": "Widget::draw",
+        "Widget::~Widget() {}": "Widget::~Widget",
+        "bool Widget::operator==(const Widget& o) const { return true; }": "Widget::operator==",
+        "char *Widget::dup(char *s) { return s; }": "Widget::dup",
+    }
+    for source, expected in cases.items():
+        assert [c.name for c in chunk_source("a.cpp", source)] == [expected], source
+
+
+def test_namespace_body_is_expanded_into_its_definitions() -> None:
+    """A namespace is a container, not a definition.
+
+    Emitting it whole makes a conventionally-formatted C# or C++ file a single
+    chunk that is then sliced at the character budget, which is fixed windowing
+    with a name attached for precisely the languages where namespaces are
+    universal.
+    """
+    source = (
+        "namespace App {\n"
+        "    public class A { public void M() {} }\n"
+        "    public class B { public void N() {} }\n"
+        "}\n"
+    )
+    named = {c.name: c for c in chunk_source("a.cs", source) if c.name}
+
+    assert sorted(named) == ["A", "B"]
+    assert named["A"].kind == "class"
+    assert "namespace" not in named
+
+
+def test_header_only_namespaces_are_left_alone() -> None:
+    """`namespace App;` has no body and its types are already siblings.
+
+    Expanding on the presence of a `body` field rather than on the node type
+    keeps this case working: there is nothing to descend into, and the types
+    must not be lost.
+    """
+    named = {c.name for c in chunk_source("a.cs", "namespace App;\nclass A {}\nclass B {}\n") if c.name}
+
+    assert {"A", "B"} <= named
+
+
+def test_top_level_property_is_not_a_definition() -> None:
+    """A top-level `val` is a constant, and constants join the module text.
+
+    The same rule TypeScript already applies to `export const EDGE = {a: 1}`.
+    Registering `property_declaration` also indexed badly in Kotlin, where the
+    identifier sits under a nested `variable_declaration` rather than on a
+    `name` field, so the chunk came out anonymous *and* kinded `function`.
+    """
+    for path, source in [("a.kt", "val x = 1\n"), ("a.swift", "var x: Int = 1\n")]:
+        chunks = chunk_source(path, source)
+        assert [c.kind for c in chunks] == ["module"], path
+        assert all(c.name is None for c in chunks), path

@@ -55,6 +55,9 @@ redesign-supporiting-md
 #journal (local only, not for git)
 journal/
 
+#paper (local only, not for git)
+paper/
+
 # Source video for the hero animation. The stills it was cut into are
 # tracked in assets/; the 5 MB original is not worth carrying in history
 # when nothing builds from it.

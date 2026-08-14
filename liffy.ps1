@@ -1,4 +1,4 @@
-# ─────────────────────────────────────────────
+﻿# ─────────────────────────────────────────────
 #  Liffy — one-command launcher (Windows)
 #
 #  .\liffy.ps1          start everything (docker services + frontend)
@@ -17,6 +17,14 @@
 #  Written against Windows PowerShell 5.1 — the one that ships with Windows 10
 #  and 11 — so that nothing here needs PowerShell 7 installed first. That rules
 #  out `??`, ternaries, and `Test-Json`.
+#
+#  KEEP THIS FILE SAVED AS UTF-8 *WITH* BOM. 5.1 decodes a BOM-less .ps1 as
+#  ANSI/cp1252, and the em dashes and box-drawing characters below both contain
+#  byte 0x94 — which cp1252 reads as a right double quotation mark. PowerShell
+#  honours smart quotes as string delimiters, so without the BOM the file picks
+#  up ~200 stray quote characters and dies with a dozen "Missing closing '}'"
+#  parse errors that point at perfectly balanced braces. PowerShell 7 defaults
+#  to UTF-8 and so never shows this, which is what makes it easy to reintroduce.
 # ─────────────────────────────────────────────
 
 param(

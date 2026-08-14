@@ -248,21 +248,27 @@ version pinning:
 
 **Windows:**
 ```cmd
-liffy               :: start everything
-liffy down          :: stop everything
-liffy logs          :: tail the service logs
-liffy check         :: confirm repo/PR data survived the last build
+:: start everything
+liffy
+:: stop everything
+liffy down
+:: tail the service logs
+liffy logs
+:: confirm repo/PR data survived the last build
+liffy check
 ```
 
 `liffy.bat` is a shim around `liffy.ps1`, which is the real launcher and the
 port of `liffy.sh` — same subcommands, same compose files, same environment
-variables. Use the shim rather than calling the `.ps1` directly: PowerShell's
-default execution policy blocks unsigned scripts, so `.\liffy.ps1` on a fresh
-machine fails with *"running scripts is disabled on this system"* before it does
-anything. The shim passes `-ExecutionPolicy Bypass` for that one process, which
-changes nothing about the machine's policy. If you would rather run the script
-directly, `powershell -ExecutionPolicy Bypass -File .\liffy.ps1` is the same
-thing typed out.
+variables. Use the shim rather than calling the `.ps1` directly: on a machine
+left at the `Restricted` default, `.\liffy.ps1` fails with *"running scripts is
+disabled on this system"* before it does anything. (If yours has been set to
+`RemoteSigned` — check with `Get-ExecutionPolicy -List` — a cloned `.ps1` runs
+either way, but the shim costs nothing and works on both.) The shim passes
+`-ExecutionPolicy Bypass` for that one process, which changes nothing about the
+machine's policy. If you would rather run the script directly,
+`powershell -ExecutionPolicy Bypass -File .\liffy.ps1` is the same thing typed
+out.
 
 ### What this needs on Windows
 
@@ -568,6 +574,14 @@ The default execution policy blocks unsigned scripts. Run `liffy` (the `.bat`
 shim) instead of `.\liffy.ps1` — it bypasses the policy for that one process
 without changing anything on the machine. The long form is
 `powershell -ExecutionPolicy Bypass -File .\liffy.ps1`.
+
+**`liffy.ps1` fails with a dozen `Missing closing '}'` parse errors (Windows)**
+The braces are fine — the file lost its UTF-8 byte-order mark. Windows
+PowerShell 5.1 reads a BOM-less `.ps1` as ANSI, which turns the em dashes and
+box-drawing characters into stray smart quotes, and PowerShell treats those as
+string delimiters. Re-save `liffy.ps1` as **UTF-8 with BOM**. PowerShell 7
+defaults to UTF-8 and never shows this, so an editor that "helpfully" strips the
+BOM breaks only the version that ships with Windows.
 
 **`bad interpreter: /bin/bash^M` running liffy.sh under WSL or Git Bash**
 Your clone converted the script to CRLF endings. `.gitattributes` prevents this

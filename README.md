@@ -81,7 +81,8 @@ with a generated JWT secret on first run.
 ./liffy.sh          # macOS / Linux
 ```
 ```cmd
-liffy               :: Windows
+:: Windows
+liffy
 ```
 
 Both take the same subcommands: `down` to stop, `logs` to tail, `check` to

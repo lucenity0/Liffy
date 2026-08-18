@@ -412,7 +412,8 @@ function Stop-Frontend {
     if (Test-Path $FrontendPidFile) {
         $recorded = (Get-Content $FrontendPidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
         if ($recorded -match '^\d+$') {
-            Stop-Process -Id ([int]$recorded) -Force -ErrorAction SilentlyContinue
+            $proc = Get-Process -Id ([int]$recorded) -ErrorAction SilentlyContinue
+            if ($proc -and $proc.ProcessName -eq 'node') { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
         }
         Remove-Item $FrontendPidFile -Force -ErrorAction SilentlyContinue
         Write-Success "Frontend stopped"

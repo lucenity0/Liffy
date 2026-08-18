@@ -67,6 +67,19 @@ services:
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
+      # The embedding model is ~65 MB and fastembed caches it under
+      # /tmp/fastembed_cache, which is the container's writable layer: every
+      # rebuild threw it away and re-downloaded. Pointed at a named volume so
+      # it is fetched once and survives `up --build`.
+      FASTEMBED_CACHE_PATH: /models
+      # Hugging Face's Xet CAS backend returned a 500 mid-download on that
+      # model, and because the fetch happens inside the task, indexing and
+      # every queued review failed with an opaque "File reconstruction error"
+      # rather than anything naming the model. This falls back to the classic
+      # download path, which is slower and does not go through that CDN.
+      HF_HUB_DISABLE_XET: "1"
+    volumes:
+      - modelcache:/models
     ports:
       - "8000:8000"
     # command comes from the backend Dockerfile CMD (uvicorn)
@@ -95,6 +108,19 @@ services:
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chromadb
       CHROMA_PORT: "8000"
+      # The embedding model is ~65 MB and fastembed caches it under
+      # /tmp/fastembed_cache, which is the container's writable layer: every
+      # rebuild threw it away and re-downloaded. Pointed at a named volume so
+      # it is fetched once and survives `up --build`.
+      FASTEMBED_CACHE_PATH: /models
+      # Hugging Face's Xet CAS backend returned a 500 mid-download on that
+      # model, and because the fetch happens inside the task, indexing and
+      # every queued review failed with an opaque "File reconstruction error"
+      # rather than anything naming the model. This falls back to the classic
+      # download path, which is slower and does not go through that CDN.
+      HF_HUB_DISABLE_XET: "1"
+    volumes:
+      - modelcache:/models
     # POST_REVIEWS_TO_GITHUB and GITHUB_REVIEW_EVENT_MODE are not restated here
     # for the same reason as everything else above: both are declared with the
     # same default in app/config.py (False / "comment_only") and shipped in
@@ -143,4 +169,7 @@ services:
 
 volumes:
   pgdata:
+  # Shared by backend and worker: both construct an embedder, and there is no
+  # reason for them to hold separate copies of the same 65 MB of weights.
+  modelcache:
   chromadata:

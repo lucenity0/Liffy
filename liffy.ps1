@@ -289,7 +289,7 @@ function Initialize-EnvFile {
         Write-Err ".env.example not found. Are you in the Liffy root directory?"
     }
 
-    $lines = Get-Content $examplePath
+    $lines = Get-Content $examplePath -Encoding UTF8
     $lines = $lines -replace '^JWT_SECRET_KEY=.*', ("JWT_SECRET_KEY=" + (New-JwtSecret))
 
     # Written through .NET rather than Set-Content for two properties Compose

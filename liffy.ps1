@@ -62,7 +62,7 @@ $FrontendPort     = 5173
 # Forward slashes rather than the native `C:\Users\...`, because the value is
 # about to be concatenated with `/.codex` inside a YAML volume spec; `C:/Users/x`
 # is the form Docker Desktop parses without ambiguity.
-if (-not $env:HOME) {
+if (-not $env:HOME -or -not (Test-Path $env:HOME)) {
     $env:HOME = $env:USERPROFILE
 }
 $env:HOME = ($env:HOME -replace '\\', '/')

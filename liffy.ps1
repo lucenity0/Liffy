@@ -145,11 +145,11 @@ function Get-EnvSetting {
 function Get-DbSetting {
     param([string]$Key)
 
-    $status = & docker compose ps postgres 2>$null
+    $status = Invoke-Compose ps postgres 2>$null
     if ($LASTEXITCODE -ne 0) { return '' }
     if (-not ($status -match 'Up|running')) { return '' }
 
-    $result = & docker compose exec -T postgres psql -U liffy -d liffy -tAc "select value from settings where key='$Key';" 2>$null
+    $result = Invoke-Compose exec -T postgres psql -U liffy -d liffy -tAc "select value from settings where key='$Key';" 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $result) { return '' }
 
     return (@($result)[0] -replace '[\s\r]', '')

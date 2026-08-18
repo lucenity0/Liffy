@@ -82,7 +82,7 @@ with a generated JWT secret on first run.
 ```
 ```cmd
 :: Windows
-liffy
+liffy #use ./liffy if it fails.
 ```
 
 Both take the same subcommands: `down` to stop, `logs` to tail, `check` to

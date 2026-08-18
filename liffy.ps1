@@ -473,6 +473,10 @@ function Invoke-Down {
     Stop-Frontend
     Select-ComposeFiles *> $null
     Invoke-Compose stop @AllServices *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "docker compose stop failed — is Docker Desktop running?"
+        return
+    }
     Write-Success "All services stopped (data volumes kept — nothing was deleted)"
 }
 

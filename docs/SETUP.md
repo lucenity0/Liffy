@@ -34,6 +34,12 @@ nvm use 22.12
 
 ### Windows
 
+> Everything in this section is for running Liffy's services directly on
+> Windows. If you would rather not install Postgres, Redis, and Python at all,
+> [Running with Docker](#running-with-docker-the-one-command-path) needs only
+> Docker Desktop and Node, and is one command — it is the shorter route on
+> Windows.
+
 **PostgreSQL:**
 Download and install from https://www.postgresql.org/download/windows/
 - During setup, set a password for the `postgres` user — write it down
@@ -226,6 +232,87 @@ Frontend runs at: `http://localhost:5173`
 
 ---
 
+## Running with Docker (the one-command path)
+
+Everything above installs Postgres, Redis, and Python on your machine directly.
+The alternative is to let Docker carry all of it, which is one command and no
+version pinning:
+
+**macOS / Linux:**
+```bash
+./liffy.sh          # start everything
+./liffy.sh down     # stop everything
+./liffy.sh logs     # tail the service logs
+./liffy.sh check    # confirm repo/PR data survived the last build
+```
+
+**Windows:**
+```cmd
+:: start everything
+liffy
+:: stop everything
+liffy down
+:: tail the service logs
+liffy logs
+:: confirm repo/PR data survived the last build
+liffy check
+```
+
+`liffy.bat` is a shim around `liffy.ps1`, which is the real launcher and the
+port of `liffy.sh` — same subcommands, same compose files, same environment
+variables. Use the shim rather than calling the `.ps1` directly: on a machine
+left at the `Restricted` default, `.\liffy.ps1` fails with *"running scripts is
+disabled on this system"* before it does anything. (If yours has been set to
+`RemoteSigned` — check with `Get-ExecutionPolicy -List` — a cloned `.ps1` runs
+either way, but the shim costs nothing and works on both.) The shim passes
+`-ExecutionPolicy Bypass` for that one process, which changes nothing about the
+machine's policy. If you would rather run the script directly,
+`powershell -ExecutionPolicy Bypass -File .\liffy.ps1` is the same thing typed
+out.
+
+### What this needs on Windows
+
+| | Why | Get it |
+|---|---|---|
+| **Docker Desktop** (WSL2 backend) | Runs Postgres, Redis, Chroma, the API, the worker, and the scheduler | `winget install -e --id Docker.DockerDesktop` |
+| **WSL2** | Docker Desktop's backend. Needs Windows 10 2004+ or Windows 11, and virtualisation enabled in the BIOS | `wsl --install` |
+| **Node.js 22** | The frontend is the one piece the launcher runs on the host, not in a container | `winget install -e --id OpenJS.NodeJS.LTS` |
+| **Windows PowerShell 5.1** | Already on every Windows 10/11 install — `liffy.ps1` is written against it so nothing needs PowerShell 7 | — |
+
+Nothing else. No Python, no Postgres, no Redis on the host — that is the point
+of this path, and it is why it is the shorter route on Windows than the native
+setup above. Open a **new** terminal after installing Node so the launcher can
+see it on `PATH`.
+
+Start Docker Desktop and wait for the whale icon to stop animating before the
+first run; the launcher checks for this and says so, but the first `up` also
+builds images and takes a few minutes regardless.
+
+### Windows notes
+
+- **Where the frontend log goes.** `.liffy-frontend.log` in the repo root, same
+  as on macOS. The dev server runs in a hidden window, so that file is the only
+  place its output appears.
+- **`liffy down` stops the frontend by port.** It kills whatever holds 5173,
+  which is the `node` process rather than the shell that launched it. If you
+  started Vite yourself in another window, `down` will stop that too.
+- **Line endings.** `.gitattributes` pins `*.sh` to LF and `*.bat`/`*.ps1` to
+  CRLF. Without that, a clone with `core.autocrlf=true` — the default Git for
+  Windows recommends — rewrites `liffy.sh` and bash then reports
+  `bad interpreter: /bin/bash^M`, naming a file that plainly exists.
+- **The environment-variable options** are set differently than in a shell:
+
+  ```powershell
+  $env:LIFFY_SLIM_WORKER = '1'      # build the worker without the CLIs
+  $env:LIFFY_NO_CODEX_MOUNT = '1'   # decline the ~/.codex mount
+  .\liffy.bat
+  Remove-Item Env:\LIFFY_SLIM_WORKER
+  ```
+
+  Both are explained under [In Docker](#in-docker) below.
+
+---
+
 ## Verify everything is working
 
 Once all three terminals are running:
@@ -320,8 +407,8 @@ machine** — the CLI reads its own credentials from your home directory.
 
 ### In Docker
 
-`./liffy.sh` runs the worker in a container, which has no home directory holding
-those credentials. Two things change.
+`./liffy.sh` — `liffy` on Windows — runs the worker in a container, which has no
+home directory holding those credentials. Two things change.
 
 **1. The worker image that has the CLIs installed.** `./liffy.sh` uses it always,
 not only when a subscription provider is selected, so that switching provider in
@@ -335,7 +422,8 @@ docker compose -f docker-compose.yml -f docker-compose.subscription.yml up --bui
 
 The CLIs cost roughly 1.6GB of Node on top of the plain worker. If you know you
 will only ever use an API-key provider, `LIFFY_SLIM_WORKER=1 ./liffy.sh` builds
-without them — at the price of a rebuild the day you change your mind.
+without them — at the price of a rebuild the day you change your mind. On
+Windows that is `$env:LIFFY_SLIM_WORKER = '1'` on the line before `.\liffy.bat`.
 
 **2. Credentials the container can reach**, and this differs per provider.
 
@@ -371,14 +459,26 @@ docker compose -f docker-compose.yml \
   -f docker-compose.codex.yml up --build
 ```
 
+> ⚠️ **On Windows, set `HOME` first if you invoke Compose by hand.** That overlay
+> mounts `${HOME}/.codex`, and `HOME` is a Unix convention Windows does not set —
+> it has `USERPROFILE`. Left alone, Compose interpolates the empty string, asks
+> to mount `/.codex`, and *creates* that empty directory rather than failing. The
+> mount then succeeds and Codex silently has no credentials, which reads as an
+> auth bug in the CLI. `liffy.ps1` sets it for you; by hand it is
+> `$env:HOME = $env:USERPROFILE -replace '\\','/'` before the `docker compose`
+> line. The forward slashes matter — the value is concatenated with `/.codex`
+> inside a YAML volume spec, and `C:/Users/you` is the form Docker Desktop parses
+> without ambiguity.
+
 That mount lets anything in the worker container read your ChatGPT access,
 refresh, and ID tokens — including on runs that never invoke Codex, since the
 overlay is applied on the directory existing rather than on the provider being
 selected. `:ro` means the CLI cannot refresh them in place either, so when the
 token expires you re-run `codex login` on the host. If that trade is not one you
-want, `LIFFY_NO_CODEX_MOUNT=1 ./liffy.sh` declines it and you restart when you
-switch to Codex; `claude_code` reaches the same place with a revocable token, and
-running the worker on the host needs none of it.
+want, `LIFFY_NO_CODEX_MOUNT=1 ./liffy.sh` — `$env:LIFFY_NO_CODEX_MOUNT = '1'` on
+Windows — declines it and you restart when you switch to Codex; `claude_code`
+reaches the same place with a revocable token, and running the worker on the host
+needs none of it.
 
 Miss any of this and the worker **refuses to start**, with a message naming the
 fix. That is deliberate: the previous behaviour was a setting that looked
@@ -468,5 +568,40 @@ Make sure you're running uvicorn from inside the `backend/` directory with the v
 
 **Frontend `npm run dev` fails with Node version error**
 You need Node 22.12+. Run `nvm use 22.12` before starting the frontend.
+
+**`liffy.ps1 cannot be loaded because running scripts is disabled` (Windows)**
+The default execution policy blocks unsigned scripts. Run `liffy` (the `.bat`
+shim) instead of `.\liffy.ps1` — it bypasses the policy for that one process
+without changing anything on the machine. The long form is
+`powershell -ExecutionPolicy Bypass -File .\liffy.ps1`.
+
+**`liffy.ps1` fails with a dozen `Missing closing '}'` parse errors (Windows)**
+The braces are fine — the file lost its UTF-8 byte-order mark. Windows
+PowerShell 5.1 reads a BOM-less `.ps1` as ANSI, which turns the em dashes and
+box-drawing characters into stray smart quotes, and PowerShell treats those as
+string delimiters. Re-save `liffy.ps1` as **UTF-8 with BOM**. PowerShell 7
+defaults to UTF-8 and never shows this, so an editor that "helpfully" strips the
+BOM breaks only the version that ships with Windows.
+
+**`bad interpreter: /bin/bash^M` running liffy.sh under WSL or Git Bash**
+Your clone converted the script to CRLF endings. `.gitattributes` prevents this
+on new clones; to fix an existing one, `git rm --cached -r . && git reset --hard`
+re-checks-out every file with the pinned endings.
+
+**`npm not found` from the Windows launcher**
+The frontend runs on the host even on the Docker path. Install Node
+(`winget install -e --id OpenJS.NodeJS.LTS`) and then open a **new** terminal —
+`PATH` changes do not reach a shell that was already open.
+
+**Windows launcher reports the frontend never bound port 5173**
+Docker is fine; Vite is not. Read `.liffy-frontend.log` in the repo root — the
+dev server runs in a hidden window, so that file holds the only copy of its
+output.
+
+**Codex reviews fail to authenticate on Windows despite `codex login`**
+If you invoked Compose by hand rather than through the launcher, `HOME` was
+almost certainly unset — see the warning in
+[In Docker](#in-docker). Check with
+`docker compose exec worker ls /codex-auth`; an empty directory is the symptom.
 
 ---

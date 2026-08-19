@@ -824,6 +824,9 @@ def test_failure_fields_are_null_on_a_successful_review(seeded) -> None:
 
 # ── The commit picker endpoints ───────────────────────────────────────────────
 
+SHA_A = "aaaaaaa1111111111111111111111111111111a1"
+SHA_B = "bbbbbbb2222222222222222222222222222222b2"
+
 
 class _CommitsGitHub:
     """Just enough GitHubClient for the picker endpoints."""
@@ -921,13 +924,13 @@ def test_review_commits_queues_with_the_selection(
 
     response = client.post(
         f"/prs/{seeded['pr']}/review-commits",
-        json={"shas": ["c1", "c2"]},
+        json={"shas": [SHA_A, SHA_B]},
         headers=seeded["headers"],
     )
 
     assert response.status_code == 202
     assert response.json()["commits"] == 2
-    assert captured["shas"] == ["c1", "c2"]
+    assert captured["shas"] == [SHA_A, SHA_B]
     assert captured["pr"] == 7
     # No `received_at`: this is a person asking, not a webhook delivery, which
     # is also what stops the automatic incremental rule from re-narrowing it.
@@ -947,7 +950,7 @@ def test_review_commits_rejects_an_empty_selection(seeded) -> None:
 def test_review_commits_cannot_target_another_users_pull_request(seeded) -> None:
     response = client.post(
         f"/prs/{seeded['their_pr']}/review-commits",
-        json={"shas": ["c1"]},
+        json={"shas": [SHA_A]},
         headers=seeded["headers"],
     )
     assert response.status_code == 404
@@ -956,7 +959,7 @@ def test_review_commits_cannot_target_another_users_pull_request(seeded) -> None
 def test_picker_endpoints_require_authentication(seeded) -> None:
     assert client.get(f"/prs/{seeded['pr']}/commits").status_code == 401
     assert client.post(
-        f"/prs/{seeded['pr']}/review-commits", json={"shas": ["c1"]}
+        f"/prs/{seeded['pr']}/review-commits", json={"shas": [SHA_A]}
     ).status_code == 401
 
 # ── PATCH /prs/{pr_id}/auto-review ────────────────────────────────────────────
@@ -996,3 +999,91 @@ def test_auto_review_requires_authentication(seeded) -> None:
     assert client.patch(
         f"/prs/{seeded['pr']}/auto-review", json={"enabled": True}
     ).status_code == 401
+
+
+def test_a_sha_that_could_reshape_the_request_url_is_refused(seeded) -> None:
+    """Each element is interpolated into `/repos/{owner}/{repo}/commits/{sha}`.
+
+    A value containing `/`, `..`, `?` or `#` addresses a different GitHub
+    endpoint, or appends query parameters, under the caller's own token.
+    """
+    for hostile in (
+        "../../../users/octocat/repos",
+        "abc1234?per_page=100",
+        "abc1234#fragment",
+        "a/b",
+        "zzzzzzz",  # not hex
+        "abc",  # too short to be unambiguous
+    ):
+        response = client.post(
+            f"/prs/{seeded['pr']}/review-commits",
+            json={"shas": [hostile]},
+            headers=seeded["headers"],
+        )
+        assert response.status_code == 422, hostile
+
+
+def test_repeated_shas_are_collapsed(seeded, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One GitHub call is made per element, so repeats are repeated round trips."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        reviews_api.review_worker,
+        "enqueue_review",
+        lambda owner, repo, pr, received_at=None, commit_shas=None: captured.update(
+            shas=commit_shas
+        ),
+    )
+
+    client.post(
+        f"/prs/{seeded['pr']}/review-commits",
+        json={"shas": [SHA_A, SHA_A, SHA_B, SHA_A]},
+        headers=seeded["headers"],
+    )
+
+    assert captured["shas"] == [SHA_A, SHA_B]
+
+
+def test_a_narrowed_review_does_not_mark_skipped_commits_as_reviewed(
+    seeded, monkeypatch
+) -> None:
+    """The bug this pair of fixes exists for.
+
+    A narrowed review completes with the pull request's head SHA — it read the
+    head, just not all of it. Taking the boundary from `head_sha` alone would
+    mark every earlier commit reviewed, including the ones deliberately
+    skipped, with no way to tell them apart.
+    """
+    with seeded["factory"]() as db:
+        # The only completed review picked C, and it is narrowed.
+        review = db.get(Review, seeded["new"])
+        review.head_sha = "d"
+        review.summary_detail = {
+            "scope": {"files_reviewed": 1, "files_in_diff": 9, "commits": ["c"]}
+        }
+        db.get(Review, seeded["old"]).status = "failed"
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c"), _commit("d")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+
+    # a, b and d were never looked at; c was.
+    assert [(c["sha"], c["is_new"]) for c in body] == [
+        ("a", True), ("b", True), ("c", False), ("d", True),
+    ]
+
+
+def test_a_full_review_still_sets_the_boundary(seeded, monkeypatch) -> None:
+    """The narrowed-review exclusion must not break the ordinary case."""
+    with seeded["factory"]() as db:
+        review = db.get(Review, seeded["new"])
+        review.head_sha = "b"
+        review.summary_detail = {"changes": ["did a thing"]}  # no scope
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert [(c["sha"], c["is_new"]) for c in body] == [
+        ("a", False), ("b", False), ("c", True),
+    ]

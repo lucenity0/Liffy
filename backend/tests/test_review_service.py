@@ -1043,6 +1043,9 @@ def test_a_push_still_gets_the_cheap_check(db: Session) -> None:
 
 
 # ── The commit picker ─────────────────────────────────────────────────────────
+
+SHA_ONE = "aaaaaaa1111111111111111111111111111111a1"
+SHA_GONE = "ffffffff9999999999999999999999999999999f"
 #
 # Selecting commits picks *files*, and those files are reviewed as they stand
 # at the pull request's head — not as the selected commits left them. That is
@@ -1059,17 +1062,17 @@ def _picker_gh(commit_files: dict) -> FakeGitHub:
 def test_selected_commits_narrow_the_review_to_the_files_they_touched(
     db: Session,
 ) -> None:
-    gh = _picker_gh({"c1": ["app/util.py"]})
+    gh = _picker_gh({SHA_ONE: ["app/util.py"]})
 
     run_review(
         db, "octo", "demo", 7, gh=gh,
         chroma_client=shared_chroma_client(),
         embedder=DeterministicEmbeddings(),
         llm=FakeLLM([_payload([])]),
-        commit_shas=["c1"],
+        commit_shas=[SHA_ONE],
     )
 
-    assert gh.files_in_commits_calls == [["c1"]]
+    assert gh.files_in_commits_calls == [[SHA_ONE]]
 
 
 def test_a_selection_touching_nothing_in_the_diff_reviews_everything(
@@ -1080,14 +1083,14 @@ def test_a_selection_touching_nothing_in_the_diff_reviews_everything(
     Reviewing everything is wrong here, but reviewing nothing is worse — a
     request to look at something answered with silence.
     """
-    gh = _picker_gh({"c1": ["docs/unrelated.md"]})
+    gh = _picker_gh({SHA_ONE: ["docs/unrelated.md"]})
 
     review = run_review(
         db, "octo", "demo", 7, gh=gh,
         chroma_client=shared_chroma_client(),
         embedder=DeterministicEmbeddings(),
         llm=FakeLLM([_payload([])]),
-        commit_shas=["c1"],
+        commit_shas=[SHA_ONE],
     )
 
     assert review.status == "completed"
@@ -1106,7 +1109,7 @@ def test_an_unresolvable_commit_falls_back_rather_than_failing(db: Session) -> N
         chroma_client=shared_chroma_client(),
         embedder=DeterministicEmbeddings(),
         llm=FakeLLM([_payload([])]),
-        commit_shas=["gone"],
+        commit_shas=[SHA_GONE],
     )
 
     assert review.status == "completed"
@@ -1121,7 +1124,7 @@ def test_the_picker_beats_incremental_scoping(db: Session) -> None:
     """
     _run(db, FakeLLM([_payload([])]))
 
-    gh = _picker_gh({"c1": ["app/util.py"]})
+    gh = _picker_gh({SHA_ONE: ["app/util.py"]})
     gh.pr_meta = _meta_at("def456")
     gh.compare_diff = SECOND_DIFF
 
@@ -1131,23 +1134,23 @@ def test_the_picker_beats_incremental_scoping(db: Session) -> None:
         embedder=DeterministicEmbeddings(),
         llm=FakeLLM([_payload([])]),
         received_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
-        commit_shas=["c1"],
+        commit_shas=[SHA_ONE],
     )
 
     assert gh.compare_calls == []
-    assert gh.files_in_commits_calls == [["c1"]]
+    assert gh.files_in_commits_calls == [[SHA_ONE]]
 
 
 def test_raw_diff_stays_whole_under_a_selection(db: Session) -> None:
     """Comments are still anchored and posted against the full pull request."""
-    gh = _picker_gh({"c1": ["app/util.py"]})
+    gh = _picker_gh({SHA_ONE: ["app/util.py"]})
 
     review = run_review(
         db, "octo", "demo", 7, gh=gh,
         chroma_client=shared_chroma_client(),
         embedder=DeterministicEmbeddings(),
         llm=FakeLLM([_payload([])]),
-        commit_shas=["c1"],
+        commit_shas=[SHA_ONE],
     )
 
     assert review.raw_diff == DIFF
@@ -1181,7 +1184,7 @@ def test_a_narrowed_review_records_what_it_actually_read(db: Session) -> None:
     conclude the picker had not worked. It had; the page was describing the
     wrong thing.
     """
-    gh = _picker_gh({"c1": ["app/util.py"]})
+    gh = _picker_gh({SHA_ONE: ["app/util.py"]})
     gh.pr_diff = TWO_FILE_DIFF  # the selection has something to exclude
 
     review = run_review(
@@ -1189,7 +1192,7 @@ def test_a_narrowed_review_records_what_it_actually_read(db: Session) -> None:
         chroma_client=shared_chroma_client(),
         embedder=DeterministicEmbeddings(),
         llm=FakeLLM([_payload([])]),
-        commit_shas=["c1"],
+        commit_shas=[SHA_ONE],
     )
 
     scope = (review.summary_detail or {}).get("scope")
@@ -1203,3 +1206,36 @@ def test_an_unnarrowed_review_records_no_scope(db: Session) -> None:
     review = _run(db, FakeLLM([_payload([])]))
 
     assert "scope" not in (review.summary_detail or {})
+
+
+def test_a_narrowed_review_records_which_commits_it_covered(db: Session) -> None:
+    """So the picker can tell a skipped commit from a reviewed one.
+
+    Without this the boundary is `head_sha`, which a narrowed review also
+    reaches — it read the head, just not all of it — and every commit before
+    it reads as reviewed.
+    """
+    gh = _picker_gh({SHA_ONE: ["app/util.py"]})
+    gh.pr_diff = TWO_FILE_DIFF
+
+    review = run_review(
+        db, "octo", "demo", 7, gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+        commit_shas=[SHA_ONE],
+    )
+
+    assert (review.summary_detail or {})["scope"]["commits"] == [SHA_ONE]
+
+
+def test_an_automatic_incremental_review_records_no_commit_list(db: Session) -> None:
+    """It narrowed by *range*, not by selection — every commit in that range
+    was read, so there is nothing to exclude from the boundary."""
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = FakeGitHub(pr_meta=_meta_at("def456"), pr_diff=DIFF)
+    gh.compare_diff = SECOND_DIFF
+    review = _run_gh(db, FakeLLM([_payload([])]), gh, automatic=True)
+
+    assert "commits" not in ((review.summary_detail or {}).get("scope") or {})

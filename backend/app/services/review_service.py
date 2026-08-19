@@ -303,6 +303,17 @@ def run_review(
             {
                 "files_reviewed": len(review_diffs),
                 "files_in_diff": len(file_diffs),
+                # Which commits this review actually covered, when it was
+                # narrowed by a selection.
+                #
+                # Without it the picker marks skipped commits as reviewed. A
+                # narrowed review still completes with the pull request's head
+                # SHA — it read the head, just not all of it — so a boundary
+                # taken from `head_sha` alone says "everything up to here has
+                # been looked at", which is exactly the claim a narrowed review
+                # cannot make. Pick C and D, skip A and B, and A and B come
+                # back marked reviewed with no way to tell.
+                **({"commits": list(commit_shas)} if commit_shas else {}),
             }
             if len(review_diffs) < len(file_diffs)
             else None

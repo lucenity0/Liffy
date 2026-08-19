@@ -1,8 +1,8 @@
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
@@ -222,8 +222,30 @@ class CommitOut(BaseModel):
 
 
 class ReviewCommitsRequest(BaseModel):
-    #: Full 40-character SHAs, as returned by the commits endpoint above.
-    shas: list[str] = Field(min_length=1, max_length=50)
+    """The commits to review, validated as commit SHAs and nothing else.
+
+    The pattern is load-bearing rather than tidiness. Each element is
+    interpolated into `/repos/{owner}/{repo}/commits/{sha}` by
+    `list_files_in_commits`, so a value containing `/`, `..`, `?` or `#`
+    reshapes that URL — addressing a different GitHub endpoint, or appending
+    query parameters, under the caller's own token. Hex only, and bounded.
+    """
+
+    shas: list[Annotated[str, Field(pattern=r"^[0-9a-fA-F]{7,40}$")]] = Field(
+        min_length=1, max_length=50
+    )
+
+    @field_validator("shas")
+    @classmethod
+    def _dedupe(cls, value: list[str]) -> list[str]:
+        """Collapse repeats, preserving order.
+
+        `list_files_in_commits` makes one GitHub call per element, so fifty
+        copies of one SHA is fifty sequential round trips inside the worker for
+        a single commit's file list.
+        """
+        seen: set[str] = set()
+        return [sha for sha in value if not (sha in seen or seen.add(sha))]
 
 
 def _owned_pr_or_404(
@@ -266,16 +288,42 @@ def list_pr_commits(
     """
     owner, repo_name, pr_number = _owned_pr_or_404(db, pr_id, user)
 
-    reviewed_sha = db.scalar(
-        select(Review.head_sha)
-        .where(
-            Review.pr_id == pr_id,
-            Review.status == "completed",
-            Review.head_sha.is_not(None),
+    # One pass over this pull request's completed reviews, newest first.
+    #
+    # Filtered in Python rather than SQL because "has a `scope` key" is a JSON
+    # containment test, and the portable spellings differ between SQLite and
+    # Postgres. A pull request has a handful of reviews; this is not the query
+    # to optimise.
+    rows = list(
+        db.execute(
+            select(Review.head_sha, Review.summary_detail)
+            .where(Review.pr_id == pr_id, Review.status == "completed")
+            .order_by(Review.created_at.desc())
         )
-        .order_by(Review.created_at.desc())
-        .limit(1)
     )
+
+    # The boundary comes from the last review that read the *whole* pull
+    # request. A narrowed review completes with the head SHA too — it read the
+    # head, just not all of it — so treating its `head_sha` as a boundary
+    # claims everything before it was looked at, which is the one thing a
+    # narrowed review cannot claim. Pick C and D, skip A and B, and A and B
+    # come back marked reviewed with no way to tell them apart.
+    reviewed_sha = next(
+        (
+            head_sha
+            for head_sha, detail in rows
+            if head_sha and not (detail or {}).get("scope")
+        ),
+        None,
+    )
+
+    # Commits a narrowed review did cover sit *after* that boundary, so they
+    # are collected separately and unioned in below.
+    covered: set[str] = {
+        sha
+        for _, detail in rows
+        for sha in ((detail or {}).get("scope") or {}).get("commits") or []
+    }
 
     gh = GitHubClient(token=user.github_access_token)
     commits = gh.list_pull_request_commits(owner, repo_name, pr_number)
@@ -293,7 +341,7 @@ def list_pr_commits(
                 message=commit.message,
                 author=commit.author,
                 committed_at=commit.committed_at,
-                is_new=seen_boundary,
+                is_new=seen_boundary and commit.sha not in covered,
             )
         )
         if commit.sha == reviewed_sha:

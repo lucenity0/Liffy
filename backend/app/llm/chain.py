@@ -1191,8 +1191,18 @@ def generate_review(
     context_chunks: list[RetrievedChunk],
     *,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    prior_findings: list[str] | None = None,
 ) -> ReviewResult:
-    user_prompt = build_review_prompt(pr_title, file_diffs, context_chunks)
+    """``prior_findings`` is set only on an incremental re-review.
+
+    When it is, ``file_diffs`` is *not* the whole pull request — it is what has
+    landed since the last completed review. The findings go into the prompt so
+    the model can report what is still outstanding, which it otherwise could
+    not know: the code an earlier finding was about is not in front of it.
+    """
+    user_prompt = build_review_prompt(
+        pr_title, file_diffs, context_chunks, prior_findings or []
+    )
     tokens: int | None = 0
     attempts = 0
     last_error: LLMOutputError | None = None
@@ -1206,7 +1216,9 @@ def generate_review(
             break
         except LLMOutputError as exc:
             last_error = exc
-            user_prompt = build_review_prompt(pr_title, file_diffs, context_chunks)
+            user_prompt = build_review_prompt(
+                pr_title, file_diffs, context_chunks, prior_findings or []
+            )
             user_prompt += _RETRY_SUFFIX.format(error=exc)
     else:
         assert last_error is not None

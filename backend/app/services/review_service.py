@@ -207,7 +207,16 @@ def run_review(
     # webhook asked for it, which is the case where queue wait is most worth
     # knowing. The rollback on the failure path rewinds to this commit, so the
     # failure path inherits it for free.
-    review = Review(pr_id=pr.id, status="processing", raw_diff=raw_diff, queued_at=received_at)
+    review = Review(
+        pr_id=pr.id,
+        status="processing",
+        raw_diff=raw_diff,
+        # Recorded before any model call, so a review that dies mid-pipeline
+        # still says what it was looking at — and so the *next* review of this
+        # pull request can pick up from here even if this one failed.
+        head_sha=meta.head_sha or None,
+        queued_at=received_at,
+    )
     db.add(review)
     db.commit()
 
@@ -225,9 +234,37 @@ def run_review(
         # Inside the try it lands on the failure path like everything else, and
         # the operator gets a failed review that names the cause.
         active_llm = llm() if callable(llm) else llm
+
+        # Two diffs, deliberately, and they are not interchangeable.
+        #
+        # `file_diffs` is the whole pull request, and it is what comments are
+        # anchored and posted against. GitHub only accepts an inline comment on
+        # a line that appears in the pull request's own diff, so validating
+        # against anything narrower risks a 422 that rejects the entire review
+        # — a line touched in one commit and reverted in the next is in the
+        # incremental diff and not in this one.
+        #
+        # `review_diffs` is what the model is shown. On a re-review that is
+        # only what has landed since the last one, which is the whole point:
+        # pushing a one-line fix to a large pull request used to cost the same
+        # as reviewing it from scratch.
         file_diffs = parse_diff(raw_diff)
-        context = _gather_context(chroma_client, repo.id, file_diffs, embedder)
-        result = generate_review(active_llm, meta.title, file_diffs, context)
+        review_diffs, since = _diffs_to_review(
+            gh, owner, repo_name, db, pr.id, review, meta, file_diffs,
+            automatic=received_at is not None,
+        )
+
+        # Retrieval follows what is being reviewed, not the whole pull request.
+        # Embedding twenty unchanged files to review one changed line is the
+        # same waste in a different currency.
+        context = _gather_context(chroma_client, repo.id, review_diffs, embedder)
+        result = generate_review(
+            active_llm,
+            meta.title,
+            review_diffs,
+            context,
+            prior_findings=_prior_findings(db, pr.id, review) if since else [],
+        )
 
         # Comments arrive already filtered and clamped to the diff by
         # `_anchor_comments` in the LLM chain, so no anchor check is repeated
@@ -356,6 +393,140 @@ def get_review_with_comments(
         .order_by(ReviewComment.file_path, ReviewComment.line_start)
     ).all()
     return review, list(comments)
+
+
+def _last_reviewed_sha(db: Session, pr_id: uuid.UUID, review: Review) -> str | None:
+    """The commit the previous *completed* review of this PR looked at.
+
+    Completed, not merely latest: a review that failed said nothing about the
+    code, so diffing from it would skip commits nobody has ever looked at.
+    That is the difference between a cheaper review and a review with a hole
+    in it.
+    """
+    return db.scalar(
+        select(Review.head_sha)
+        .where(
+            Review.pr_id == pr_id,
+            Review.id != review.id,
+            Review.status == "completed",
+            Review.head_sha.is_not(None),
+        )
+        .order_by(Review.created_at.desc())
+        .limit(1)
+    )
+
+
+def _diffs_to_review(
+    gh, owner: str, repo_name: str, db: Session, pr_id: uuid.UUID,
+    review: Review, meta, file_diffs, *, automatic: bool,
+):
+    """What to show the model, and whether it is an increment.
+
+    Returns ``(diffs, since_sha)``. ``since_sha`` is ``None`` when the whole
+    pull request is being reviewed, which is the first review, every review a
+    person asked for by hand, and every failure path below.
+
+    **Only automatic reviews are narrowed**, and that split is the answer to
+    what narrowing costs. Reviewing an increment means each hunk gets looked at
+    once, where before every pass re-read everything and a later pass could
+    catch what an earlier one missed. That redundancy was accidental, but it
+    was doing real work — on this repository's own #274, passes two and three
+    each found defects that had been present and unremarked during pass one.
+
+    So a push gets the cheap check, and a person clicking Re-review gets the
+    whole pull request. A miss is never permanent, and the escape hatch is the
+    button already labelled for it.
+
+    **Every failure here falls back to the full diff rather than raising.**
+    This is an optimisation; a pull request that cannot be compared — a
+    force-push that orphaned the old commit, a 404, an API blip — still
+    deserves a review, and getting an expensive one is a far better outcome
+    than getting none.
+    """
+    if not automatic:
+        # Asked for by a person: `received_at` is set only by the webhook, so
+        # its absence means the trigger endpoint or the Re-review button. Both
+        # mean "look at this properly", which an increment cannot answer.
+        return file_diffs, None
+
+    since = _last_reviewed_sha(db, pr_id, review)
+    head = meta.head_sha or ""
+
+    if not since or not head or since == head:
+        # No predecessor, or nothing new since it. A re-review at the same
+        # commit is a deliberate "look again", and narrowing it to an empty
+        # diff would answer a request to re-read with silence.
+        return file_diffs, None
+
+    try:
+        incremental = gh.get_comparison_diff(owner, repo_name, since, head)
+    except Exception as exc:  # noqa: BLE001 - never fail a review over this
+        logger.warning(
+            "compare %s...%s failed on %s/%s#%s, reviewing the whole diff: %s",
+            since[:8], head[:8], owner, repo_name, meta.number, exc,
+        )
+        return file_diffs, None
+
+    incremental_diffs = parse_diff(incremental)
+    if not incremental_diffs:
+        # A comparison that parses to nothing means the change was not in the
+        # code — a merge commit, a base-branch move. Reviewing the whole thing
+        # is wrong here too, but silence is worse, and this is rare enough to
+        # prefer the loud option.
+        logger.info(
+            "compare %s...%s on %s/%s#%s produced no file diffs, reviewing the whole diff",
+            since[:8], head[:8], owner, repo_name, meta.number,
+        )
+        return file_diffs, None
+
+    logger.info(
+        "reviewing %s/%s#%s incrementally: %d file(s) since %s, instead of %d",
+        owner, repo_name, meta.number, len(incremental_diffs), since[:8],
+        len(file_diffs),
+    )
+    return incremental_diffs, since
+
+
+def _prior_findings(db: Session, pr_id: uuid.UUID, review: Review) -> list[str]:
+    """What the last completed review said, as one line each.
+
+    An incremental review cannot see the code an earlier finding was about, so
+    without this it would silently drop every unfixed issue — the reader would
+    read "nothing to report" and believe the earlier findings had been
+    addressed. They are passed as context so the review can say what is still
+    outstanding in its summary.
+
+    Not as inline comments: those anchor to lines in the diff being reviewed,
+    and an earlier finding is by definition somewhere else.
+    """
+    previous = db.scalar(
+        select(Review.id)
+        .where(
+            Review.pr_id == pr_id,
+            Review.id != review.id,
+            Review.status == "completed",
+        )
+        .order_by(Review.created_at.desc())
+        .limit(1)
+    )
+    if previous is None:
+        return []
+
+    rows = db.execute(
+        select(
+            ReviewComment.file_path,
+            ReviewComment.line_start,
+            ReviewComment.severity,
+            ReviewComment.comment_text,
+        )
+        .where(ReviewComment.review_id == previous)
+        .order_by(ReviewComment.file_path, ReviewComment.line_start)
+    ).all()
+
+    return [
+        f"{path}:{line} [{severity}] {text}"
+        for path, line, severity, text in rows
+    ]
 
 
 def _previous_posted_review_url(db: Session, review: Review) -> str | None:

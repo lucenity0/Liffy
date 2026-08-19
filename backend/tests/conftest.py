@@ -74,6 +74,12 @@ class FakeGitHub:
         self.pr_diff = pr_diff
         self.repo_meta = repo_meta
         self.pulls = pulls or []
+        # Incremental re-review: the diff to answer `compare` with, and a
+        # record of what was asked for so a test can assert the *scoping*
+        # rather than only the result. `None` makes compare raise, which is
+        # the force-push / 404 case the caller has to survive.
+        self.compare_diff: str | None = None
+        self.compare_calls: list[tuple[str, str]] = []
         # What the last list_pull_requests call asked for, so a test can
         # assert the state filter reached GitHub rather than only that the
         # response looked right.
@@ -101,6 +107,12 @@ class FakeGitHub:
     def get_pull_request(self, owner: str, repo: str, number: int) -> PullRequestMeta:
         assert self.pr_meta is not None, "FakeGitHub built without pr_meta"
         return self.pr_meta
+
+    def get_comparison_diff(self, owner: str, repo: str, base: str, head: str) -> str:
+        self.compare_calls.append((base, head))
+        if self.compare_diff is None:
+            raise RuntimeError(f"no comparison for {base}...{head}")
+        return self.compare_diff
 
     def get_pull_request_diff(self, owner: str, repo: str, number: int) -> str:
         return self.pr_diff

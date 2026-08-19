@@ -56,6 +56,16 @@ class Review(Base):
     # bug report instead of advice, because nothing it could advise would help.
     failure_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
+    # The commit this review actually looked at.
+    #
+    # A later review of the same pull request diffs *from* here rather than
+    # from the base branch, so pushing one commit to a large PR costs one
+    # commit's worth of review instead of the whole thing again.
+    #
+    # Null means "no idea what this one saw" — true of every row written before
+    # this existed — which correctly falls back to reviewing the whole diff.
+    head_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
     verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)

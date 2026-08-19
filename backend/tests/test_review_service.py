@@ -803,3 +803,73 @@ def test_posting_does_not_extend_the_duration_clock(db: Session, posting_enabled
     review = _run_with(db, FakeLLM([_payload([VALID_COMMENT])]), gh)
 
     assert review.duration_ms < 150
+
+
+# ── The failure handler has to be total ───────────────────────────────────────
+
+
+class _Exploding:
+    """A provider whose `complete` raises whatever it was handed."""
+
+    model_name = "boom"
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def complete(self, system: str, user: str):
+        raise self._exc
+
+
+def test_a_non_string_detail_does_not_take_the_record_down_with_it(
+    db: Session,
+) -> None:
+    """`getattr(exc, "detail", ...)` duck-typed on a very common attribute name.
+
+    `fastapi.HTTPException.detail` carries one that can be a dict or a list,
+    and assigning that to a Text column raises a *second* exception inside the
+    failure handler — losing the record of the first. Whatever went wrong, a
+    row describing it has to survive.
+    """
+
+    class Impostor(RuntimeError):
+        detail = {"not": "a string"}
+        kind = ["not", "a", "string"]
+
+    with pytest.raises(Impostor):
+        _run(db, _Exploding(Impostor("something else entirely")))
+
+    review = db.scalars(select(Review)).one()
+    assert review.status == "failed"
+    # Neither impostor attribute reached the columns.
+    assert review.failure_detail is None
+    assert review.failure_kind == "unknown"
+
+
+def test_a_subscription_error_records_its_detail_and_kind(db: Session) -> None:
+    from app.llm.chain import SubscriptionLimitError
+
+    exc = SubscriptionLimitError(
+        "out of allowance", detail='{"is_error": true}', kind="limit"
+    )
+    with pytest.raises(SubscriptionLimitError):
+        _run(db, _Exploding(exc))
+
+    review = db.scalars(select(Review)).one()
+    assert review.failure_kind == "limit"
+    assert review.failure_detail == '{"is_error": true}'
+    # The sentence stays a sentence.
+    assert "{" not in review.summary
+
+
+def test_a_connection_error_is_recorded_as_infrastructure(db: Session) -> None:
+    """`infra` was documented in three places and produced by none.
+
+    The recorded `[Errno 111] Connection refused` is an OSError, so without a
+    branch for it `FIXES.infra` in the UI was unreachable code.
+    """
+    with pytest.raises(OSError):
+        _run(db, _Exploding(ConnectionRefusedError(111, "Connection refused")))
+
+    review = db.scalars(select(Review)).one()
+    assert review.failure_kind == "infra"
+    assert review.failure_detail is None

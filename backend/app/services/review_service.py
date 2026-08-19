@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.llm.chain import ReviewLLM, generate_review
+from app.llm.chain import ReviewLLM, SubscriptionCLIError, generate_review
 from app.llm.embeddings import EmbeddingProvider
 from app.models.pull_request import PullRequest
 from app.models.repository import Repository
@@ -294,13 +294,30 @@ def run_review(
         exc = sys.exc_info()[1]
         review.summary = f"Review failed: {str(exc)[:400]}"
 
-        # The raw provider output and whether the reader can act on it, when
-        # the provider bothered to say. Anything that is not a
-        # `SubscriptionCLIError` — an OSError, a bug in our own code — has
-        # neither, and lands as `unknown`, which is the honest answer: we
-        # cannot tell them how to fix it, so the UI offers a report instead.
-        review.failure_detail = getattr(exc, "detail", None)
-        review.failure_kind = getattr(exc, "kind", None) or "unknown"
+        # The raw provider output and whether the reader can act on it.
+        #
+        # A bug in our own code has neither and lands as `unknown`, which is
+        # the honest answer: we cannot say how to fix it, so the UI offers a
+        # report instead of advice.
+        #
+        # `isinstance`, not `getattr(exc, "detail", ...)`.
+        #
+        # `detail` is a common attribute name — `fastapi.HTTPException` carries
+        # one that can be a dict or a list — and assigning that to a Text
+        # column raises a second exception *inside* the failure handler, which
+        # loses the record entirely. The handler has to be total: whatever went
+        # wrong, a row describing it must survive.
+        if isinstance(exc, SubscriptionCLIError):
+            review.failure_detail = exc.detail
+            review.failure_kind = exc.kind
+        elif isinstance(exc, OSError):
+            # A dependency was unreachable rather than misconfigured — the
+            # recorded `[Errno 111] Connection refused` is this. Without this
+            # branch `infra` was documented in three places and produced by
+            # none, so `FIXES.infra` in the UI was unreachable code.
+            review.failure_kind = "infra"
+        else:
+            review.failure_kind = "unknown"
         review.duration_ms = elapsed_ms()
         completed = datetime.now(timezone.utc)
         review.completed_at = completed

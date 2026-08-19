@@ -1,7 +1,11 @@
 import { Button } from "@/components/ui/Button";
 import { CategoryBadge, SeverityBadge } from "@/components/ui/badgeMaps";
 import { ModelProse } from "@/components/ui/ModelProse";
-import { commentAnchorId } from "@/lib/reviewUtils";
+import {
+  commentAnchorId,
+  formatLineRange,
+  severityEdge,
+} from "@/lib/reviewUtils";
 import { cn } from "@/lib/utils";
 import type { ReviewCommentOut } from "@/types/api";
 import { CommentRating } from "./CommentRating";
@@ -12,12 +16,6 @@ import { CommentRating } from "./CommentRating";
  * severity-tinted left edge instead, which also makes a file's worst comment
  * findable while scrolling.
  */
-const EDGE: Record<string, string> = {
-  critical: "border-l-oxide",
-  warning: "border-l-ochre",
-  info: "border-l-payne",
-};
-
 export function ReviewComment({
   comment,
   reviewId,
@@ -29,17 +27,14 @@ export function ReviewComment({
   /** Present only when there is a diff to reveal it in. */
   onReveal?: (comment: ReviewCommentOut) => void;
 }) {
-  const lines =
-    comment.line_start === comment.line_end
-      ? `${comment.line_start}`
-      : `${comment.line_start}–${comment.line_end}`;
+  const lines = formatLineRange(comment.line_start, comment.line_end);
 
   return (
     <article
       id={commentAnchorId(comment.id)}
       className={cn(
         "flex flex-col gap-2 border-l-2 px-4 py-3",
-        EDGE[comment.severity] ?? "border-l-rule-strong",
+        severityEdge(comment.severity),
       )}
     >
       <div className="flex flex-wrap items-center gap-2">

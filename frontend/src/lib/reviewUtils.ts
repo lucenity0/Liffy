@@ -72,3 +72,36 @@ export function groupCommentsByFile(
 export function commentAnchorId(commentId: string): string {
   return `comment-${commentId}`;
 }
+
+/**
+ * The severity-tinted left edge that makes a file's worst comment findable
+ * while scrolling.
+ *
+ * Shared rather than declared beside each use. `LatestFinding` and
+ * `ReviewComment` render the same finding in two places and are supposed to
+ * render it the same colour — which is exactly the property two identical
+ * literals quietly lose the first time a severity or a token is added to one
+ * of them.
+ *
+ * Falls back rather than assuming exhaustiveness: the backend types this
+ * column as a plain `str` and the LLM fills it in, so an unrecognised value
+ * has to get a neutral edge instead of no edge at all.
+ */
+const SEVERITY_EDGE: Record<string, string> = {
+  critical: "border-l-oxide",
+  warning: "border-l-ochre",
+  info: "border-l-payne",
+};
+
+export function severityEdge(severity: string): string {
+  return SEVERITY_EDGE[severity] ?? "border-l-rule-strong";
+}
+
+/**
+ * A comment's line anchor, spelled the way a diff spells it: `42`, or `42–44`.
+ *
+ * Single-line comments are the common case and `42–42` reads as a mistake.
+ */
+export function formatLineRange(start: number, end: number): string {
+  return start === end ? `${start}` : `${start}–${end}`;
+}

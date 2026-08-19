@@ -10,9 +10,9 @@ from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.comment_feedback import CommentFeedback
 from app.models.pull_request import PullRequest
-from app.models.review_comment import ReviewComment
 from app.models.repository import Repository
 from app.models.review import Review
+from app.models.review_comment import ReviewComment
 from app.models.user import User
 from app.schemas.review import (
     LatestFindingOut,

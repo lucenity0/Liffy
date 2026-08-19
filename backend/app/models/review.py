@@ -47,11 +47,10 @@ class Review(Base):
     # full, without a cap chosen for a preview line.
     failure_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Whether the person reading can do anything about it. One of
-    # `limit`, `auth`, `cli_missing`, `infra`, `unknown` — spelled in
-    # `chain.FAILURE_KIND` rather than constrained here, because the LLM
-    # providers own the taxonomy and a check constraint would need a migration
-    # every time one learns a new failure.
+    # Whether the person reading can do anything about it. The values are
+    # spelled once in `chain.FAILURE_KIND` rather than constrained here,
+    # because the LLM providers own the taxonomy and a check constraint would
+    # need a migration every time one learns a new failure.
     #
     # `unknown` is the load-bearing value: it is what tells the UI to offer a
     # bug report instead of advice, because nothing it could advise would help.

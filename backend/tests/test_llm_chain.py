@@ -1420,6 +1420,12 @@ def test_failure_message_prefers_the_result_event(monkeypatch: pytest.MonkeyPatc
     with pytest.raises(ClaudeCodeError) as caught:
         llm.complete("sys", "user")
 
+    # The named behaviour, which the `match=` on raises() used to carry: the
+    # result event is preferred over the rest of the transcript. Without this
+    # the test only asserts that *some* ClaudeCodeError was raised, which the
+    # surrounding tests already cover.
+    assert "model overloaded" in caught.value.detail
+
 
 def test_a_limit_stated_only_in_the_result_event_is_still_classified(
     monkeypatch: pytest.MonkeyPatch,

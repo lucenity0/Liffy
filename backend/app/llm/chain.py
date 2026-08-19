@@ -227,6 +227,17 @@ class AnthropicReviewLLM:
         )
 
 
+#: The failure kinds a review can record, and what each one means for the
+#: person reading it. Named here because three other places describe this
+#: taxonomy — the `reviews.failure_kind` column, the frontend's `FailureKind`,
+#: and `FIXES` in `ReviewStates.tsx` — and a comment pointing at "wherever the
+#: subclasses happen to set it" is not a place anyone can look.
+#:
+#: `unknown` is load-bearing: it means nothing we could advise would help, so
+#: the UI offers a bug report rather than advice.
+FAILURE_KIND = ("limit", "auth", "cli_missing", "infra", "unknown")
+
+
 class SubscriptionCLIError(RuntimeError):
     """A subscription-backed CLI provider could not produce a review.
 

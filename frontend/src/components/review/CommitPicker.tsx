@@ -8,22 +8,6 @@ import { normalizeApiError } from "@/lib/errors";
 import { formatRelative } from "@/lib/utils";
 
 /**
- * Pick which commits are worth reviewing again.
- *
- * A re-review reads the whole pull request, which on a large one is most of
- * the cost and nearly none of the value: the model's finding count barely
- * moves with diff size, so reviewing 100 files to look at 3 spends the budget
- * on the 97 nobody asked about. This asks instead.
- *
- * **The selection picks files, not hunks.** Whatever the chosen commits
- * touched is reviewed *as it stands at the head of the pull request* — so
- * skipping a commit in the middle cannot produce a stale line number, and a
- * file touched by both a chosen and an unchosen commit is read whole.
- *
- * Nothing is fetched until asked. This costs a GitHub call, and most visits
- * to a review are to read it rather than to queue another one.
- */
-/**
  * `normalizeApiError`'s shared copy is written around the repo endpoints — its
  * 502 branch says "GitHub couldn't find that repository (is it private?)",
  * which is nonsense when a commit listing fails, and it drops the detail the
@@ -39,6 +23,22 @@ function commitsError(error: unknown): string {
   return normalized.message;
 }
 
+/**
+ * Pick which commits are worth reviewing again.
+ *
+ * A re-review reads the whole pull request, which on a large one is most of
+ * the cost and nearly none of the value: the model's finding count barely
+ * moves with diff size, so reviewing 100 files to look at 3 spends the budget
+ * on the 97 nobody asked about. This asks instead.
+ *
+ * **The selection picks files, not hunks.** Whatever the chosen commits
+ * touched is reviewed *as it stands at the head of the pull request* — so
+ * skipping a commit in the middle cannot produce a stale line number, and a
+ * file touched by both a chosen and an unchosen commit is read whole.
+ *
+ * Nothing is fetched until asked. This costs a GitHub call, and most visits
+ * to a review are to read it rather than to queue another one.
+ */
 export function CommitPicker({ prId }: { prId: string }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());

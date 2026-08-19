@@ -23,7 +23,12 @@ from app.schemas.review import (
     ReviewOut,
     ReviewStatus,
 )
-from app.services.github_service import GitHubClient
+from app.services.github_service import (
+    GitHubAuthError,
+    GitHubClient,
+    GitHubError,
+    GitHubRateLimitError,
+)
 from app.services.review_service import get_review_with_comments
 from app.workers import review_worker
 
@@ -325,8 +330,23 @@ def list_pr_commits(
         for sha in ((detail or {}).get("scope") or {}).get("commits") or []
     }
 
-    gh = GitHubClient(token=user.github_access_token)
-    commits = gh.list_pull_request_commits(owner, repo_name, pr_number)
+    # Same `except` chain as `repos.py`, and in the same order for the same
+    # reason: `GitHubRateLimitError` is a `GitHubError` subclass, so the
+    # broader clause first would swallow it.
+    #
+    # Without this a GitHub auth failure, rate limit or 404 propagated as a
+    # 500 with a traceback — and the picker's own error copy branches on 502,
+    # so the message written for this exact case was unreachable.
+    try:
+        with GitHubClient(token=user.github_access_token) as gh:
+            commits = gh.list_pull_request_commits(owner, repo_name, pr_number)
+    except GitHubRateLimitError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(status_code=429, detail=str(exc), headers=headers) from exc
+    except GitHubAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except GitHubError as exc:
+        raise HTTPException(status_code=502, detail=f"GitHub error: {exc}") from exc
 
     # Walked in order rather than compared by timestamp. Commit dates are
     # *author* dates and can run backwards relative to the order commits

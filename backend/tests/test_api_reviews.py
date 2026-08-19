@@ -829,10 +829,21 @@ SHA_B = "bbbbbbb2222222222222222222222222222222b2"
 
 
 class _CommitsGitHub:
-    """Just enough GitHubClient for the picker endpoints."""
+    """Just enough GitHubClient for the picker endpoints.
+
+    Including the context manager protocol: the endpoint uses `with` so the
+    connection is closed on the error paths too, and a double that skipped it
+    would pass while the real client leaked.
+    """
 
     def __init__(self, commits) -> None:
         self.commits = commits
+
+    def __enter__(self) -> "_CommitsGitHub":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
 
     def list_pull_request_commits(self, owner, repo, number, **kw):
         return self.commits
@@ -1087,3 +1098,60 @@ def test_a_full_review_still_sets_the_boundary(seeded, monkeypatch) -> None:
     assert [(c["sha"], c["is_new"]) for c in body] == [
         ("a", False), ("b", False), ("c", True),
     ]
+
+
+def test_a_github_failure_listing_commits_is_a_502_not_a_500(
+    seeded, monkeypatch
+) -> None:
+    """The picker's own error copy branches on 502.
+
+    Unhandled, a GitHub error propagated as a 500 with a traceback — so the
+    message written for exactly this case was unreachable, and the user got
+    a stack trace instead.
+    """
+    from app.services.github_service import GitHubError
+
+    class _Exploding:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+        def list_pull_request_commits(self, *a, **kw):
+            raise GitHubError("upstream said no")
+
+    monkeypatch.setattr(reviews_api, "GitHubClient", lambda token=None: _Exploding())
+
+    response = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"])
+
+    assert response.status_code == 502
+    assert "upstream said no" in response.json()["detail"]
+
+
+def test_a_rate_limit_listing_commits_says_wait_rather_than_reconnect(
+    seeded, monkeypatch
+) -> None:
+    """429 before 503: one of those is something the user can act on.
+
+    Rate limit is caught before auth because it is the more specific
+    subclass — the other order would never reach it, the way `repos.py`
+    already documents.
+    """
+    from app.services.github_service import GitHubRateLimitError
+
+    class _Limited:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+        def list_pull_request_commits(self, *a, **kw):
+            raise GitHubRateLimitError("slow down")
+
+    monkeypatch.setattr(reviews_api, "GitHubClient", lambda token=None: _Limited())
+
+    response = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"])
+
+    assert response.status_code == 429

@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/Button";
 import { CategoryBadge, SeverityBadge } from "@/components/ui/badgeMaps";
+import { ModelProse } from "@/components/ui/ModelProse";
 import { commentAnchorId } from "@/lib/reviewUtils";
 import { cn } from "@/lib/utils";
 import type { ReviewCommentOut } from "@/types/api";
@@ -51,7 +52,7 @@ export function ReviewComment({
         </span>
       </div>
 
-      <p className="prose-hand">{comment.comment_text}</p>
+      <ModelProse text={comment.comment_text} />
 
       {comment.suggestion && (
         <div className="flex flex-col gap-1">

@@ -26,6 +26,8 @@ import type { HelpPassage, HelpTopic } from "@/types/api";
 export function Help() {
   const [params, setParams] = useSearchParams();
   const query = params.get("q") ?? "";
+  // Handed over by a failed review's "Report this" link.
+  const prefillTitle = params.get("report") ?? undefined;
   const selectedSlug = params.get("page");
 
   // The input is local and the URL follows it, not the other way around.
@@ -161,7 +163,7 @@ export function Help() {
         </div>
       </div>
 
-      <ReportProblem query={query} />
+      <ReportProblem query={query} prefillTitle={prefillTitle} />
     </div>
   );
 }

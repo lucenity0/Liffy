@@ -291,7 +291,16 @@ def run_review(
         # log — which is exactly the trip this is meant to save. Provider and
         # configuration errors are the common case here and none of them carry
         # a credential, but the text is truncated regardless.
-        review.summary = f"Review failed: {str(sys.exc_info()[1])[:400]}"
+        exc = sys.exc_info()[1]
+        review.summary = f"Review failed: {str(exc)[:400]}"
+
+        # The raw provider output and whether the reader can act on it, when
+        # the provider bothered to say. Anything that is not a
+        # `SubscriptionCLIError` — an OSError, a bug in our own code — has
+        # neither, and lands as `unknown`, which is the honest answer: we
+        # cannot tell them how to fix it, so the UI offers a report instead.
+        review.failure_detail = getattr(exc, "detail", None)
+        review.failure_kind = getattr(exc, "kind", None) or "unknown"
         review.duration_ms = elapsed_ms()
         completed = datetime.now(timezone.utc)
         review.completed_at = completed

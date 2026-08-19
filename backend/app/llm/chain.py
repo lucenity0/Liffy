@@ -228,7 +228,35 @@ class AnthropicReviewLLM:
 
 
 class SubscriptionCLIError(RuntimeError):
-    """A subscription-backed CLI provider could not produce a review."""
+    """A subscription-backed CLI provider could not produce a review.
+
+    Carries three things rather than one string, because they have three
+    different readers:
+
+    ``str(exc)`` — the sentence a person reads. It never contains raw provider
+    output; that used to be appended as ``Output: {...}`` and reached the UI as
+    three hundred characters of JSON welded onto an otherwise good sentence.
+
+    ``detail`` — that raw output, whole and uncapped, for the disclosure behind
+    the sentence and for a bug report to quote.
+
+    ``kind`` — whether the reader can act. ``unknown`` is the load-bearing
+    value: it means nothing we could advise would help, so the UI offers to
+    file a report instead of offering a fix.
+    """
+
+    #: Overridden per subclass; a raise site may override it per instance.
+    default_kind = "unknown"
+
+    def __init__(
+        self,
+        message: str,
+        detail: str | None = None,
+        kind: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.detail = detail
+        self.kind = kind or type(self).default_kind
 
 
 class ClaudeCodeError(SubscriptionCLIError):
@@ -248,9 +276,13 @@ class SubscriptionLimitError(SubscriptionCLIError):
     which sends the reader looking for a parser bug that is not there.
     """
 
+    default_kind = "limit"
+
 
 class SubscriptionAuthError(SubscriptionCLIError):
     """The CLI is installed but has no usable credentials."""
+
+    default_kind = "auth"
 
 
 # Substrings both CLIs print when the *subscription* — not an API key — runs
@@ -322,7 +354,7 @@ def _cli_failure_blob(stdout: str | None, stderr: str | None) -> str:
 
     result, _turns, _tools = _claude_code_stream(stdout or "")
     if result is not None:
-        parts.append(json.dumps(result))
+        parts.append(_result_event_summary(result))
 
     if stderr and stderr.strip():
         parts.append(stderr.strip())
@@ -333,9 +365,97 @@ def _cli_failure_blob(stdout: str | None, stderr: str | None) -> str:
         # transcript is a single line, which is then all there is to show.
         lines = body.splitlines()
         tail = lines[1:] if len(lines) > 1 else lines
-        parts.append("\n".join(tail[-8:]))
+
+        # And drop the result event, which `_result_event_summary` has already
+        # rendered legibly above. Without this a single-line transcript — the
+        # common shape when the CLI dies early — puts the raw dict straight
+        # back in front of the reader, undoing the summary entirely.
+        if result is not None:
+            tail = [line for line in tail if not _is_result_line(line)]
+
+        if any(line.strip() for line in tail):
+            parts.append("\n".join(tail[-8:]))
+
+    # The raw event goes *last*, after everything legible.
+    #
+    # It has to still be here: `_classify_cli_failure` scans this whole string,
+    # and a limit or auth marker can sit in a field the summary above drops, so
+    # removing it would silently downgrade a recognisable failure to a generic
+    # one. But only the *message* is truncated at 300 characters, so appending
+    # it costs nothing a reader sees while keeping classification exhaustive.
+    if result is not None:
+        parts.append(json.dumps(result))
 
     return "\n".join(parts) if parts else "(no output on stdout or stderr)"
+
+
+# Keys of the `result` event that carry bookkeeping rather than a cause.
+# Everything else is worth showing; these are what made a real failure read as
+# `{"is_error": true, "duration_api_ms": 1897, "num_turns": 1, "stop_reason":` —
+# 300 characters of stopwatch with the reason cut off the end.
+_RESULT_NOISE = frozenset(
+    {
+        "duration_ms",
+        "duration_api_ms",
+        "num_turns",
+        "session_id",
+        "uuid",
+        "total_cost_usd",
+        "usage",
+        "modelUsage",
+        "permission_denials",
+        "type",
+        "is_error",
+    }
+)
+
+
+def _is_result_line(line: str) -> bool:
+    """True when this transcript line is the terminating `result` event."""
+    try:
+        return json.loads(line).get("type") == "result"
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
+
+def _result_event_summary(result: dict) -> str:
+    """The `result` event as a sentence, not as a dict.
+
+    `json.dumps` of this event puts whatever key happens to come first in front
+    of the reader, and on a real failure that was three timing fields — so the
+    message truncated before reaching `stop_reason`, and the operator got a
+    stopwatch instead of a cause.
+
+    Free text first, because when the CLI has something to say it says it in
+    `result`. Then the diagnostic fields, spelled `key=value` and ordered
+    deliberately rather than by dict insertion.
+
+    Unknown keys are kept rather than filtered to a known list: this is another
+    program's output shape, and a field added upstream is more likely to
+    explain a new failure than to be noise. Only the fields measured to be
+    noise are dropped.
+    """
+    said = str(result.get("result") or result.get("error") or "").strip()
+
+    fields = []
+    for key in ("subtype", "stop_reason", "api_error_status"):
+        value = result.get(key)
+        if value not in (None, "", "success"):
+            fields.append(f"{key}={value}")
+
+    for key, value in result.items():
+        if key in _RESULT_NOISE or key in ("result", "error"):
+            continue
+        if key in ("subtype", "stop_reason", "api_error_status"):
+            continue
+        if value in (None, "", [], {}):
+            continue
+        fields.append(f"{key}={value}")
+
+    detail = ", ".join(fields)
+    if said and detail:
+        return f"{said} ({detail})"
+    return said or detail or "(result event carried no detail)"
 
 
 def _classify_cli_failure(
@@ -351,18 +471,26 @@ def _classify_cli_failure(
     ``ClaudeCodeError``/``CodexError`` a caller would think to catch.
     """
     haystack = (blob or "").lower()
+    detail = (blob or "").strip() or None
+
+    # The raw output goes to `detail`, never into the sentence. It used to be
+    # appended as `Output: {...}` and truncated to 300 characters, which put
+    # JSON on the reviews list next to ordinary review descriptions and still
+    # cut it off mid-object — the worst of both.
     if any(marker in haystack for marker in _LIMIT_MARKERS):
         return SubscriptionLimitError(
             f"{provider} hit its subscription rate limit or quota. Nothing is "
-            f"misconfigured — the account is out of allowance for now. "
-            f"Output: {(blob or '').strip()[:300]}"
+            f"misconfigured — the account is out of allowance for now, and the "
+            f"same review will succeed once it resets.",
+            detail=detail,
         )
     if any(marker in haystack for marker in _AUTH_MARKERS):
         return SubscriptionAuthError(
-            f"{provider} is installed but not authenticated. "
-            f"Output: {(blob or '').strip()[:300]}"
+            f"{provider} is installed but not signed in. Authenticate the CLI "
+            f"on the host and the next review will pick it up.",
+            detail=detail,
         )
-    return error_cls(f"{provider} exited {returncode}: {(blob or '').strip()[:300]}")
+    return error_cls(f"{provider} exited {returncode}.", detail=detail)
 
 
 _CODEX_HOME_CACHE: dict[str, str] = {}
@@ -490,7 +618,8 @@ class ClaudeCodeReviewLLM:
         if shutil.which(self._binary) is None:
             raise ClaudeCodeError(
                 f"{self._binary!r} is not on PATH. Install Claude Code and sign in, "
-                f"or set LLM_PROVIDER to a different provider."
+                f"or set LLM_PROVIDER to a different provider.",
+                kind="cli_missing",
             )
 
         # Deliberately at construction, which for this provider is startup —
@@ -761,7 +890,8 @@ class CodexReviewLLM:
         if shutil.which(self._binary) is None:
             raise CodexError(
                 f"{self._binary!r} is not on PATH. Install the Codex CLI and run "
-                f"`codex login`, or set LLM_PROVIDER to a different provider."
+                f"`codex login`, or set LLM_PROVIDER to a different provider.",
+                kind="cli_missing",
             )
 
         # Codex is host-only unless CODEX_HOME is explicitly configured, and

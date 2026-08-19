@@ -895,7 +895,7 @@ def test_unauthenticated_cli_output_is_named_as_such(
     llm, _ = _claude_code(
         monkeypatch, stdout="Not logged in. Run `claude` to sign in.", returncode=1
     )
-    with pytest.raises(chain.SubscriptionAuthError, match="not authenticated"):
+    with pytest.raises(chain.SubscriptionAuthError, match="not signed in"):
         llm.complete("sys", "user")
 
 
@@ -1393,9 +1393,9 @@ def test_failure_message_skips_the_init_banner(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(ClaudeCodeError) as caught:
         llm.complete("sys", "user")
 
-    message = str(caught.value)
-    assert "something actually went wrong here" in message
-    assert '"subtype": "init"' not in message
+    detail = caught.value.detail
+    assert "something actually went wrong here" in detail
+    assert '"subtype": "init"' not in detail
 
 
 def test_failure_message_prefers_the_result_event(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1417,7 +1417,7 @@ def test_failure_message_prefers_the_result_event(monkeypatch: pytest.MonkeyPatc
     )
 
     llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
-    with pytest.raises(ClaudeCodeError, match="model overloaded"):
+    with pytest.raises(ClaudeCodeError) as caught:
         llm.complete("sys", "user")
 
 
@@ -1449,8 +1449,12 @@ def test_a_silent_failure_says_so_rather_than_printing_nothing(
     from app.llm.chain import ClaudeCodeError
 
     llm, _ = _claude_code(monkeypatch, stdout="", returncode=1)
-    with pytest.raises(ClaudeCodeError, match="no output on stdout or stderr"):
+    with pytest.raises(ClaudeCodeError) as caught:
         llm.complete("sys", "user")
+
+    # The sentinel moved to `detail` along with everything else raw. The
+    # sentence stays a sentence.
+    assert "no output on stdout or stderr" in caught.value.detail
 
 
 def test_failed_run_is_logged_in_full(
@@ -1469,3 +1473,206 @@ def test_failed_run_is_logged_in_full(
             llm.complete("sys", "user")
 
     assert "x" * 900 in caplog.text
+
+
+# ── The stopwatch failure ─────────────────────────────────────────────────────
+#
+# Observed on lucenity0/Liffy #258, twice, and shown to users on the reviews
+# list as:
+#
+#   Review failed: Claude Code exited 1: {"is_error": true, "duration_api_ms":
+#   1897, "num_turns": 1, "stop_reason": "stop_sequence…
+#
+# Every character of the 300 spent on timing, and the one field naming a cause
+# truncated mid-value. Two other failures on the same page read "hit its
+# subscription rate limit or quota" and "'claude' is not on PATH" — the
+# classifier can be good, it just had nothing to match here.
+
+
+def test_failure_message_leads_with_the_cause_not_the_stopwatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm.chain import ClaudeCodeError
+
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "is_error": True,
+            "duration_api_ms": 1897,
+            "num_turns": 1,
+            "duration_ms": 2100,
+            "session_id": "abc-123",
+            "total_cost_usd": 0.004,
+            "subtype": "error_during_execution",
+            "stop_reason": "stop_sequence",
+        }
+    )
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(ClaudeCodeError) as caught:
+        llm.complete("sys", "user")
+
+    # The sentence no longer carries provider output at all.
+    assert "duration_api_ms" not in str(caught.value)
+    assert "stop_reason" not in str(caught.value)
+
+    detail = caught.value.detail
+
+    # The cause is stated in words, ahead of the bookkeeping.
+    assert "stop_reason=stop_sequence" in detail[:300]
+    assert "subtype=error_during_execution" in detail[:300]
+    assert detail.index("stop_reason=stop_sequence") < detail.index("duration_api_ms")
+
+    # And the raw event is still there for `_classify_cli_failure` to scan.
+    assert "session_id" in detail
+
+
+def test_failure_message_still_prefers_what_the_cli_said(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Free text leads; the diagnostic fields follow it in parentheses."""
+    from app.llm.chain import ClaudeCodeError
+
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "is_error": True,
+            "result": "model overloaded",
+            "subtype": "error_during_execution",
+            "num_turns": 1,
+        }
+    )
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(ClaudeCodeError) as caught:
+        llm.complete("sys", "user")
+
+    detail = caught.value.detail
+    assert detail.index("model overloaded") < detail.index("subtype=")
+
+
+def test_a_limit_marker_in_a_dropped_field_is_still_classified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The summary hides bookkeeping from the reader, not from the classifier.
+
+    `usage` is dropped from the message, so if the blob no longer carried the
+    raw event a limit notice living there would silently downgrade to a
+    generic `exited 1` — the exact regression the raw dump guards against.
+    """
+    from app.llm.chain import SubscriptionLimitError
+
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "is_error": True,
+            "num_turns": 1,
+            "usage": {"note": "5-hour usage limit reached, resets at 3pm"},
+        }
+    )
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(SubscriptionLimitError):
+        llm.complete("sys", "user")
+
+
+def test_an_unknown_field_is_kept_rather_than_filtered_away(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another program owns this shape; a new field likely explains a new failure."""
+    from app.llm.chain import ClaudeCodeError
+
+    stdout = json.dumps(
+        {"type": "result", "is_error": True, "num_turns": 1, "refusal_kind": "policy"}
+    )
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(ClaudeCodeError) as caught:
+        llm.complete("sys", "user")
+
+    assert "refusal_kind=policy" in caught.value.detail
+
+
+def test_an_empty_result_event_says_so_rather_than_printing_braces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm.chain import ClaudeCodeError
+
+    stdout = json.dumps({"type": "result", "is_error": True, "num_turns": 1})
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(ClaudeCodeError) as caught:
+        llm.complete("sys", "user")
+
+    assert "carried no detail" in caught.value.detail
+
+
+# ── The message, the detail and the kind are three different things ───────────
+
+
+def test_the_sentence_never_carries_provider_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`str(exc)` becomes `reviews.summary`, which the list renders for *every*
+    review. Raw JSON there sits next to ordinary review descriptions."""
+    from app.llm.chain import SubscriptionLimitError
+
+    stdout = json.dumps(
+        {"type": "result", "is_error": True, "result": "5-hour usage limit reached",
+         "duration_api_ms": 1695, "session_id": "cdfdfc3e"}
+    )
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(SubscriptionLimitError) as caught:
+        llm.complete("sys", "user")
+
+    sentence = str(caught.value)
+    assert "{" not in sentence
+    assert "session_id" not in sentence
+    assert "duration_api_ms" not in sentence
+    # ...and the detail has it, whole.
+    assert "session_id" in caught.value.detail
+
+
+def test_a_limit_is_marked_as_something_to_wait_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.llm.chain import SubscriptionLimitError
+
+    llm, _ = _claude_code(monkeypatch, stdout="5-hour usage limit reached", returncode=1)
+    with pytest.raises(SubscriptionLimitError) as caught:
+        llm.complete("sys", "user")
+
+    assert caught.value.kind == "limit"
+
+
+def test_a_missing_cli_is_marked_as_something_to_install() -> None:
+    """Raised at construction, before any subprocess exists."""
+    from app.llm.chain import ClaudeCodeError, ClaudeCodeReviewLLM
+
+    with pytest.raises(ClaudeCodeError) as caught:
+        ClaudeCodeReviewLLM(binary="definitely-not-a-real-binary-xyz")
+
+    assert caught.value.kind == "cli_missing"
+
+
+def test_an_unexplained_failure_is_marked_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`unknown` is what tells the UI to offer a bug report instead of advice.
+
+    Nothing in this output matches a marker, so there is no fix to suggest —
+    and claiming otherwise would send someone to check a setting that is fine.
+    """
+    from app.llm.chain import ClaudeCodeError
+
+    stdout = json.dumps(
+        {"type": "result", "is_error": True, "stop_reason": "stop_sequence"}
+    )
+
+    llm, _ = _claude_code(monkeypatch, stdout=stdout, returncode=1)
+    with pytest.raises(ClaudeCodeError) as caught:
+        llm.complete("sys", "user")
+
+    assert caught.value.kind == "unknown"
+    assert caught.value.detail is not None

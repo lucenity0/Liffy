@@ -280,6 +280,15 @@ export function mountCafeScene(
     [261, 16, 15],
   ];
 
+  /* The monitor in the reading scene, named once because it is drawn in two
+     places: the body before the sill, the light it spills after it. Sized and
+     placed so its base bottoms out on row 190 — the sill top, and the line
+     the books, the cup and the cat's cushion all land on. */
+  const MONITOR_X = 44;
+  const MONITOR_W = 52;
+  const MONITOR_H = 34;
+  const MONITOR_Y = 148;
+
   function draw(t: number) {
     /* ---- the room ---------------------------------------------------- */
     px(0, 0, SCENE_W, VH, C.wall);
@@ -410,27 +419,21 @@ export function mountCafeScene(
        claim nothing, and the step list beside this says what is actually
        known. */
     if (options.reading) {
-      const SCREEN_X = 44;
-      const SCREEN_Y = 150 + OY;
-      const SCREEN_W = 52;
-      const SCREEN_H = 34;
+      const SCREEN_X = MONITOR_X;
+      const SCREEN_Y = MONITOR_Y + OY;
+      const SCREEN_W = MONITOR_W;
+      const SCREEN_H = MONITOR_H;
 
-      /* Stand and base first, so the bezel sits over them. */
+      /* Stand and base first, so the bezel sits over them. The base bottoms
+         out exactly on the sill, at row 190 — the same line the books and the
+         cup land on, and the line the cat's cushion sits at. Two rows lower
+         and the sill, which is painted after all of this, covers it. */
       px(SCREEN_X + 22, SCREEN_Y + SCREEN_H, 8, 5, C.ink);
       px(SCREEN_X + 14, SCREEN_Y + SCREEN_H + 5, 24, 3, C.ink);
 
       /* Bezel, then the lit panel inset inside it. */
       px(SCREEN_X, SCREEN_Y, SCREEN_W, SCREEN_H, C.ink);
       px(SCREEN_X + 3, SCREEN_Y + 3, SCREEN_W - 6, SCREEN_H - 6, C.glow);
-
-      /* The spill of light onto the sill in front of it. Three bands rather
-         than a gradient: this grid is one pixel per unit, and a gradient at
-         this size is a smudge. */
-      g!.globalAlpha = 0.5;
-      px(SCREEN_X - 2, SCREEN_Y + SCREEN_H + 8, SCREEN_W + 4, 2, C.glow);
-      g!.globalAlpha = 0.3;
-      px(SCREEN_X - 5, SCREEN_Y + SCREEN_H + 10, SCREEN_W + 10, 2, C.glow);
-      g!.globalAlpha = 1;
 
       /* The text. Six rows scrolling upward, each row's width driven by its
          index so the block reads as prose rather than as a bar chart, and two
@@ -485,6 +488,19 @@ export function mountCafeScene(
     /* ---- the sill ---------------------------------------------------- */
     px(38, SILL + OY, 244, 9, C.frameHi);
     px(35, SILL + 9 + OY, 250, 5, C.frame);
+
+    /* The monitor's light falling on the sill in front of it — after the sill
+       is painted, because the sill is painted over everything standing on it
+       and would otherwise cover this entirely. Two bands rather than a
+       gradient: this grid is one pixel per unit, and a gradient at that size
+       is a smudge. */
+    if (options.reading) {
+      g!.globalAlpha = 0.45;
+      px(MONITOR_X - 2, SILL + 1 + OY, MONITOR_W + 4, 2, C.glow);
+      g!.globalAlpha = 0.25;
+      px(MONITOR_X - 6, SILL + 3 + OY, MONITOR_W + 12, 2, C.glow);
+      g!.globalAlpha = 1;
+    }
 
     /* The window's light, falling down the wall under it. This is the only
        job the strip below the sill has; a chair went here first and read as

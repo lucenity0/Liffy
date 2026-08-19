@@ -176,8 +176,12 @@ export function ReviewProgress({ review }: { review: ReviewDetailOut }) {
             actually known; this says only "something is being read", which is
             true.
 
-            `md:` and aria-hidden: it is ambience, and it carries nothing the
-            step list does not already state. */}
+            `md:` only. It keeps `CafeScene`'s own `role="img"` and label
+            rather than being hidden — that is what every other use of the
+            scene does, and a reader who reaches it should be told there is a
+            picture rather than finding a gap. It is not announced on its own:
+            nothing here is live, so it is read when navigated to and not
+            while waiting. */}
         {!queued && (
           <CafeScene
             reading

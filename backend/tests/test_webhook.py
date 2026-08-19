@@ -7,7 +7,7 @@ import httpx
 import pytest
 from conftest import seed_user
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -58,6 +58,7 @@ def connected_repo():
             db.close()
 
     app.dependency_overrides[get_db] = override
+    connected_repo.factory = factory
     yield factory
     app.dependency_overrides.clear()
 
@@ -124,8 +125,70 @@ def test_webhook_queues_review_on_pr_opened(enqueued) -> None:
     assert [call[:3] for call in enqueued] == [("octo", "demo", 7)]
 
 
-def test_webhook_queues_on_synchronize(enqueued) -> None:
+def _seed_pr(*, auto_review: bool) -> None:
+    """A pull request Liffy has already seen, with the toggle set."""
+    from app.models.pull_request import PullRequest
+
+    with connected_repo.factory() as db:
+        repo_id = db.scalar(select(Repository.id))
+        db.add(
+            PullRequest(
+                repo_id=repo_id, github_pr_number=7, title="t", author="a",
+                base_branch="main", head_branch="f", status="open",
+                auto_review=auto_review,
+            )
+        )
+        db.commit()
+
+
+def test_a_push_is_ignored_unless_the_pull_request_opted_in(enqueued) -> None:
+    """`synchronize` fires on every push.
+
+    Applying three of Liffy's own suggestions used to cost three full reviews,
+    and a two-line README commit cost the same as a real change — quota spent
+    without anyone asking for it.
+    """
+    _seed_pr(auto_review=False)
+
     response = _post(dict(PR_OPENED, action="synchronize"))
+
+    assert response.json()["status"] == "ignored"
+    assert enqueued == []
+
+
+def test_a_push_queues_when_the_pull_request_opted_in(enqueued) -> None:
+    _seed_pr(auto_review=True)
+
+    response = _post(dict(PR_OPENED, action="synchronize"))
+
+    assert response.json()["status"] == "queued"
+    assert len(enqueued) == 1
+
+
+def test_a_push_on_a_pull_request_liffy_has_never_seen_is_ignored(enqueued) -> None:
+    """No row means off, which is the same answer as the column default."""
+    response = _post(dict(PR_OPENED, action="synchronize"))
+
+    assert response.json()["status"] == "ignored"
+    assert enqueued == []
+
+
+def test_opening_a_pull_request_still_reviews_it_unasked(enqueued) -> None:
+    """The one case where an unrequested review is the whole point.
+
+    The toggle governs what happens *after* the first review, and is opted out
+    of rather than into — so a pull request nobody has looked at is still
+    looked at.
+    """
+    response = _post(PR_OPENED)
+
+    assert response.json()["status"] == "queued"
+    assert len(enqueued) == 1
+
+
+def test_reopening_is_not_gated_either(enqueued) -> None:
+    response = _post(dict(PR_OPENED, action="reopened"))
+
     assert response.json()["status"] == "queued"
     assert len(enqueued) == 1
 

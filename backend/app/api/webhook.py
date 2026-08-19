@@ -2,10 +2,13 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.models.pull_request import PullRequest
+from app.models.repository import Repository
 from app.services.github_service import verify_webhook_signature
 from app.services.review_service import resolve_repo_owner
 from app.workers import review_worker
@@ -65,5 +68,37 @@ async def github_webhook(
 
     owner, repo_name = full_name.split("/", 1)
     pr_number = int(pull_request["number"])
+
+    # A push only reviews if somebody asked it to.
+    #
+    # `synchronize` fires on *every* push, so applying three of Liffy's own
+    # suggestions used to cost three full reviews, and a two-line README commit
+    # cost the same as a real change. On a subscription that is rate-limit
+    # quota spent without anyone asking for it.
+    #
+    # `opened` and `reopened` are not gated: a pull request nobody has looked
+    # at yet is the one case where an unrequested review is the whole point,
+    # and it is what the toggle below is opted *out* of rather than into.
+    if action == "synchronize" and not _auto_review_enabled(db, full_name, pr_number):
+        return {"status": "ignored", "reason": "auto-review off for this pull request"}
+
     review_worker.enqueue_review(owner, repo_name, pr_number, received_at.isoformat())
     return {"status": "queued", "pr_number": pr_number}
+
+
+def _auto_review_enabled(db: Session, full_name: str, pr_number: int) -> bool:
+    """Whether this pull request opted into being reviewed on every push.
+
+    A pull request Liffy has never seen has no row, and no row means off —
+    which is the same answer as the column's default and needs no special case.
+    """
+    return bool(
+        db.scalar(
+            select(PullRequest.auto_review)
+            .join(Repository, PullRequest.repo_id == Repository.id)
+            .where(
+                Repository.full_name == full_name,
+                PullRequest.github_pr_number == pr_number,
+            )
+        )
+    )

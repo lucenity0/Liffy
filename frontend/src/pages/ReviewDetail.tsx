@@ -14,7 +14,7 @@ import { CommentsTab } from "@/components/review/tabs/CommentsTab";
 import { FilesTab } from "@/components/review/tabs/FilesTab";
 import { SummaryTab } from "@/components/review/tabs/SummaryTab";
 import { useReview } from "@/hooks/useReview";
-import { useRereview } from "@/hooks/useReviewMutations";
+import { useRereview, useSetAutoReview } from "@/hooks/useReviewMutations";
 import { parseDiff } from "@/lib/diff";
 import { normalizeApiError } from "@/lib/errors";
 import { totalStat } from "@/lib/reviewStats";
@@ -47,6 +47,7 @@ export function ReviewDetail() {
   const { reviewId } = useParams();
   const review = useReview(reviewId);
   const rereview = useRereview();
+  const autoReview = useSetAutoReview(reviewId ?? "");
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tab = parseTab(searchParams.get("tab"));
@@ -146,6 +147,10 @@ export function ReviewDetail() {
         onRereview={() => rereview.mutate(data.id)}
         rereviewing={rereview.isPending}
         rereviewQueued={rereview.isSuccess}
+        onAutoReviewChange={(enabled) =>
+          autoReview.mutate({ prId: data.pr_id, enabled })
+        }
+        autoReviewSaving={autoReview.isPending}
         rereviewError={rereview.error}
       />
 

@@ -106,6 +106,17 @@ export interface RepoStatusOut {
 export interface SummaryDetail {
   changes?: string[];
   files?: { path: string; description: string }[];
+  /**
+   * Present only when the review read less than the whole pull request —
+   * a commit-picker selection, or an automatic incremental re-review.
+   *
+   * `raw_diff` is deliberately the whole pull request, because comments have
+   * to anchor against it. So without this the header reports the pull
+   * request's file count for a review that read four of them, and somebody
+   * who picked three commits sees "17 files" and concludes the picker did
+   * not work.
+   */
+  scope?: { files_reviewed: number; files_in_diff: number };
 }
 
 /**
@@ -221,6 +232,16 @@ export interface LatestFindingOut {
   repo_full_name: string;
   reviewed_at: string;
   comment: ReviewCommentOut;
+}
+
+/** One commit on a pull request, as the picker shows it. */
+export interface CommitOut {
+  sha: string;
+  message: string;
+  author: string;
+  committed_at: string;
+  /** Landed after the last completed review of this pull request. */
+  is_new: boolean;
 }
 
 export interface ReviewCommentOut {

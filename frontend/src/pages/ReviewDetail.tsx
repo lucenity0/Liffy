@@ -6,6 +6,7 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Sheet } from "@/components/ui/Sheet";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { TabPanel, Tabs, type TabSpec } from "@/components/ui/Tabs";
+import { CommitPicker } from "@/components/review/CommitPicker";
 import { ReviewHeader } from "@/components/review/ReviewHeader";
 import { ReviewFailed } from "@/components/review/ReviewStates";
 import { ReviewProgress } from "@/components/review/ReviewProgress";
@@ -120,12 +121,22 @@ export function ReviewDetail() {
 
   if (!data) return <DetailSkeleton />;
 
+  // What the review read, not what the pull request contains, when those
+  // differ. `raw_diff` is always the whole pull request — comments anchor
+  // against it — so a narrowed review would otherwise advertise a file count
+  // it never looked at.
+  const scope = data.summary_detail?.scope;
+  const fileStat =
+    files.length === 0
+      ? null
+      : scope
+        ? `${scope.files_reviewed} of ${scope.files_in_diff} files reviewed`
+        : `${stat.files} file${stat.files === 1 ? "" : "s"} · +${stat.additions} −${stat.deletions}`;
+
   const headerMeta = [
     data.model_used,
     data.tokens_used !== null ? `${formatCount(data.tokens_used)} tokens` : null,
-    files.length > 0
-      ? `${stat.files} file${stat.files === 1 ? "" : "s"} · +${stat.additions} −${stat.deletions}`
-      : null,
+    fileStat,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -153,6 +164,11 @@ export function ReviewDetail() {
         autoReviewSaving={autoReview.isPending}
         rereviewError={rereview.error}
       />
+
+      {/* Under the header, above the tabs: it is an action on the pull
+          request rather than part of reading this review, and it collapses to
+          a single button until asked. */}
+      <CommitPicker prId={data.pr_id} />
 
       {(data.status === "pending" || data.status === "processing") && (
         <ReviewProgress review={data} />

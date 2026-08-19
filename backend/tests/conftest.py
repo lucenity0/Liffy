@@ -80,6 +80,12 @@ class FakeGitHub:
         # the force-push / 404 case the caller has to survive.
         self.compare_diff: str | None = None
         self.compare_calls: list[tuple[str, str]] = []
+        # Commit picker: what `list_pull_request_commits` answers, and the
+        # files each sha touched. A sha absent from `commit_files` raises,
+        # which is the 404-after-a-force-push case.
+        self.commits: list = []
+        self.commit_files: dict[str, list[str]] = {}
+        self.files_in_commits_calls: list[list[str]] = []
         # What the last list_pull_requests call asked for, so a test can
         # assert the state filter reached GitHub rather than only that the
         # response looked right.
@@ -107,6 +113,20 @@ class FakeGitHub:
     def get_pull_request(self, owner: str, repo: str, number: int) -> PullRequestMeta:
         assert self.pr_meta is not None, "FakeGitHub built without pr_meta"
         return self.pr_meta
+
+    def list_pull_request_commits(self, owner: str, repo: str, number: int, **kw):
+        return self.commits
+
+    def list_files_in_commits(self, owner: str, repo: str, shas: list[str]) -> list[str]:
+        self.files_in_commits_calls.append(list(shas))
+        paths: list[str] = []
+        for sha in shas:
+            if sha not in self.commit_files:
+                raise RuntimeError(f"no such commit {sha}")
+            for path in self.commit_files[sha]:
+                if path not in paths:
+                    paths.append(path)
+        return paths
 
     def get_comparison_diff(self, owner: str, repo: str, base: str, head: str) -> str:
         self.compare_calls.append((base, head))

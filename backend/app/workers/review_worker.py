@@ -59,7 +59,11 @@ def _parse_received_at(value: str | None) -> datetime | None:
 
 @celery.task(name="liffy.review_pr")
 def review_pr_task(
-    owner: str, repo_name: str, pr_number: int, received_at: str | None = None
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    received_at: str | None = None,
+    commit_shas: list[str] | None = None,
 ) -> dict:
     db = SessionLocal()
     try:
@@ -105,6 +109,7 @@ def review_pr_task(
                 # provider look like the review had simply vanished.
                 llm=get_llm,
                 received_at=_parse_received_at(received_at),
+                commit_shas=commit_shas,
             )
             return {"review_id": str(review.id), "status": review.status}
         except RepositoryNotConnected:
@@ -119,7 +124,11 @@ def review_pr_task(
 
 
 def enqueue_review(
-    owner: str, repo_name: str, pr_number: int, received_at: str | None = None
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    received_at: str | None = None,
+    commit_shas: list[str] | None = None,
 ) -> None:
     """API-facing wrapper; tests monkeypatch this instead of Celery.
 
@@ -133,5 +142,8 @@ def enqueue_review(
     old three-argument code must still execute rather than raising
     ``TypeError``. A default absorbs both. It does not absorb the opposite
     order, so deploy workers before the API.
+
+    ``commit_shas`` narrows the review to the files those commits touched —
+    the commit picker. Also defaulted, for the same rolling-deploy reason.
     """
-    review_pr_task.delay(owner, repo_name, pr_number, received_at)
+    review_pr_task.delay(owner, repo_name, pr_number, received_at, commit_shas)

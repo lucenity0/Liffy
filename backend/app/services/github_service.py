@@ -250,6 +250,16 @@ class PullRequestMeta:
 
 
 @dataclass(frozen=True)
+class CommitMeta:
+    """One commit on a pull request, as much of it as a picker needs."""
+
+    sha: str
+    message: str
+    author: str
+    committed_at: str
+
+
+@dataclass(frozen=True)
 class RepositoryMeta:
     id: int
     full_name: str
@@ -552,6 +562,74 @@ class GitHubClient:
             accept="application/vnd.github.v3.diff",
         )
         return response.text
+
+    def list_pull_request_commits(
+        self, owner: str, repo: str, number: int, *, limit: int = 100
+    ) -> list["CommitMeta"]:
+        """Commits on a pull request, oldest first — GitHub's own order.
+
+        Backs the commit picker: after a review, which commits landed since,
+        so somebody can choose the ones worth looking at again. Oldest first
+        because that is the order they were written and the order a person
+        reasons about them in.
+
+        One page. A pull request with more than a hundred commits is not one
+        anybody is going to pick through commit by commit, and paginating to
+        support that would be building for a case the feature does not serve.
+        """
+        data = self._get(
+            f"/repos/{owner}/{repo}/pulls/{number}/commits",
+            params={"per_page": min(limit, 100)},
+        ).json()
+
+        return [
+            CommitMeta(
+                sha=item.get("sha", ""),
+                # First line only. A commit body can be paragraphs, and this
+                # renders as a row in a list.
+                message=(item.get("commit", {}).get("message", "") or "")
+                .split("\n")[0]
+                .strip(),
+                # `commit.author` rather than `author`: the latter is the
+                # GitHub *account* and is null for a commit whose email is not
+                # linked to one, which is common on merge and bot commits.
+                author=(item.get("commit", {}).get("author", {}) or {}).get("name", ""),
+                committed_at=(item.get("commit", {}).get("author", {}) or {}).get(
+                    "date", ""
+                ),
+            )
+            for item in data
+            if item.get("sha")
+        ]
+
+    def list_files_in_commits(
+        self, owner: str, repo: str, shas: list[str]
+    ) -> list[str]:
+        """Every file path the given commits touched, de-duplicated.
+
+        This is what turns "review these commits" into something reviewable.
+        Selecting commits picks the *files* to look at; they are then reviewed
+        as they stand at the pull request's head, not as those commits left
+        them — so a line changed again by a later commit is read at its
+        current value rather than a stale one, and there is nothing to
+        re-anchor.
+
+        One call per commit, which is why the caller is expected to keep the
+        selection small. A pull request diff is one call; this is the price of
+        choosing within it.
+        """
+        paths: list[str] = []
+        seen: set[str] = set()
+
+        for sha in shas:
+            data = self._get(f"/repos/{owner}/{repo}/commits/{sha}").json()
+            for entry in data.get("files") or []:
+                path = entry.get("filename")
+                if path and path not in seen:
+                    seen.add(path)
+                    paths.append(path)
+
+        return paths
 
     def get_comparison_diff(
         self, owner: str, repo: str, base: str, head: str

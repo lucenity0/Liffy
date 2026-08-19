@@ -10,6 +10,7 @@ import {
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
   fixtureRepos,
+  fixtureCommits,
   fixtureLatestFinding,
   fixtureReviewDetailById,
   fixtureReviewListItems,
@@ -255,6 +256,16 @@ export const handlers = [
   http.patch("*/prs/:prId/auto-review", async ({ request }) => {
     const { enabled } = (await request.json()) as { enabled: boolean };
     return HttpResponse.json({ pr_id: "x", auto_review: enabled });
+  }),
+
+  http.get("*/prs/:prId/commits", () => HttpResponse.json(fixtureCommits)),
+
+  http.post("*/prs/:prId/review-commits", async ({ request }) => {
+    const { shas } = (await request.json()) as { shas: string[] };
+    return HttpResponse.json(
+      { status: "queued", pr_number: 42, commits: shas.length },
+      { status: 202 },
+    );
   }),
 
   http.get("*/reviews/latest-finding", () =>

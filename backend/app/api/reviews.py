@@ -1,8 +1,8 @@
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,12 @@ from app.schemas.review import (
     ReviewListPage,
     ReviewOut,
     ReviewStatus,
+)
+from app.services.github_service import (
+    GitHubAuthError,
+    GitHubClient,
+    GitHubError,
+    GitHubRateLimitError,
 )
 from app.services.review_service import get_review_with_comments
 from app.workers import review_worker
@@ -209,6 +215,196 @@ def _detail(db: Session, review_id: uuid.UUID, user: User) -> ReviewDetailOut:
         ],
         raw_diff=review.raw_diff,
     )
+
+
+class CommitOut(BaseModel):
+    sha: str
+    message: str
+    author: str
+    committed_at: str
+    #: True when this commit landed after the last completed review of this PR.
+    is_new: bool
+
+
+class ReviewCommitsRequest(BaseModel):
+    """The commits to review, validated as commit SHAs and nothing else.
+
+    The pattern is load-bearing rather than tidiness. Each element is
+    interpolated into `/repos/{owner}/{repo}/commits/{sha}` by
+    `list_files_in_commits`, so a value containing `/`, `..`, `?` or `#`
+    reshapes that URL — addressing a different GitHub endpoint, or appending
+    query parameters, under the caller's own token. Hex only, and bounded.
+    """
+
+    shas: list[Annotated[str, Field(pattern=r"^[0-9a-fA-F]{7,40}$")]] = Field(
+        min_length=1, max_length=50
+    )
+
+    @field_validator("shas")
+    @classmethod
+    def _dedupe(cls, value: list[str]) -> list[str]:
+        """Collapse repeats, preserving order.
+
+        `list_files_in_commits` makes one GitHub call per element, so fifty
+        copies of one SHA is fifty sequential round trips inside the worker for
+        a single commit's file list.
+        """
+        seen: set[str] = set()
+        return [sha for sha in value if not (sha in seen or seen.add(sha))]
+
+
+def _owned_pr_or_404(
+    db: Session, pr_id: uuid.UUID, user: User
+) -> tuple[str, str, int]:
+    """`(owner, repo, pr_number)` for a pull request this caller owns.
+
+    Scoped through the owning repository like every other read here, so
+    somebody else's pull request is indistinguishable from one that does not
+    exist rather than being quietly readable.
+    """
+    row = db.execute(
+        select(Repository.full_name, PullRequest.github_pr_number)
+        .join(PullRequest, PullRequest.repo_id == Repository.id)
+        .where(PullRequest.id == pr_id, Repository.user_id == user.id)
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pull request not found")
+
+    owner, repo_name = row.full_name.split("/", 1)
+    return owner, repo_name, row.github_pr_number
+
+
+@router.get("/prs/{pr_id}/commits", response_model=list[CommitOut])
+def list_pr_commits(
+    pr_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[CommitOut]:
+    """Commits on a pull request, flagged with which are new since the review.
+
+    Backs the picker. `is_new` rather than filtering the old ones away: seeing
+    what was already reviewed is what makes "since" mean anything, and a list
+    that silently omits half a pull request's history invites the question of
+    where the rest went.
+
+    "Since" is measured from `head_sha` on the last completed review. A pull
+    request with no completed review has no boundary, so everything reads as
+    new — which is true.
+    """
+    owner, repo_name, pr_number = _owned_pr_or_404(db, pr_id, user)
+
+    # One pass over this pull request's completed reviews, newest first.
+    #
+    # Filtered in Python rather than SQL because "has a `scope` key" is a JSON
+    # containment test, and the portable spellings differ between SQLite and
+    # Postgres. A pull request has a handful of reviews; this is not the query
+    # to optimise.
+    rows = list(
+        db.execute(
+            select(Review.head_sha, Review.summary_detail)
+            .where(Review.pr_id == pr_id, Review.status == "completed")
+            .order_by(Review.created_at.desc())
+        )
+    )
+
+    # The boundary comes from the last review that read the *whole* pull
+    # request. A narrowed review completes with the head SHA too — it read the
+    # head, just not all of it — so treating its `head_sha` as a boundary
+    # claims everything before it was looked at, which is the one thing a
+    # narrowed review cannot claim. Pick C and D, skip A and B, and A and B
+    # come back marked reviewed with no way to tell them apart.
+    reviewed_sha = next(
+        (
+            head_sha
+            for head_sha, detail in rows
+            if head_sha and not ((detail or {}).get("scope") or {}).get("commits")
+        ),
+        None,
+    )
+
+    # Commits a narrowed review did cover sit *after* that boundary, so they
+    # are collected separately and unioned in below.
+    covered: set[str] = {
+        sha
+        for _, detail in rows
+        for sha in ((detail or {}).get("scope") or {}).get("commits") or []
+    }
+
+    # Same `except` chain as `repos.py`, and in the same order for the same
+    # reason: `GitHubRateLimitError` is a `GitHubError` subclass, so the
+    # broader clause first would swallow it.
+    #
+    # Without this a GitHub auth failure, rate limit or 404 propagated as a
+    # 500 with a traceback — and the picker's own error copy branches on 502,
+    # so the message written for this exact case was unreachable.
+    try:
+        with GitHubClient(token=user.github_access_token) as gh:
+            commits = gh.list_pull_request_commits(owner, repo_name, pr_number)
+    except GitHubRateLimitError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(status_code=429, detail=str(exc), headers=headers) from exc
+    except GitHubAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except GitHubError as exc:
+        raise HTTPException(status_code=502, detail=f"GitHub error: {exc}") from exc
+
+    # Walked in order rather than compared by timestamp. Commit dates are
+    # *author* dates and can run backwards relative to the order commits
+    # actually landed — a rebase or a cherry-pick is enough to make a
+    # chronological split wrong.
+    seen_boundary = reviewed_sha is None
+    out: list[CommitOut] = []
+    for commit in commits:
+        out.append(
+            CommitOut(
+                sha=commit.sha,
+                message=commit.message,
+                author=commit.author,
+                committed_at=commit.committed_at,
+                is_new=seen_boundary and commit.sha not in covered,
+            )
+        )
+        if commit.sha == reviewed_sha:
+            seen_boundary = True
+
+    # The boundary was never found, so a force-push rewrote it away. Nothing
+    # here is *known* to have been reviewed, and saying so is more honest than
+    # marking commits old on the strength of a commit that no longer exists —
+    # except for commits a narrowed review recorded by SHA, which are still
+    # known-reviewed regardless of where the boundary went.
+    if reviewed_sha is not None and not seen_boundary:
+        out = [
+            c.model_copy(update={"is_new": c.sha not in covered}) for c in out
+        ]
+
+    return out
+
+
+@router.post("/prs/{pr_id}/review-commits", status_code=202)
+def review_commits(
+    pr_id: uuid.UUID,
+    payload: ReviewCommitsRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Review only the files the selected commits touched.
+
+    The selection picks *files*, and those files are reviewed as they stand at
+    the pull request's head — not as the selected commits left them. So
+    skipping a commit in the middle cannot produce stale line numbers, and a
+    file touched by both a selected and an unselected commit is read whole.
+    """
+    owner, repo_name, pr_number = _owned_pr_or_404(db, pr_id, user)
+
+    review_worker.enqueue_review(
+        owner, repo_name, pr_number, commit_shas=payload.shas
+    )
+    return {
+        "status": "queued",
+        "repo": f"{owner}/{repo_name}",
+        "pr_number": pr_number,
+        "commits": len(payload.shas),
+    }
 
 
 # Declared before `/reviews/{review_id}`, and that ordering is load-bearing:

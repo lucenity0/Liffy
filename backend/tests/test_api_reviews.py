@@ -564,7 +564,12 @@ def enqueued(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, int]]:
     monkeypatch.setattr(
         reviews_api.review_worker,
         "enqueue_review",
-        lambda owner, repo, pr: calls.append((owner, repo, pr)),
+        # Absorbs the optional arguments without widening the recorded tuple:
+        # every existing assertion here is on `(owner, repo, pr)`, and a test
+        # that cares about the selection captures it itself.
+        lambda owner, repo, pr, received_at=None, commit_shas=None: calls.append(
+            (owner, repo, pr)
+        ),
     )
     return calls
 
@@ -817,6 +822,157 @@ def test_failure_fields_are_null_on_a_successful_review(seeded) -> None:
     assert body["failure_kind"] is None
 
 
+# ── The commit picker endpoints ───────────────────────────────────────────────
+
+SHA_A = "aaaaaaa1111111111111111111111111111111a1"
+SHA_B = "bbbbbbb2222222222222222222222222222222b2"
+
+
+class _CommitsGitHub:
+    """Just enough GitHubClient for the picker endpoints.
+
+    Including the context manager protocol: the endpoint uses `with` so the
+    connection is closed on the error paths too, and a double that skipped it
+    would pass while the real client leaked.
+    """
+
+    def __init__(self, commits) -> None:
+        self.commits = commits
+
+    def __enter__(self) -> "_CommitsGitHub":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def list_pull_request_commits(self, owner, repo, number, **kw):
+        return self.commits
+
+
+def _commit(sha: str):
+    from app.services.github_service import CommitMeta
+
+    return CommitMeta(
+        sha=sha, message=f"msg {sha}", author="octo", committed_at="2026-08-01T00:00:00Z"
+    )
+
+
+def _patch_gh(monkeypatch, commits) -> None:
+    monkeypatch.setattr(
+        reviews_api, "GitHubClient", lambda token=None: _CommitsGitHub(commits)
+    )
+
+
+def test_commits_are_flagged_new_after_the_last_reviewed_commit(
+    seeded, monkeypatch
+) -> None:
+    with seeded["factory"]() as db:
+        review = db.get(Review, seeded["new"])
+        review.head_sha = "b"
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c"), _commit("d")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+
+    assert [(c["sha"], c["is_new"]) for c in body] == [
+        ("a", False), ("b", False), ("c", True), ("d", True),
+    ]
+
+
+def test_every_commit_is_new_when_nothing_has_been_reviewed(
+    seeded, monkeypatch
+) -> None:
+    with seeded["factory"]() as db:
+        for review_id in (seeded["new"], seeded["old"]):
+            db.get(Review, review_id).status = "failed"
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert all(c["is_new"] for c in body)
+
+
+def test_a_rewritten_boundary_marks_everything_new(seeded, monkeypatch) -> None:
+    """A force-push rewrote the reviewed commit away.
+
+    Nothing in the list is *known* to have been reviewed, and saying so beats
+    marking commits old on the strength of a commit that no longer exists.
+    """
+    with seeded["factory"]() as db:
+        db.get(Review, seeded["new"]).head_sha = "vanished"
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert all(c["is_new"] for c in body)
+
+
+def test_commits_of_another_users_pull_request_are_not_readable(
+    seeded, monkeypatch
+) -> None:
+    _patch_gh(monkeypatch, [_commit("a")])
+
+    response = client.get(
+        f"/prs/{seeded['their_pr']}/commits", headers=seeded["headers"]
+    )
+    assert response.status_code == 404
+
+
+def test_review_commits_queues_with_the_selection(
+    seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(
+        reviews_api.review_worker,
+        "enqueue_review",
+        lambda owner, repo, pr, received_at=None, commit_shas=None: captured.update(
+            owner=owner, repo=repo, pr=pr, received_at=received_at, shas=commit_shas
+        ),
+    )
+
+    response = client.post(
+        f"/prs/{seeded['pr']}/review-commits",
+        json={"shas": [SHA_A, SHA_B]},
+        headers=seeded["headers"],
+    )
+
+    assert response.status_code == 202
+    assert response.json()["commits"] == 2
+    assert captured["shas"] == [SHA_A, SHA_B]
+    assert captured["pr"] == 7
+    # No `received_at`: this is a person asking, not a webhook delivery, which
+    # is also what stops the automatic incremental rule from re-narrowing it.
+    assert captured["received_at"] is None
+
+
+def test_review_commits_rejects_an_empty_selection(seeded) -> None:
+    """"Review nothing" is a mistake, not a request."""
+    response = client.post(
+        f"/prs/{seeded['pr']}/review-commits",
+        json={"shas": []},
+        headers=seeded["headers"],
+    )
+    assert response.status_code == 422
+
+
+def test_review_commits_cannot_target_another_users_pull_request(seeded) -> None:
+    response = client.post(
+        f"/prs/{seeded['their_pr']}/review-commits",
+        json={"shas": [SHA_A]},
+        headers=seeded["headers"],
+    )
+    assert response.status_code == 404
+
+
+def test_picker_endpoints_require_authentication(seeded) -> None:
+    assert client.get(f"/prs/{seeded['pr']}/commits").status_code == 401
+    assert client.post(
+        f"/prs/{seeded['pr']}/review-commits", json={"shas": [SHA_A]}
+    ).status_code == 401
+
 # ── PATCH /prs/{pr_id}/auto-review ────────────────────────────────────────────
 
 
@@ -854,3 +1010,148 @@ def test_auto_review_requires_authentication(seeded) -> None:
     assert client.patch(
         f"/prs/{seeded['pr']}/auto-review", json={"enabled": True}
     ).status_code == 401
+
+
+def test_a_sha_that_could_reshape_the_request_url_is_refused(seeded) -> None:
+    """Each element is interpolated into `/repos/{owner}/{repo}/commits/{sha}`.
+
+    A value containing `/`, `..`, `?` or `#` addresses a different GitHub
+    endpoint, or appends query parameters, under the caller's own token.
+    """
+    for hostile in (
+        "../../../users/octocat/repos",
+        "abc1234?per_page=100",
+        "abc1234#fragment",
+        "a/b",
+        "zzzzzzz",  # not hex
+        "abc",  # too short to be unambiguous
+    ):
+        response = client.post(
+            f"/prs/{seeded['pr']}/review-commits",
+            json={"shas": [hostile]},
+            headers=seeded["headers"],
+        )
+        assert response.status_code == 422, hostile
+
+
+def test_repeated_shas_are_collapsed(seeded, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One GitHub call is made per element, so repeats are repeated round trips."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        reviews_api.review_worker,
+        "enqueue_review",
+        lambda owner, repo, pr, received_at=None, commit_shas=None: captured.update(
+            shas=commit_shas
+        ),
+    )
+
+    client.post(
+        f"/prs/{seeded['pr']}/review-commits",
+        json={"shas": [SHA_A, SHA_A, SHA_B, SHA_A]},
+        headers=seeded["headers"],
+    )
+
+    assert captured["shas"] == [SHA_A, SHA_B]
+
+
+def test_a_narrowed_review_does_not_mark_skipped_commits_as_reviewed(
+    seeded, monkeypatch
+) -> None:
+    """The bug this pair of fixes exists for.
+
+    A narrowed review completes with the pull request's head SHA — it read the
+    head, just not all of it. Taking the boundary from `head_sha` alone would
+    mark every earlier commit reviewed, including the ones deliberately
+    skipped, with no way to tell them apart.
+    """
+    with seeded["factory"]() as db:
+        # The only completed review picked C, and it is narrowed.
+        review = db.get(Review, seeded["new"])
+        review.head_sha = "d"
+        review.summary_detail = {
+            "scope": {"files_reviewed": 1, "files_in_diff": 9, "commits": ["c"]}
+        }
+        db.get(Review, seeded["old"]).status = "failed"
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c"), _commit("d")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+
+    # a, b and d were never looked at; c was.
+    assert [(c["sha"], c["is_new"]) for c in body] == [
+        ("a", True), ("b", True), ("c", False), ("d", True),
+    ]
+
+
+def test_a_full_review_still_sets_the_boundary(seeded, monkeypatch) -> None:
+    """The narrowed-review exclusion must not break the ordinary case."""
+    with seeded["factory"]() as db:
+        review = db.get(Review, seeded["new"])
+        review.head_sha = "b"
+        review.summary_detail = {"changes": ["did a thing"]}  # no scope
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert [(c["sha"], c["is_new"]) for c in body] == [
+        ("a", False), ("b", False), ("c", True),
+    ]
+
+
+def test_a_github_failure_listing_commits_is_a_502_not_a_500(
+    seeded, monkeypatch
+) -> None:
+    """The picker's own error copy branches on 502.
+
+    Unhandled, a GitHub error propagated as a 500 with a traceback — so the
+    message written for exactly this case was unreachable, and the user got
+    a stack trace instead.
+    """
+    from app.services.github_service import GitHubError
+
+    class _Exploding:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+        def list_pull_request_commits(self, *a, **kw):
+            raise GitHubError("upstream said no")
+
+    monkeypatch.setattr(reviews_api, "GitHubClient", lambda token=None: _Exploding())
+
+    response = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"])
+
+    assert response.status_code == 502
+    assert "upstream said no" in response.json()["detail"]
+
+
+def test_a_rate_limit_listing_commits_says_wait_rather_than_reconnect(
+    seeded, monkeypatch
+) -> None:
+    """429 before 503: one of those is something the user can act on.
+
+    Rate limit is caught before auth because it is the more specific
+    subclass — the other order would never reach it, the way `repos.py`
+    already documents.
+    """
+    from app.services.github_service import GitHubRateLimitError
+
+    class _Limited:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+        def list_pull_request_commits(self, *a, **kw):
+            raise GitHubRateLimitError("slow down")
+
+    monkeypatch.setattr(reviews_api, "GitHubClient", lambda token=None: _Limited())
+
+    response = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"])
+
+    assert response.status_code == 429

@@ -29,6 +29,12 @@ export const keys = {
      */
     latestFinding: () => [...keys.reviews.all, "latest-finding"] as const,
     /**
+     * Under `prs`, not `reviews`: this describes a pull request's history and
+     * does not change when a review does — so review invalidation must not
+     * refetch it, and it must survive one.
+     */
+    commits: (prId: string) => ["prs", prId, "commits"] as const,
+    /**
      * Nested *under* the detail key, not beside it, and spelled by spreading
      * `detail(...)` so it cannot drift out from under it.
      *

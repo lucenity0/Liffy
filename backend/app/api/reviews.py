@@ -369,9 +369,13 @@ def list_pr_commits(
 
     # The boundary was never found, so a force-push rewrote it away. Nothing
     # here is *known* to have been reviewed, and saying so is more honest than
-    # marking commits old on the strength of a commit that no longer exists.
+    # marking commits old on the strength of a commit that no longer exists —
+    # except for commits a narrowed review recorded by SHA, which are still
+    # known-reviewed regardless of where the boundary went.
     if reviewed_sha is not None and not seen_boundary:
-        out = [c.model_copy(update={"is_new": True}) for c in out]
+        out = [
+            c.model_copy(update={"is_new": c.sha not in covered}) for c in out
+        ]
 
     return out
 

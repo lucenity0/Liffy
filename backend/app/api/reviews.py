@@ -23,6 +23,7 @@ from app.schemas.review import (
     ReviewOut,
     ReviewStatus,
 )
+from app.services.github_service import GitHubClient
 from app.services.review_service import get_review_with_comments
 from app.workers import review_worker
 
@@ -204,6 +205,129 @@ def _detail(db: Session, review_id: uuid.UUID, user: User) -> ReviewDetailOut:
         ],
         raw_diff=review.raw_diff,
     )
+
+
+class CommitOut(BaseModel):
+    sha: str
+    message: str
+    author: str
+    committed_at: str
+    #: True when this commit landed after the last completed review of this PR.
+    is_new: bool
+
+
+class ReviewCommitsRequest(BaseModel):
+    #: Full 40-character SHAs, as returned by the commits endpoint above.
+    shas: list[str] = Field(min_length=1, max_length=50)
+
+
+def _owned_pr_or_404(
+    db: Session, pr_id: uuid.UUID, user: User
+) -> tuple[str, str, int]:
+    """`(owner, repo, pr_number)` for a pull request this caller owns.
+
+    Scoped through the owning repository like every other read here, so
+    somebody else's pull request is indistinguishable from one that does not
+    exist rather than being quietly readable.
+    """
+    row = db.execute(
+        select(Repository.full_name, PullRequest.github_pr_number)
+        .join(PullRequest, PullRequest.repo_id == Repository.id)
+        .where(PullRequest.id == pr_id, Repository.user_id == user.id)
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pull request not found")
+
+    owner, repo_name = row.full_name.split("/", 1)
+    return owner, repo_name, row.github_pr_number
+
+
+@router.get("/prs/{pr_id}/commits", response_model=list[CommitOut])
+def list_pr_commits(
+    pr_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[CommitOut]:
+    """Commits on a pull request, flagged with which are new since the review.
+
+    Backs the picker. `is_new` rather than filtering the old ones away: seeing
+    what was already reviewed is what makes "since" mean anything, and a list
+    that silently omits half a pull request's history invites the question of
+    where the rest went.
+
+    "Since" is measured from `head_sha` on the last completed review. A pull
+    request with no completed review has no boundary, so everything reads as
+    new — which is true.
+    """
+    owner, repo_name, pr_number = _owned_pr_or_404(db, pr_id, user)
+
+    reviewed_sha = db.scalar(
+        select(Review.head_sha)
+        .where(
+            Review.pr_id == pr_id,
+            Review.status == "completed",
+            Review.head_sha.is_not(None),
+        )
+        .order_by(Review.created_at.desc())
+        .limit(1)
+    )
+
+    gh = GitHubClient(token=user.github_access_token)
+    commits = gh.list_pull_request_commits(owner, repo_name, pr_number)
+
+    # Walked in order rather than compared by timestamp. Commit dates are
+    # *author* dates and can run backwards relative to the order commits
+    # actually landed — a rebase or a cherry-pick is enough to make a
+    # chronological split wrong.
+    seen_boundary = reviewed_sha is None
+    out: list[CommitOut] = []
+    for commit in commits:
+        out.append(
+            CommitOut(
+                sha=commit.sha,
+                message=commit.message,
+                author=commit.author,
+                committed_at=commit.committed_at,
+                is_new=seen_boundary,
+            )
+        )
+        if commit.sha == reviewed_sha:
+            seen_boundary = True
+
+    # The boundary was never found, so a force-push rewrote it away. Nothing
+    # here is *known* to have been reviewed, and saying so is more honest than
+    # marking commits old on the strength of a commit that no longer exists.
+    if reviewed_sha is not None and not seen_boundary:
+        out = [c.model_copy(update={"is_new": True}) for c in out]
+
+    return out
+
+
+@router.post("/prs/{pr_id}/review-commits", status_code=202)
+def review_commits(
+    pr_id: uuid.UUID,
+    payload: ReviewCommitsRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Review only the files the selected commits touched.
+
+    The selection picks *files*, and those files are reviewed as they stand at
+    the pull request's head — not as the selected commits left them. So
+    skipping a commit in the middle cannot produce stale line numbers, and a
+    file touched by both a selected and an unselected commit is read whole.
+    """
+    owner, repo_name, pr_number = _owned_pr_or_404(db, pr_id, user)
+
+    review_worker.enqueue_review(
+        owner, repo_name, pr_number, commit_shas=payload.shas
+    )
+    return {
+        "status": "queued",
+        "repo": f"{owner}/{repo_name}",
+        "pr_number": pr_number,
+        "commits": len(payload.shas),
+    }
 
 
 # Declared before `/reviews/{review_id}`, and that ordering is load-bearing:

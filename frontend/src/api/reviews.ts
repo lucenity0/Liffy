@@ -1,5 +1,6 @@
 import { apiClient } from "./client";
 import type {
+  CommitOut,
   LatestFindingOut,
   ReviewDetailOut,
   ReviewListPage,
@@ -64,6 +65,26 @@ export async function getLatestFinding(): Promise<LatestFindingOut | null> {
   const { data } = await apiClient.get<LatestFindingOut | null>(
     "/reviews/latest-finding",
   );
+  return data;
+}
+
+/** Commits on a pull request, each flagged with whether it is new since the review. */
+export async function listPrCommits(prId: string): Promise<CommitOut[]> {
+  const { data } = await apiClient.get<CommitOut[]>(`/prs/${prId}/commits`);
+  return data;
+}
+
+/**
+ * Review only the files the given commits touched.
+ *
+ * Returns 202 with no review id, like the other triggers — the caller
+ * invalidates the list and lets polling surface the new row.
+ */
+export async function reviewCommits(
+  prId: string,
+  shas: string[],
+): Promise<{ status: string; pr_number: number; commits: number }> {
+  const { data } = await apiClient.post(`/prs/${prId}/review-commits`, { shas });
   return data;
 }
 

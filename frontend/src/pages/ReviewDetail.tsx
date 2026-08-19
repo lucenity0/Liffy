@@ -6,6 +6,7 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { Sheet } from "@/components/ui/Sheet";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { TabPanel, Tabs, type TabSpec } from "@/components/ui/Tabs";
+import { CommitPicker } from "@/components/review/CommitPicker";
 import { ReviewHeader } from "@/components/review/ReviewHeader";
 import { ReviewFailed } from "@/components/review/ReviewStates";
 import { ReviewProgress } from "@/components/review/ReviewProgress";
@@ -148,6 +149,11 @@ export function ReviewDetail() {
         rereviewQueued={rereview.isSuccess}
         rereviewError={rereview.error}
       />
+
+      {/* Under the header, above the tabs: it is an action on the pull
+          request rather than part of reading this review, and it collapses to
+          a single button until asked. */}
+      <CommitPicker prId={data.pr_id} />
 
       {(data.status === "pending" || data.status === "processing") && (
         <ReviewProgress review={data} />

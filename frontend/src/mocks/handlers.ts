@@ -10,6 +10,7 @@ import {
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
   fixtureRepos,
+  fixtureCommits,
   fixtureLatestFinding,
   fixtureReviewDetailById,
   fixtureReviewListItems,
@@ -252,6 +253,16 @@ export const handlers = [
    * as `reviewId="latest-finding"`, misses the fixture map, and answers 404 —
    * the mock would disagree with the server about a route that works.
    */
+  http.get("*/prs/:prId/commits", () => HttpResponse.json(fixtureCommits)),
+
+  http.post("*/prs/:prId/review-commits", async ({ request }) => {
+    const { shas } = (await request.json()) as { shas: string[] };
+    return HttpResponse.json(
+      { status: "queued", pr_number: 42, commits: shas.length },
+      { status: 202 },
+    );
+  }),
+
   http.get("*/reviews/latest-finding", () =>
     HttpResponse.json(fixtureLatestFinding),
   ),

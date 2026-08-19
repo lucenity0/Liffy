@@ -223,6 +223,16 @@ export interface LatestFindingOut {
   comment: ReviewCommentOut;
 }
 
+/** One commit on a pull request, as the picker shows it. */
+export interface CommitOut {
+  sha: string;
+  message: string;
+  author: string;
+  committed_at: string;
+  /** Landed after the last completed review of this pull request. */
+  is_new: boolean;
+}
+
 export interface ReviewCommentOut {
   id: string;
   file_path: string;

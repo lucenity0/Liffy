@@ -1040,3 +1040,114 @@ def test_a_push_still_gets_the_cheap_check(db: Session) -> None:
     _run_gh(db, FakeLLM([_payload([])]), gh, automatic=True)
 
     assert gh.compare_calls == [("abc123", "def456")]
+
+
+# ── The commit picker ─────────────────────────────────────────────────────────
+#
+# Selecting commits picks *files*, and those files are reviewed as they stand
+# at the pull request's head — not as the selected commits left them. That is
+# what makes skipping a commit in the middle safe: there are no stale line
+# numbers to re-anchor, because nothing is read at an old revision.
+
+
+def _picker_gh(commit_files: dict) -> FakeGitHub:
+    gh = FakeGitHub(pr_meta=META, pr_diff=DIFF)
+    gh.commit_files = commit_files
+    return gh
+
+
+def test_selected_commits_narrow_the_review_to_the_files_they_touched(
+    db: Session,
+) -> None:
+    gh = _picker_gh({"c1": ["app/util.py"]})
+
+    run_review(
+        db, "octo", "demo", 7, gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+        commit_shas=["c1"],
+    )
+
+    assert gh.files_in_commits_calls == [["c1"]]
+
+
+def test_a_selection_touching_nothing_in_the_diff_reviews_everything(
+    db: Session,
+) -> None:
+    """Reverted, or outside the pull request entirely.
+
+    Reviewing everything is wrong here, but reviewing nothing is worse — a
+    request to look at something answered with silence.
+    """
+    gh = _picker_gh({"c1": ["docs/unrelated.md"]})
+
+    review = run_review(
+        db, "octo", "demo", 7, gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+        commit_shas=["c1"],
+    )
+
+    assert review.status == "completed"
+
+
+def test_an_unresolvable_commit_falls_back_rather_than_failing(db: Session) -> None:
+    """A force-push orphans the sha and GitHub answers 404.
+
+    Every scoping failure widens; none of them may raise. An expensive review
+    is a far better outcome than none.
+    """
+    gh = _picker_gh({})  # any sha raises
+
+    review = run_review(
+        db, "octo", "demo", 7, gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+        commit_shas=["gone"],
+    )
+
+    assert review.status == "completed"
+
+
+def test_the_picker_beats_incremental_scoping(db: Session) -> None:
+    """A named selection is a stronger signal than "what changed since".
+
+    Both narrow, and asking for specific commits should not then be widened or
+    re-narrowed by the automatic rule — so the compare endpoint is never
+    consulted when a selection is given.
+    """
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = _picker_gh({"c1": ["app/util.py"]})
+    gh.pr_meta = _meta_at("def456")
+    gh.compare_diff = SECOND_DIFF
+
+    run_review(
+        db, "octo", "demo", 7, gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+        received_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        commit_shas=["c1"],
+    )
+
+    assert gh.compare_calls == []
+    assert gh.files_in_commits_calls == [["c1"]]
+
+
+def test_raw_diff_stays_whole_under_a_selection(db: Session) -> None:
+    """Comments are still anchored and posted against the full pull request."""
+    gh = _picker_gh({"c1": ["app/util.py"]})
+
+    review = run_review(
+        db, "octo", "demo", 7, gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+        commit_shas=["c1"],
+    )
+
+    assert review.raw_diff == DIFF

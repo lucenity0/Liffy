@@ -564,7 +564,12 @@ def enqueued(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, int]]:
     monkeypatch.setattr(
         reviews_api.review_worker,
         "enqueue_review",
-        lambda owner, repo, pr: calls.append((owner, repo, pr)),
+        # Absorbs the optional arguments without widening the recorded tuple:
+        # every existing assertion here is on `(owner, repo, pr)`, and a test
+        # that cares about the selection captures it itself.
+        lambda owner, repo, pr, received_at=None, commit_shas=None: calls.append(
+            (owner, repo, pr)
+        ),
     )
     return calls
 
@@ -815,3 +820,141 @@ def test_failure_fields_are_null_on_a_successful_review(seeded) -> None:
     body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
     assert body["failure_detail"] is None
     assert body["failure_kind"] is None
+
+
+# ── The commit picker endpoints ───────────────────────────────────────────────
+
+
+class _CommitsGitHub:
+    """Just enough GitHubClient for the picker endpoints."""
+
+    def __init__(self, commits) -> None:
+        self.commits = commits
+
+    def list_pull_request_commits(self, owner, repo, number, **kw):
+        return self.commits
+
+
+def _commit(sha: str):
+    from app.services.github_service import CommitMeta
+
+    return CommitMeta(
+        sha=sha, message=f"msg {sha}", author="octo", committed_at="2026-08-01T00:00:00Z"
+    )
+
+
+def _patch_gh(monkeypatch, commits) -> None:
+    monkeypatch.setattr(
+        reviews_api, "GitHubClient", lambda token=None: _CommitsGitHub(commits)
+    )
+
+
+def test_commits_are_flagged_new_after_the_last_reviewed_commit(
+    seeded, monkeypatch
+) -> None:
+    with seeded["factory"]() as db:
+        review = db.get(Review, seeded["new"])
+        review.head_sha = "b"
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c"), _commit("d")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+
+    assert [(c["sha"], c["is_new"]) for c in body] == [
+        ("a", False), ("b", False), ("c", True), ("d", True),
+    ]
+
+
+def test_every_commit_is_new_when_nothing_has_been_reviewed(
+    seeded, monkeypatch
+) -> None:
+    with seeded["factory"]() as db:
+        for review_id in (seeded["new"], seeded["old"]):
+            db.get(Review, review_id).status = "failed"
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert all(c["is_new"] for c in body)
+
+
+def test_a_rewritten_boundary_marks_everything_new(seeded, monkeypatch) -> None:
+    """A force-push rewrote the reviewed commit away.
+
+    Nothing in the list is *known* to have been reviewed, and saying so beats
+    marking commits old on the strength of a commit that no longer exists.
+    """
+    with seeded["factory"]() as db:
+        db.get(Review, seeded["new"]).head_sha = "vanished"
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert all(c["is_new"] for c in body)
+
+
+def test_commits_of_another_users_pull_request_are_not_readable(
+    seeded, monkeypatch
+) -> None:
+    _patch_gh(monkeypatch, [_commit("a")])
+
+    response = client.get(
+        f"/prs/{seeded['their_pr']}/commits", headers=seeded["headers"]
+    )
+    assert response.status_code == 404
+
+
+def test_review_commits_queues_with_the_selection(
+    seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(
+        reviews_api.review_worker,
+        "enqueue_review",
+        lambda owner, repo, pr, received_at=None, commit_shas=None: captured.update(
+            owner=owner, repo=repo, pr=pr, received_at=received_at, shas=commit_shas
+        ),
+    )
+
+    response = client.post(
+        f"/prs/{seeded['pr']}/review-commits",
+        json={"shas": ["c1", "c2"]},
+        headers=seeded["headers"],
+    )
+
+    assert response.status_code == 202
+    assert response.json()["commits"] == 2
+    assert captured["shas"] == ["c1", "c2"]
+    assert captured["pr"] == 7
+    # No `received_at`: this is a person asking, not a webhook delivery, which
+    # is also what stops the automatic incremental rule from re-narrowing it.
+    assert captured["received_at"] is None
+
+
+def test_review_commits_rejects_an_empty_selection(seeded) -> None:
+    """"Review nothing" is a mistake, not a request."""
+    response = client.post(
+        f"/prs/{seeded['pr']}/review-commits",
+        json={"shas": []},
+        headers=seeded["headers"],
+    )
+    assert response.status_code == 422
+
+
+def test_review_commits_cannot_target_another_users_pull_request(seeded) -> None:
+    response = client.post(
+        f"/prs/{seeded['their_pr']}/review-commits",
+        json={"shas": ["c1"]},
+        headers=seeded["headers"],
+    )
+    assert response.status_code == 404
+
+
+def test_picker_endpoints_require_authentication(seeded) -> None:
+    assert client.get(f"/prs/{seeded['pr']}/commits").status_code == 401
+    assert client.post(
+        f"/prs/{seeded['pr']}/review-commits", json={"shas": ["c1"]}
+    ).status_code == 401

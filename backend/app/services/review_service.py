@@ -156,6 +156,7 @@ def run_review(
     embedder: EmbeddingProvider,
     llm: ReviewLLM | Callable[[], ReviewLLM],
     received_at: datetime | None = None,
+    commit_shas: list[str] | None = None,
 ) -> Review:
     # Validated here, before the clock and before any row is written.
     #
@@ -252,6 +253,7 @@ def run_review(
         review_diffs, since = _diffs_to_review(
             gh, owner, repo_name, db, pr.id, review, meta, file_diffs,
             automatic=received_at is not None,
+            commit_shas=commit_shas,
         )
 
         # Retrieval follows what is being reviewed, not the whole pull request.
@@ -419,6 +421,7 @@ def _last_reviewed_sha(db: Session, pr_id: uuid.UUID, review: Review) -> str | N
 def _diffs_to_review(
     gh, owner: str, repo_name: str, db: Session, pr_id: uuid.UUID,
     review: Review, meta, file_diffs, *, automatic: bool,
+    commit_shas: list[str] | None = None,
 ):
     """What to show the model, and whether it is an increment.
 
@@ -443,6 +446,44 @@ def _diffs_to_review(
     deserves a review, and getting an expensive one is a far better outcome
     than getting none.
     """
+    if commit_shas:
+        # The commit picker: somebody named which commits are worth looking at.
+        #
+        # The selection chooses *files*, and those files are reviewed as they
+        # stand at the pull request's head rather than as the chosen commits
+        # left them. Skipping a commit in the middle therefore cannot produce a
+        # stale line number, and a file touched by both a chosen and an unchosen
+        # commit is read whole — which is also why this filters `file_diffs`
+        # rather than fetching a diff of its own.
+        try:
+            paths = set(gh.list_files_in_commits(owner, repo_name, commit_shas))
+        except Exception as exc:  # noqa: BLE001 - never fail a review over this
+            logger.warning(
+                "could not resolve files for %d commit(s) on %s/%s#%s, "
+                "reviewing the whole diff: %s",
+                len(commit_shas), owner, repo_name, meta.number, exc,
+            )
+            return file_diffs, None
+
+        chosen = [fd for fd in file_diffs if fd.path in paths]
+        if not chosen:
+            # The chosen commits touched nothing that survives in the pull
+            # request's diff — reverted, or entirely outside it. Reviewing
+            # everything is wrong, but reviewing nothing is worse.
+            logger.info(
+                "selected commits touch no file in the diff of %s/%s#%s, "
+                "reviewing the whole diff",
+                owner, repo_name, meta.number,
+            )
+            return file_diffs, None
+
+        logger.info(
+            "reviewing %d of %d file(s) on %s/%s#%s, chosen via %d commit(s)",
+            len(chosen), len(file_diffs), owner, repo_name, meta.number,
+            len(commit_shas),
+        )
+        return chosen, None
+
     if not automatic:
         # Asked for by a person: `received_at` is set only by the webhook, so
         # its absence means the trigger endpoint or the Re-review button. Both

@@ -8,6 +8,7 @@ import type {
   HelpPassage,
   RepoListItem,
   RepoStatusOut,
+  CommitOut,
   LatestFindingOut,
   ReviewCommentOut,
   ReviewDetailOut,
@@ -301,6 +302,38 @@ export const fixtureReviewFailedWithLog: ReviewDetailOut = {
   failure_detail:
     '{"is_error": true, "duration_api_ms": 1695, "num_turns": 1, "stop_reason": "stop_sequence", "session_id": "cdfdfc3e-f6e6-4056-9e94-a8d1961d3441"}',
 };
+
+/** Two already-reviewed commits and two that landed since. */
+export const fixtureCommits: CommitOut[] = [
+  {
+    sha: "aaaaaaa1111111111111111111111111111111111",
+    message: "feat: add the filter bar",
+    author: "lucenity0",
+    committed_at: "2026-07-25T09:00:00Z",
+    is_new: false,
+  },
+  {
+    sha: "bbbbbbb2222222222222222222222222222222222",
+    message: "test: cover the empty case",
+    author: "lucenity0",
+    committed_at: "2026-07-25T10:00:00Z",
+    is_new: false,
+  },
+  {
+    sha: "ccccccc3333333333333333333333333333333333",
+    message: "docs: fix a typo in the README",
+    author: "lucenity0",
+    committed_at: "2026-07-25T11:00:00Z",
+    is_new: true,
+  },
+  {
+    sha: "ddddddd4444444444444444444444444444444444",
+    message: "fix: handle the null case",
+    author: "lucenity0",
+    committed_at: "2026-07-25T12:00:00Z",
+    is_new: true,
+  },
+];
 
 export const fixtureReviewListItems: ReviewListItem[] = [
   detailToListItem(fixtureReviewFailed),

@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -12,8 +12,10 @@ from app.models.comment_feedback import CommentFeedback
 from app.models.pull_request import PullRequest
 from app.models.repository import Repository
 from app.models.review import Review
+from app.models.review_comment import ReviewComment
 from app.models.user import User
 from app.schemas.review import (
+    LatestFindingOut,
     ReviewCommentOut,
     ReviewDetailOut,
     ReviewListItem,
@@ -74,6 +76,7 @@ def list_reviews(
     repo_id: uuid.UUID | None = Query(default=None),
     pr_number: int | None = Query(default=None, gt=0),
     status: ReviewStatus | None = Query(default=None),
+    include_failed: bool = Query(default=True),
     sort: Literal["newest", "oldest"] = Query(default="newest"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -113,6 +116,22 @@ def list_reviews(
         owned = owned.where(PullRequest.github_pr_number == pr_number)
     if status is not None:
         owned = owned.where(Review.status == status)
+
+    # Not `status="completed"` with a different name. The dashboard wants
+    # everything *except* failures — a queued or in-flight review is the most
+    # interesting row on that page, and filtering to completed would hide the
+    # async behaviour the product is built around.
+    #
+    # Defaults to True so every existing caller keeps its current answer, and
+    # `total` narrows with it: a count that included failures over a page that
+    # excluded them would offer a Next leading nowhere, which is the same bug
+    # the envelope exists to prevent.
+    #
+    # Combining this with `status="failed"` is contradictory and returns an
+    # empty page rather than erroring — the two filters AND like every other
+    # pair here, and no caller sends both.
+    if not include_failed:
+        owned = owned.where(Review.status != "failed")
 
     ordering = (
         Review.created_at.asc() if sort == "oldest" else Review.created_at.desc()
@@ -184,6 +203,77 @@ def _detail(db: Session, review_id: uuid.UUID, user: User) -> ReviewDetailOut:
             for c in comments
         ],
         raw_diff=review.raw_diff,
+    )
+
+
+# Declared before `/reviews/{review_id}`, and that ordering is load-bearing:
+# FastAPI matches routes in definition order, so with this below the detail
+# route "latest-finding" is handed to it as a `review_id` and answers 422
+# against a UUID parse. Moving it down is a silent break with a confusing
+# error, which is why `test_latest_finding_is_not_parsed_as_a_review_id`
+# exists.
+@router.get("/reviews/latest-finding", response_model=LatestFindingOut | None)
+def latest_finding(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> LatestFindingOut | None:
+    """The most recent finding worth showing, or ``None``.
+
+    The dashboard opens on counts, which say a job ran; this says the product
+    works. One comment, from the newest completed review that produced any.
+
+    **The inner join is doing the selection.** A review with no comments has
+    no rows here at all, so "most recent completed review that actually found
+    something" falls out of `ORDER BY created_at DESC LIMIT 1` for free —
+    without it, a clean pull request (which is a *good* outcome Liffy is meant
+    to produce) would blank the band until the next PR came in.
+
+    Within that review, the worst finding wins. Severity is a string column,
+    so the rank is spelled here rather than sorted alphabetically — which
+    would order critical, info, warning, and put the least urgent finding in
+    the middle.
+
+    `failed` reviews are excluded by the status filter, not merely sorted
+    below: a failed review has no comments to show anyway, and the dashboard
+    is not where an error belongs.
+    """
+    severity_rank = case(
+        (ReviewComment.severity == "critical", 0),
+        (ReviewComment.severity == "warning", 1),
+        else_=2,
+    )
+
+    # The ownership filter rides the join, exactly as `list_reviews` does it —
+    # the same security property, applied first and never widened.
+    row = db.execute(
+        select(
+            ReviewComment,
+            Review.id,
+            Review.created_at,
+            PullRequest.github_pr_number,
+            Repository.full_name,
+        )
+        .join(Review, ReviewComment.review_id == Review.id)
+        .join(PullRequest, Review.pr_id == PullRequest.id)
+        .join(Repository, PullRequest.repo_id == Repository.id)
+        .where(Repository.user_id == user.id, Review.status == "completed")
+        .order_by(Review.created_at.desc(), severity_rank)
+        .limit(1)
+    ).first()
+
+    if row is None:
+        return None
+
+    comment, review_id, reviewed_at, pr_number, full_name = row
+    return LatestFindingOut(
+        review_id=review_id,
+        pr_number=pr_number,
+        repo_full_name=full_name,
+        reviewed_at=reviewed_at,
+        # `my_rating` is left at its default: the dashboard shows the finding,
+        # it does not ask you to rate it. Rating lives on the detail page,
+        # where the suggestion it is rating is also on screen.
+        comment=ReviewCommentOut.model_validate(comment),
     )
 
 

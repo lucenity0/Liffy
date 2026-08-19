@@ -18,7 +18,18 @@ export const RECENT_REVIEWS_LIMIT = 5;
  * number that says whether "All reviews" is worth a click.
  */
 export function RecentReviews() {
-  const reviews = useReviews({ limit: RECENT_REVIEWS_LIMIT });
+  // Failures are excluded here and nowhere else. This is the page you land
+  // on, and a run that died on a rate limit or a missing CLI is a fact about
+  // your setup rather than about your code — it belongs on /reviews, where it
+  // can be read next to the others and filtered for deliberately.
+  //
+  // Not `status: "completed"`: a queued or processing review is the most
+  // interesting row this list can show, and narrowing to completed would hide
+  // exactly the async behaviour the dashboard is meant to display.
+  const reviews = useReviews({
+    limit: RECENT_REVIEWS_LIMIT,
+    includeFailed: false,
+  });
 
   return (
     <Sheet>

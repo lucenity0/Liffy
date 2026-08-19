@@ -8,6 +8,7 @@ import type {
   HelpPassage,
   RepoListItem,
   RepoStatusOut,
+  LatestFindingOut,
   ReviewCommentOut,
   ReviewDetailOut,
   ReviewListItem,
@@ -119,6 +120,18 @@ const fixtureCommentCritical: ReviewCommentOut = {
   // Already rated, so the pressed state has something to render against
   // without a test having to POST first.
   my_rating: 1,
+};
+
+/**
+ * What the dashboard's opening band shows. The *critical* comment, because
+ * the endpoint picks the worst finding in the newest review that had one.
+ */
+export const fixtureLatestFinding: LatestFindingOut = {
+  review_id: "bbbbbbbb-0000-0000-0000-000000000001",
+  pr_number: 42,
+  repo_full_name: "lucenity0/Liffy",
+  reviewed_at: "2026-07-25T14:32:11Z",
+  comment: fixtureCommentCritical,
 };
 
 export const fixtureReviewCompleted: ReviewDetailOut = {
@@ -233,6 +246,11 @@ export const fixtureReviewFailed: ReviewDetailOut = {
   summary_detail: null,
   summary: null,
   verdict: null,
+  // The shape a pre-migration row has: a failure with no detail and no kind.
+  // Kept as the default fixture deliberately — most rows in a real database
+  // look like this, and the panel has to read well for them.
+  failure_detail: null,
+  failure_kind: null,
   model_used: "gpt-4o",
   tokens_used: null,
   // A failed review still reports how long it took to fail — that is the
@@ -272,6 +290,17 @@ const detailToListItem = (review: ReviewDetailOut): ReviewListItem => ({
   queued_at: review.queued_at,
   completed_at: review.completed_at,
 });
+
+/** A failure the reader *can* act on: allowance exhausted, log attached. */
+export const fixtureReviewFailedWithLog: ReviewDetailOut = {
+  ...fixtureReviewFailed,
+  id: "bbbbbbbb-0000-0000-0000-000000000006",
+  summary:
+    "Review failed: Claude Code hit its subscription rate limit or quota. Nothing is misconfigured — the account is out of allowance for now, and the same review will succeed once it resets.",
+  failure_kind: "limit",
+  failure_detail:
+    '{"is_error": true, "duration_api_ms": 1695, "num_turns": 1, "stop_reason": "stop_sequence", "session_id": "cdfdfc3e-f6e6-4056-9e94-a8d1961d3441"}',
+};
 
 export const fixtureReviewListItems: ReviewListItem[] = [
   detailToListItem(fixtureReviewFailed),

@@ -16,6 +16,13 @@ import { renderWithProviders } from "@/test/renderWithProviders";
 import { Dashboard } from "./Dashboard";
 
 /**
+ * The dashboard asks for `include_failed=false`, so a failed fixture row never
+ * reaches it. Derived from the fixtures rather than hardcoded, so adding one
+ * does not quietly break the counts below.
+ */
+const visibleReviews = fixtureReviewListItems.filter((r) => r.status !== "failed");
+
+/**
  * Every repo query is scoped to the repositories list. It has to be: a repo's
  * full_name also appears in the review rows below it, and testing-library
  * matches on an element's *direct* text nodes — so an unscoped
@@ -106,7 +113,7 @@ describe("Dashboard — repositories", () => {
     // The other section runs off its own query and is unaffected.
     const reviews = await screen.findByRole("list", { name: "Recent reviews" });
     expect(within(reviews).getAllByRole("listitem")).toHaveLength(
-      fixtureReviewListItems.length,
+      visibleReviews.length,
     );
   });
 
@@ -295,11 +302,11 @@ describe("Dashboard — recent reviews", () => {
 
     const reviews = await screen.findByRole("list", { name: "Recent reviews" });
     const rows = within(reviews).getAllByRole("listitem");
-    expect(rows).toHaveLength(fixtureReviewListItems.length);
+    expect(rows).toHaveLength(visibleReviews.length);
 
     // Newest first, by `created_at` — not the fixture array's own order, which
     // is arbitrary and no longer what the handler replays.
-    const [newest] = [...fixtureReviewListItems].sort(
+    const [newest] = [...visibleReviews].sort(
       (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
     );
     expect(within(rows[0]).getByRole("link")).toHaveAttribute(
@@ -330,13 +337,36 @@ describe("Dashboard — recent reviews", () => {
     const reviews = await screen.findByRole("list", { name: "Recent reviews" });
     const rows = within(reviews).getAllByRole("listitem");
 
-    // Newest first, which the handler now genuinely sorts by rather than
-    // replaying the fixture array's own order: processing (26th), completed
-    // (25th), approve (24th), failed (23rd).
+    // Newest first, which the handler genuinely sorts by rather than replaying
+    // the fixture array's own order: processing (26th), completed (25th),
+    // approve (24th). The failed row (23rd) is filtered out before it gets
+    // here — see the dedicated test below.
     expect(within(rows[0]).getByText("Processing")).toBeInTheDocument();
     expect(within(rows[2]).getByText("Approve")).toBeInTheDocument();
-    expect(within(rows[3]).getByText("Failed")).toBeInTheDocument();
-    expect(within(rows[3]).queryByText("Approve")).toBeNull();
+  });
+
+  it("leaves failed reviews off the dashboard entirely", async () => {
+    renderWithProviders(<Dashboard />);
+
+    const reviews = await screen.findByRole("list", { name: "Recent reviews" });
+    expect(within(reviews).queryByText("Failed")).toBeNull();
+  });
+
+  it("asks the server to exclude them rather than filtering after the fact", async () => {
+    // Filtering client-side would leave `total` counting rows the page does
+    // not show, and would spend part of the five-row window on hidden ones.
+    let param: string | null = null;
+    server.use(
+      http.get("*/reviews", ({ request }) => {
+        param = new URL(request.url).searchParams.get("include_failed");
+        return HttpResponse.json(reviewPage(visibleReviews));
+      }),
+    );
+
+    renderWithProviders(<Dashboard />);
+
+    await screen.findByRole("list", { name: "Recent reviews" });
+    expect(param).toBe("false");
   });
 
   it("has its own empty state", async () => {

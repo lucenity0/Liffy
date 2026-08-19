@@ -3,6 +3,7 @@ import { CATEGORY_LABELS } from "@/lib/categories";
 import { categoryCounts, severityCounts } from "@/lib/reviewStats";
 import { formatCount, formatDuration } from "@/lib/utils";
 import type { Category, ReviewDetailOut, Severity } from "@/types/api";
+import { ModelProse } from "@/components/ui/ModelProse";
 
 const SEVERITY_ORDER: Severity[] = ["critical", "warning", "info"];
 
@@ -54,7 +55,7 @@ export function SummaryTab({ review }: { review: ReviewDetailOut }) {
               whichever tab is open and sits one line above this panel — two
               copies a centimetre apart is not emphasis, it is a stutter. */}
         {review.summary ? (
-          <p className="prose-hand">{review.summary}</p>
+          <ModelProse text={review.summary} />
         ) : (
           <p className="text-base text-ink-dim">
             This review finished without a summary.

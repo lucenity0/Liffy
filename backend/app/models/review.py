@@ -37,6 +37,25 @@ class Review(Base):
     # to move, and a migration per field is a poor trade for a payload nothing
     # queries. Null on reviews written before this landed.
     summary_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # The raw provider output behind a failure, kept out of `summary`.
+    #
+    # `summary` is the line the reviews list renders for every review, so a
+    # failure's technical detail welded onto it put three hundred characters of
+    # `{"is_error": true, "duration_api_ms": ...}` on screen next to ordinary
+    # review descriptions. Here it can sit behind a disclosure instead, in
+    # full, without a cap chosen for a preview line.
+    failure_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Whether the person reading can do anything about it. The values are
+    # spelled once in `chain.FAILURE_KIND` rather than constrained here,
+    # because the LLM providers own the taxonomy and a check constraint would
+    # need a migration every time one learns a new failure.
+    #
+    # `unknown` is the load-bearing value: it is what tells the UI to offer a
+    # bug report instead of advice, because nothing it could advise would help.
+    failure_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)

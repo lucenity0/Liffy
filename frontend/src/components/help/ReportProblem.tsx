@@ -66,10 +66,25 @@ const COPY = {
   },
 } as const;
 
-export function ReportProblem({ query }: { query: string }) {
-  const [open, setOpen] = useState(false);
+export function ReportProblem({
+  query,
+  prefillTitle,
+}: {
+  query: string;
+  /**
+   * A title handed over by whoever linked here — a failed review, today.
+   *
+   * Opens the form and fills the title, because arriving from "Report this" on
+   * a review that just failed and landing on a collapsed form is the same dead
+   * end that link existed to remove. Initial state only: it seeds the field
+   * and then the field is the user's, so typing over it is not undone by a
+   * re-render.
+   */
+  prefillTitle?: string;
+}) {
+  const [open, setOpen] = useState(Boolean(prefillTitle));
   const [kind, setKind] = useState<Kind>("bug");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(prefillTitle ?? "");
   const [body, setBody] = useState("");
   const report = useSubmitReport();
 

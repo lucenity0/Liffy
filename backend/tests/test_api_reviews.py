@@ -619,3 +619,199 @@ def test_cors_headers_echoed_for_dev_origin(seeded) -> None:
     origin = "http://localhost:5173"
     response = client.get("/reviews", headers={"Origin": origin, **seeded["headers"]})
     assert response.headers["access-control-allow-origin"] == origin
+
+
+# ── GET /reviews/latest-finding ───────────────────────────────────────────────
+
+
+def _add_comment(seeded, review_id, *, severity: str, file_path: str, text: str):
+    with seeded["factory"]() as db:
+        c = ReviewComment(
+            review_id=review_id, file_path=file_path, line_start=10, line_end=10,
+            category="security", severity=severity, comment_text=text, suggestion=None,
+        )
+        db.add(c)
+        db.commit()
+        return c.id
+
+
+def _add_review(seeded, *, status: str, offset_hours: int, with_comment: bool):
+    """Another review on the caller's existing PR, newer than the fixture's."""
+    with seeded["factory"]() as db:
+        r = Review(
+            pr_id=seeded["pr"], status=status, summary="s",
+            verdict="comment" if status == "completed" else None,
+            created_at=T0 + timedelta(hours=offset_hours),
+        )
+        db.add(r)
+        db.flush()
+        if with_comment:
+            db.add(ReviewComment(
+                review_id=r.id, file_path="newer.py", line_start=3, line_end=3,
+                category="convention", severity="info", comment_text="Newer.",
+                suggestion=None,
+            ))
+        db.commit()
+        return r.id
+
+
+def test_latest_finding_returns_the_newest_reviews_comment(seeded) -> None:
+    response = client.get("/reviews/latest-finding", headers=seeded["headers"])
+    assert response.status_code == 200
+    body = response.json()
+    assert body["review_id"] == str(seeded["new"])
+    assert body["pr_number"] == 7
+    assert body["repo_full_name"] == "octo/demo"
+    assert body["comment"]["file_path"] == "a.py"
+    assert body["comment"]["comment_text"] == "Bug."
+
+
+def test_latest_finding_never_carries_a_raw_diff(seeded) -> None:
+    """The whole reason this endpoint exists rather than reusing the detail route."""
+    body = client.get("/reviews/latest-finding", headers=seeded["headers"]).json()
+    assert "raw_diff" not in body
+    assert "raw_diff" not in body["comment"]
+
+
+def test_latest_finding_excludes_other_users_findings(seeded) -> None:
+    """The stranger sees their own repository, never the caller's."""
+    body = client.get(
+        "/reviews/latest-finding", headers=seeded["other_headers"]
+    ).json()
+    assert body["repo_full_name"] == "hubot/private"
+
+
+def test_latest_finding_is_null_when_there_are_no_findings(seeded) -> None:
+    """A fresh account is the ordinary first-run state, not a 404."""
+    with seeded["factory"]() as db:
+        newcomer = seed_user(db, github_id=99, username="newcomer")
+        db.commit()
+        headers = auth_headers(newcomer)
+
+    response = client.get("/reviews/latest-finding", headers=headers)
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_latest_finding_prefers_the_worst_severity_in_that_review(seeded) -> None:
+    """Not alphabetical: that orders critical, info, warning."""
+    _add_comment(seeded, seeded["new"], severity="info", file_path="z.py", text="Nit.")
+    _add_comment(
+        seeded, seeded["new"], severity="critical", file_path="boom.py", text="Crash."
+    )
+
+    body = client.get("/reviews/latest-finding", headers=seeded["headers"]).json()
+    assert body["comment"]["severity"] == "critical"
+    assert body["comment"]["file_path"] == "boom.py"
+
+
+def test_latest_finding_looks_past_a_clean_review(seeded) -> None:
+    """A pull request with nothing wrong is a *good* outcome, not a blank band."""
+    _add_review(seeded, status="completed", offset_hours=5, with_comment=False)
+
+    body = client.get("/reviews/latest-finding", headers=seeded["headers"]).json()
+    assert body["review_id"] == str(seeded["new"])
+    assert body["comment"]["comment_text"] == "Bug."
+
+
+def test_latest_finding_prefers_a_newer_review_that_did_find_something(seeded) -> None:
+    newer = _add_review(seeded, status="completed", offset_hours=9, with_comment=True)
+
+    body = client.get("/reviews/latest-finding", headers=seeded["headers"]).json()
+    assert body["review_id"] == str(newer)
+    assert body["comment"]["file_path"] == "newer.py"
+
+
+def test_latest_finding_ignores_failed_reviews(seeded) -> None:
+    """A failure has nothing to show, and the dashboard is not where it belongs."""
+    _add_review(seeded, status="failed", offset_hours=12, with_comment=True)
+
+    body = client.get("/reviews/latest-finding", headers=seeded["headers"]).json()
+    assert body["review_id"] == str(seeded["new"])
+
+
+def test_latest_finding_is_not_parsed_as_a_review_id(seeded) -> None:
+    """Route order regression: below `/reviews/{review_id}` this 422s."""
+    response = client.get("/reviews/latest-finding", headers=seeded["headers"])
+    assert response.status_code != 422
+
+
+def test_latest_finding_requires_authentication(seeded) -> None:
+    assert client.get("/reviews/latest-finding").status_code == 401
+
+
+# ── include_failed ────────────────────────────────────────────────────────────
+
+
+def test_list_reviews_includes_failed_by_default(filterable) -> None:
+    """Omitting the param must not change any existing caller's answer."""
+    body = client.get("/reviews", headers=filterable["headers"]).json()
+    assert any(item["status"] == "failed" for item in body["items"])
+
+
+def test_list_reviews_can_exclude_failed(filterable) -> None:
+    body = client.get(
+        "/reviews", params={"include_failed": "false"}, headers=filterable["headers"]
+    ).json()
+    assert body["items"]
+    assert all(item["status"] != "failed" for item in body["items"])
+
+
+def test_excluding_failed_narrows_the_total_as_well_as_the_page(filterable) -> None:
+    """A total that counted rows the page omits offers a Next leading nowhere."""
+    everything = client.get("/reviews", headers=filterable["headers"]).json()
+    without = client.get(
+        "/reviews", params={"include_failed": "false"}, headers=filterable["headers"]
+    ).json()
+
+    failed = sum(1 for item in everything["items"] if item["status"] == "failed")
+    assert failed > 0, "fixture must contain a failed review for this to mean anything"
+    assert without["total"] == everything["total"] - failed
+
+
+def test_excluding_failed_keeps_in_flight_reviews(filterable) -> None:
+    """The reason this is not `status=completed`.
+
+    A queued or processing review is the most interesting row the dashboard can
+    show, so the filter has to remove failures specifically rather than narrow
+    to finished work.
+    """
+    with filterable["factory"]() as db:
+        db.add(
+            Review(
+                pr_id=filterable["pr"],
+                status="processing",
+                created_at=T0 + timedelta(hours=3),
+            )
+        )
+        db.commit()
+
+    body = client.get(
+        "/reviews", params={"include_failed": "false"}, headers=filterable["headers"]
+    ).json()
+    assert any(item["status"] == "processing" for item in body["items"])
+
+
+# ── failure_detail / failure_kind ─────────────────────────────────────────────
+
+
+def test_review_detail_exposes_failure_fields(seeded) -> None:
+    with seeded["factory"]() as db:
+        review = db.get(Review, seeded["new"])
+        review.status = "failed"
+        review.summary = "Review failed: Claude Code exited 1."
+        review.failure_detail = '{"is_error": true, "stop_reason": "stop_sequence"}'
+        review.failure_kind = "unknown"
+        db.commit()
+
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    assert body["failure_kind"] == "unknown"
+    assert "stop_reason" in body["failure_detail"]
+    # And the sentence stays a sentence.
+    assert "{" not in body["summary"]
+
+
+def test_failure_fields_are_null_on_a_successful_review(seeded) -> None:
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    assert body["failure_detail"] is None
+    assert body["failure_kind"] is None

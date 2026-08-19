@@ -108,6 +108,19 @@ export interface SummaryDetail {
   files?: { path: string; description: string }[];
 }
 
+/**
+ * Loose on purpose, like `Category` and `Severity`: the column has no check
+ * constraint and the providers own the taxonomy, so an unrecognised value must
+ * degrade to "we cannot advise" rather than crash.
+ */
+export type FailureKind =
+  | "limit"
+  | "auth"
+  | "cli_missing"
+  | "infra"
+  | "unknown"
+  | (string & {});
+
 export interface ReviewOut {
   id: string;
   pr_id: string;
@@ -124,6 +137,19 @@ export interface ReviewOut {
    */
   summary_detail: SummaryDetail | null;
   verdict: Verdict | null;
+  /**
+   * Set only on a failed review.
+   *
+   * `failure_detail` is the raw provider output — uncapped, and deliberately
+   * kept out of `summary`, which the reviews list renders for every review.
+   * `failure_kind` says whether the reader can act: `limit`, `auth`,
+   * `cli_missing`, `infra`, or `unknown`. `unknown` means nothing we could
+   * advise would help, so the UI offers a bug report instead of a fix.
+   *
+   * Both null on successful reviews and on rows written before they existed.
+   */
+  failure_detail?: string | null;
+  failure_kind?: FailureKind | null;
   model_used: string | null;
   tokens_used: number | null;
   /**
@@ -176,6 +202,25 @@ export interface ReviewListItem extends ReviewOut {
 export interface ReviewListPage {
   items: ReviewListItem[];
   total: number;
+}
+
+/**
+ * One finding plus where it came from — the dashboard's proof-of-work.
+ *
+ * `null` from the endpoint is the ordinary first-run state (no completed
+ * review has produced a comment yet), not an error, so the band renders
+ * nothing rather than an empty box.
+ *
+ * Deliberately not a `ReviewDetailOut`: that carries the whole `raw_diff`,
+ * and pulling a 40-file patch down to render three lines of prose is what
+ * this shape exists to avoid.
+ */
+export interface LatestFindingOut {
+  review_id: string;
+  pr_number: number;
+  repo_full_name: string;
+  reviewed_at: string;
+  comment: ReviewCommentOut;
 }
 
 export interface ReviewCommentOut {

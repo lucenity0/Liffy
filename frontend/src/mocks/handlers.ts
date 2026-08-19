@@ -10,6 +10,7 @@ import {
   fixtureRepoStatusIndexed,
   fixtureRepoStatusNotIndexed,
   fixtureRepos,
+  fixtureLatestFinding,
   fixtureReviewDetailById,
   fixtureReviewListItems,
   fixtureSettings,
@@ -194,6 +195,10 @@ export const handlers = [
     const repoId = url.searchParams.get("repo_id");
     const prNumber = url.searchParams.get("pr_number");
     const status = url.searchParams.get("status");
+    // Absent means true, matching the backend default — so a handler that
+    // treated a missing param as false would hide failures from every test
+    // that does not ask about them.
+    const includeFailed = url.searchParams.get("include_failed") !== "false";
     const sort = url.searchParams.get("sort") ?? "newest";
 
     if (limit < 1 || limit > 100 || offset < 0) {
@@ -222,6 +227,9 @@ export const handlers = [
     if (status) {
       matched = matched.filter((r) => r.status === status);
     }
+    if (!includeFailed) {
+      matched = matched.filter((r) => r.status !== "failed");
+    }
 
     // The fixture array is not in date order, so this cannot be a reverse():
     // the default has to be a real sort or "newest" is a lie the tests believe.
@@ -237,6 +245,16 @@ export const handlers = [
       total: sorted.length,
     });
   }),
+
+  /**
+   * Declared before the `:reviewId` route below, for the same reason the real
+   * one is: MSW matches handlers in order, so underneath it this path arrives
+   * as `reviewId="latest-finding"`, misses the fixture map, and answers 404 —
+   * the mock would disagree with the server about a route that works.
+   */
+  http.get("*/reviews/latest-finding", () =>
+    HttpResponse.json(fixtureLatestFinding),
+  ),
 
   http.get("*/reviews/:reviewId", ({ params }) => {
     const review = fixtureReviewDetailById[params.reviewId as string];

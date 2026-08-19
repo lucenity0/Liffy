@@ -23,6 +23,12 @@ export const keys = {
     detail: (reviewId: string) =>
       [...keys.reviews.all, "detail", reviewId] as const,
     /**
+     * Beside `list` rather than under it: this is one row the server picks,
+     * not a page the client asked for, so no list invalidation should reach
+     * it and no filter belongs in its key.
+     */
+    latestFinding: () => [...keys.reviews.all, "latest-finding"] as const,
+    /**
      * Nested *under* the detail key, not beside it, and spelled by spreading
      * `detail(...)` so it cannot drift out from under it.
      *

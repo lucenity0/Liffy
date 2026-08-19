@@ -111,6 +111,29 @@ class ReviewCommentOut(BaseModel):
     my_rating: int | None = None
 
 
+class LatestFindingOut(BaseModel):
+    """One finding, with just enough context to say where it came from.
+
+    The dashboard's proof-of-work: a stat strip says a job ran, a real
+    line-anchored comment says the product works. Deliberately *not* a whole
+    review — ``ReviewDetailOut`` carries ``raw_diff``, and downloading a
+    40-file patch to render three lines of prose is the reason this exists as
+    its own endpoint rather than a second call to the detail route.
+
+    ``None`` from the endpoint rather than a 404: an account with no findings
+    yet is the ordinary first-run state, not an error, and the band simply
+    does not render.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    review_id: uuid.UUID
+    pr_number: int
+    repo_full_name: str
+    reviewed_at: datetime
+    comment: ReviewCommentOut
+
+
 class ReviewOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -124,6 +147,13 @@ class ReviewOut(BaseModel):
     # model would mean a migration every time the overview grows a section.
     summary_detail: dict | None
     verdict: str | None
+    # Only ever set on a failed review. `failure_detail` is the raw provider
+    # output, uncapped, for the disclosure the UI puts behind the message;
+    # `failure_kind` is whether the reader can act — `unknown` means offer a
+    # bug report rather than advice. Null on every successful review and on
+    # every row written before these existed.
+    failure_detail: str | None = None
+    failure_kind: str | None = None
     model_used: str | None
     tokens_used: int | None
     # Report §8.1. Null on rows written before the instrumentation landed, and

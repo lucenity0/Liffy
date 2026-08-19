@@ -27,6 +27,15 @@ export function ReviewFailed({ review }: { review: ReviewDetailOut }) {
    */
   const reason = review.summary?.replace(/^Review failed:\s*/i, "").trim();
 
+  // What the reader can do about it. An unrecognised kind — and every review
+  // that failed before this column existed — falls through to `undefined`,
+  // which is the same as `unknown`: offer to report it rather than invent
+  // advice that sends someone to check a setting that is fine.
+  const guidance = review.failure_kind
+    ? FIXES[review.failure_kind]
+    : undefined;
+  const detail = review.failure_detail?.trim();
+
   return (
     <Sheet className="border-oxide/30">
       <Sheet.Header title="Failed" className="bg-oxide-tint" />
@@ -51,6 +60,46 @@ export function ReviewFailed({ review }: { review: ReviewDetailOut }) {
             </Link>
           </>
         ) : null}
+
+        {guidance ? (
+          <p className="max-w-prose text-base text-ink-dim">{guidance}</p>
+        ) : (
+          // No guidance means no *honest* guidance. Say so, and hand over the
+          // one action that still helps: telling somebody. The report carries
+          // the detail below, so it does not depend on the reporter knowing
+          // which parts of it matter.
+          <p className="max-w-prose text-base text-ink-dim">
+            Nothing here points at a setting you can change.{" "}
+            <Link
+              to={`/help?report=${encodeURIComponent(reportTitle(review))}`}
+              className="underline decoration-rule underline-offset-4 hover:text-ink"
+            >
+              Report this
+            </Link>{" "}
+            and the log below goes with it.
+          </p>
+        )}
+
+        {/* Collapsed, always. The sentence above is the answer for almost
+            everyone; this is for the person who needs to paste it somewhere.
+            It used to be appended to the message itself, which put three
+            hundred characters of truncated JSON in front of every reader and
+            still cut it off mid-object. */}
+        {detail ? (
+          <details className="group mt-1">
+            <summary className="w-fit cursor-pointer list-none text-sm text-ink-dim underline decoration-rule underline-offset-4 hover:text-ink">
+              View log
+              <span className="ml-1 inline-block group-open:hidden">→</span>
+              <span className="ml-1 hidden group-open:inline-block">↓</span>
+            </summary>
+            <pre className="rounded-chip mt-2 max-h-80 overflow-auto border border-rule bg-recessed px-3 py-2">
+              <code className="font-code text-sm break-words whitespace-pre-wrap text-ink-sub">
+                {detail}
+              </code>
+            </pre>
+          </details>
+        ) : null}
+
         <p className="max-w-prose text-base text-ink-dim">
           The worker gave up
           {review.completed_at && ` ${formatRelative(review.completed_at)}`}.
@@ -61,4 +110,26 @@ export function ReviewFailed({ review }: { review: ReviewDetailOut }) {
       </Sheet.Body>
     </Sheet>
   );
+}
+
+/**
+ * What to do about each kind of failure, in the reader's terms.
+ *
+ * Deliberately not exhaustive over `FailureKind`: an unlisted kind gets the
+ * report path, which is the right answer for anything we cannot advise on and
+ * the *only* honest one for a kind added after this map was written.
+ */
+const FIXES: Record<string, string> = {
+  limit:
+    "Nothing is misconfigured and nothing needs changing — the allowance resets on its own, and Re-review will work once it has.",
+  auth: "Sign the CLI in on the host, then Re-review. Liffy never stores those credentials itself.",
+  cli_missing:
+    "Install the provider's CLI on the machine running the worker, or pick a different provider in Settings → Providers.",
+  infra:
+    "Something Liffy depends on was unreachable. Check the stack is up, then Re-review.",
+};
+
+/** A report title that says which review, so it does not need retyping. */
+function reportTitle(review: ReviewDetailOut): string {
+  return `Review failed on ${review.repo_full_name} #${review.pr_number}`;
 }

@@ -7,9 +7,11 @@
 ```text
 ~ $ cat liffy.txt
 ──────────────────────────────────────────────────
-  your AI senior engineer  ·  open source  ·  self-hosted
-  connects to github, reads your pull requests, and
-  writes structured, senior-engineer-level feedback.
+  code review that has actually read your codebase.
+  not the file. the codebase.
+
+  open source · self-hosted · runs on the claude or
+  codex subscription you already pay for.
   your repos, your llm keys, your infrastructure.
 ──────────────────────────────────────────────────
 ```
@@ -18,14 +20,14 @@
 
 ### `// features`
 
-**Reads PRs like a person** — pulls the diff, walks the changed files, and leaves line-anchored comments: what's wrong, why it matters, and how to fix it.
-<br /><sub>`diff parsing` · `structured output` · `severity levels`</sub>
-
-**RAG over your codebase** — indexes your repo into a vector store so reviews are grounded in *your* conventions and surrounding code, not generic advice.
+**Reviews with the whole codebase in hand** — indexes your repo into a vector store, so a comment can cite the convention you set in another file. Most tools see the diff and nothing else.
 <br /><sub>`ChromaDB` · `embeddings` · `LangChain chains`</sub>
 
-**Runs without an API key** — point it at a local Ollama and the whole pipeline is free: no account, no quota, no billing, nothing leaving your machine. Embeddings are already local by default. Or bring a key and use Claude, Gemini's free tier, or your own Claude Code subscription.
-<br /><sub>`local models` · `BYO LLM` · `prompt caching`</sub>
+**Runs on the subscription you already pay for** — `LLM_PROVIDER=claude_code` or `codex` drives a CLI you have already signed into, so reviews cost you nothing extra: no API key, no metered billing, no credits that run out mid-prompt. Or point it at a local Ollama and the whole pipeline is free and offline. Embeddings are local by default either way.
+<br /><sub>`no API bill` · `BYO LLM` · `local models`</sub>
+
+**Reads PRs like a person** — pulls the diff, walks the changed files, and leaves line-anchored comments: what's wrong, why it matters, and how to fix it.
+<br /><sub>`diff parsing` · `structured output` · `severity levels`</sub>
 
 **GitHub-native** — OAuth sign-in, webhook-triggered reviews on every push, feedback posted right where you already argue about code.
 <br /><sub>`OAuth` · `webhooks` · `HMAC-verified`</sub>
@@ -34,6 +36,22 @@
 <br /><sub>`Celery` · `Redis` · `job status`</sub>
 
 **One-command setup** — bootstrap scripts for macOS *and* Windows get you from clone to running in minutes.
+
+<img src="./assets/divider.svg" width="100%" alt="" />
+
+### `// what it actually writes`
+
+Not a mockup — a real Liffy review on [#241](https://github.com/lucenity0/Liffy/pull/241), left inline against the diff.
+
+<img src="./frontend/public/proof/proof-02.png" width="100%" alt="Two Liffy comments posted inline on a pull request. The first flags a docstring that promises behaviour the code does not have; a maintainer has marked it resolved. The second, commenting on a mock handler, cites the backend query parameter it is supposed to mirror." />
+
+Two things worth noticing. The bottom comment is on a TypeScript mock, and the
+bug it describes only exists relative to `pr_number: int | None = Query(default=None, gt=0)`
+in the Python backend — **two files, two languages, one contract.** A reviewer
+working file-by-file has nothing to compare against and reports nothing here.
+
+And the top comment is marked resolved by the other maintainer. It was right, and
+somebody fixed it.
 
 <img src="./assets/divider.svg" width="100%" alt="" />
 

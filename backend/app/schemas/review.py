@@ -207,6 +207,12 @@ class ReviewDetailOut(ReviewOut):
     # deep link rather than from the list — there is nothing to fall back on.
     pr_number: int
     repo_full_name: str
+    # So the detail page can render the per-pull-request auto-review toggle
+    # without a second request for the pull request it already names.
+    # The pull request's own id is already here as `ReviewOut.pr_id`, which is
+    # the foreign key into `pull_requests` — so the toggle has what it needs to
+    # address the PATCH without a second field carrying the same value.
+    auto_review: bool = False
     comments: list[ReviewCommentOut]
     # Detail only — never on ReviewListItem. Diffs are large and the list stays light.
     raw_diff: str | None = None

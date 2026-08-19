@@ -504,6 +504,14 @@ export interface ReviewDetailOut extends ReviewOut {
    */
   pr_number: number;
   repo_full_name: string;
+  /**
+   * Whether a push to this pull request reviews it automatically.
+   *
+   * Off by default. `synchronize` fires on every push, so applying three of
+   * Liffy's suggestions used to cost three full reviews — quota spent without
+   * anyone asking. The first review on `opened` is unaffected.
+   */
+  auto_review: boolean;
   comments: ReviewCommentOut[];
   /** Detail only — never present on ReviewListItem. Added by #127. */
   raw_diff: string | null;

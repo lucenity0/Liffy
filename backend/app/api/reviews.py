@@ -165,7 +165,11 @@ def _detail(db: Session, review_id: uuid.UUID, user: User) -> ReviewDetailOut:
     # and the ownership filter rides along, making another user's review
     # indistinguishable from one that does not exist.
     identity = db.execute(
-        select(PullRequest.github_pr_number, Repository.full_name)
+        select(
+            PullRequest.github_pr_number,
+            Repository.full_name,
+            PullRequest.auto_review,
+        )
         .join(Review, Review.pr_id == PullRequest.id)
         .join(Repository, PullRequest.repo_id == Repository.id)
         .where(Review.id == review_id, Repository.user_id == user.id)
@@ -197,6 +201,7 @@ def _detail(db: Session, review_id: uuid.UUID, user: User) -> ReviewDetailOut:
         **ReviewOut.model_validate(review).model_dump(),
         pr_number=identity.github_pr_number,
         repo_full_name=identity.full_name,
+        auto_review=identity.auto_review,
         comments=[
             ReviewCommentOut.model_validate(c).model_copy(
                 update={"my_rating": my_ratings.get(c.id)}
@@ -336,6 +341,36 @@ def review_commits(
 # against a UUID parse. Moving it down is a silent break with a confusing
 # error, which is why `test_latest_finding_is_not_parsed_as_a_review_id`
 # exists.
+class AutoReviewRequest(BaseModel):
+    enabled: bool
+
+
+@router.patch("/prs/{pr_id}/auto-review")
+def set_auto_review(
+    pr_id: uuid.UUID,
+    payload: AutoReviewRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Turn review-on-every-push on or off for one pull request.
+
+    Scoped through the owning repository like every other read here, so a pull
+    request belonging to somebody else is indistinguishable from one that does
+    not exist rather than being quietly writable.
+    """
+    pr = db.scalar(
+        select(PullRequest)
+        .join(Repository, PullRequest.repo_id == Repository.id)
+        .where(PullRequest.id == pr_id, Repository.user_id == user.id)
+    )
+    if pr is None:
+        raise HTTPException(status_code=404, detail="Pull request not found")
+
+    pr.auto_review = payload.enabled
+    db.commit()
+    return {"pr_id": str(pr.id), "auto_review": pr.auto_review}
+
+
 @router.get("/reviews/latest-finding", response_model=LatestFindingOut | None)
 def latest_finding(
     db: Session = Depends(get_db),

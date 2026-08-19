@@ -16,6 +16,8 @@ export function ReviewHeader({
   rereviewing = false,
   rereviewQueued = false,
   rereviewError,
+  onAutoReviewChange,
+  autoReviewSaving = false,
 }: {
   review: ReviewDetailOut;
   /** Model, tokens, file counts — whatever the page has worked out. */
@@ -24,6 +26,8 @@ export function ReviewHeader({
   rereviewing?: boolean;
   rereviewQueued?: boolean;
   rereviewError?: unknown;
+  onAutoReviewChange: (enabled: boolean) => void;
+  autoReviewSaving?: boolean;
 }) {
   const inFlight = review.status === "pending" || review.status === "processing";
 
@@ -36,15 +40,37 @@ export function ReviewHeader({
           <span data-numeric>{review.pr_number}</span>
         </h1>
 
-        <Button
-          onClick={onRereview}
-          loading={rereviewing}
-          disabled={inFlight}
-          className="ml-auto"
-        >
-          Re-review
-        </Button>
+        <div className="ml-auto flex items-center gap-3">
+          {/* Beside Re-review, because they are the same decision at two
+              speeds: do it now, or have it done for me. Kept quieter than the
+              button — this is a preference, not the primary action. */}
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-sub select-none">
+            <input
+              type="checkbox"
+              checked={review.auto_review}
+              disabled={autoReviewSaving}
+              onChange={(e) => onAutoReviewChange(e.target.checked)}
+              className="size-3.5 accent-sage"
+            />
+            Review on every push
+          </label>
+
+          <Button onClick={onRereview} loading={rereviewing} disabled={inFlight}>
+            Re-review
+          </Button>
+        </div>
       </div>
+
+      {/* Shown only while on, and only as a consequence rather than a warning.
+          Somebody who just ticked it should be told what they signed up for;
+          somebody who left it off does not need a paragraph about a feature
+          they are not using. */}
+      {review.auto_review && (
+        <p className="max-w-prose text-sm text-ink-dim">
+          Every push to this pull request will be reviewed. On a busy branch
+          that is a review per push — each one spends model quota.
+        </p>
+      )}
 
       {/* No summary line here. The brief's header carries a short blurb
           above a longer OVERVIEW in the Summary tab, but the API has exactly

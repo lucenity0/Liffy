@@ -958,3 +958,41 @@ def test_picker_endpoints_require_authentication(seeded) -> None:
     assert client.post(
         f"/prs/{seeded['pr']}/review-commits", json={"shas": ["c1"]}
     ).status_code == 401
+
+# ── PATCH /prs/{pr_id}/auto-review ────────────────────────────────────────────
+
+
+def test_auto_review_is_off_by_default(seeded) -> None:
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    assert body["auto_review"] is False
+
+
+def test_auto_review_can_be_turned_on_and_back_off(seeded) -> None:
+    url = f"/prs/{seeded['pr']}/auto-review"
+
+    assert client.patch(url, json={"enabled": True}, headers=seeded["headers"]).json()[
+        "auto_review"
+    ] is True
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    assert body["auto_review"] is True
+
+    assert client.patch(url, json={"enabled": False}, headers=seeded["headers"]).json()[
+        "auto_review"
+    ] is False
+
+
+def test_auto_review_cannot_be_set_on_someone_elses_pull_request(seeded) -> None:
+    """A PR belonging to another user must be indistinguishable from one that
+    does not exist, rather than quietly writable."""
+    response = client.patch(
+        f"/prs/{seeded['their_pr']}/auto-review",
+        json={"enabled": True},
+        headers=seeded["headers"],
+    )
+    assert response.status_code == 404
+
+
+def test_auto_review_requires_authentication(seeded) -> None:
+    assert client.patch(
+        f"/prs/{seeded['pr']}/auto-review", json={"enabled": True}
+    ).status_code == 401

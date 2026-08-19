@@ -7,7 +7,7 @@ import httpx
 import pytest
 from conftest import seed_user
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -124,8 +124,78 @@ def test_webhook_queues_review_on_pr_opened(enqueued) -> None:
     assert [call[:3] for call in enqueued] == [("octo", "demo", 7)]
 
 
-def test_webhook_queues_on_synchronize(enqueued) -> None:
+def _seed_pr(factory, *, auto_review: bool, repo_id=None) -> None:
+    """A pull request Liffy has already seen, with the toggle set.
+
+    Takes the factory rather than reaching for it: the fixture yields it, so
+    a test that needs this has to request `connected_repo` and say so.
+    """
+    from app.models.pull_request import PullRequest
+
+    with factory() as db:
+        db.add(
+            PullRequest(
+                repo_id=repo_id or db.scalar(select(Repository.id)),
+                github_pr_number=7, title="t", author="a",
+                base_branch="main", head_branch="f", status="open",
+                auto_review=auto_review,
+            )
+        )
+        db.commit()
+
+
+def test_a_push_is_ignored_unless_the_pull_request_opted_in(
+    connected_repo, enqueued
+) -> None:
+    """`synchronize` fires on every push.
+
+    Applying three of Liffy's own suggestions used to cost three full reviews,
+    and a two-line README commit cost the same as a real change — quota spent
+    without anyone asking for it.
+    """
+    _seed_pr(connected_repo, auto_review=False)
+
     response = _post(dict(PR_OPENED, action="synchronize"))
+
+    assert response.json()["status"] == "ignored"
+    assert enqueued == []
+
+
+def test_a_push_queues_when_the_pull_request_opted_in(
+    connected_repo, enqueued
+) -> None:
+    _seed_pr(connected_repo, auto_review=True)
+
+    response = _post(dict(PR_OPENED, action="synchronize"))
+
+    assert response.json()["status"] == "queued"
+    assert len(enqueued) == 1
+
+
+def test_a_push_on_a_pull_request_liffy_has_never_seen_is_ignored(enqueued) -> None:
+    """No row means off, which is the same answer as the column default."""
+    response = _post(dict(PR_OPENED, action="synchronize"))
+
+    assert response.json()["status"] == "ignored"
+    assert enqueued == []
+
+
+def test_opening_a_pull_request_still_reviews_it_unasked(enqueued) -> None:
+    """The one case where an unrequested review is the whole point.
+
+    The toggle governs what happens *after* the first review, and is opted out
+    of rather than into — so a pull request nobody has looked at is still
+    looked at.
+    """
+    response = _post(PR_OPENED)
+
+    assert response.json()["status"] == "queued"
+    assert len(enqueued) == 1
+
+
+def test_reopening_is_not_gated_either(enqueued) -> None:
+    response = _post(dict(PR_OPENED, action="reopened"))
+
     assert response.json()["status"] == "queued"
     assert len(enqueued) == 1
 
@@ -228,3 +298,58 @@ def test_ignored_events_do_not_enqueue(enqueued) -> None:
     _post(dict(PR_OPENED, action="closed"))
 
     assert enqueued == []
+
+
+def test_the_gate_reads_the_flag_of_the_repository_the_review_belongs_to(
+    connected_repo, enqueued
+) -> None:
+    """`full_name` has no unique constraint.
+
+    Two users can connect the same repository, and each connection gets its
+    own `Repository` and `PullRequest` rows. `resolve_repo_owner` picks the
+    earliest-connected one; the gate has to read *that* connection's flag.
+
+    The rows are arranged so the two disagree: the second connector's pull
+    request row is inserted **first**, so an unscoped `db.scalar` — which has
+    no ORDER BY and returns rows in insertion order — reads its `False` and
+    refuses a review the actual owner asked for. Without that arrangement the
+    test passes whether the bug is present or not.
+    """
+    from app.models.pull_request import PullRequest
+
+    with connected_repo() as db:
+        owner_repo_id = db.scalar(select(Repository.id))
+
+        # Connected later, so `resolve_repo_owner` does *not* pick this one.
+        stranger = seed_user(db, github_id=2, username="hubot")
+        second = Repository(
+            user_id=stranger.id,
+            github_repo_id=9,
+            full_name="octo/demo",
+            created_at=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        db.add(second)
+        db.flush()
+
+        # ...but its pull request row goes in first.
+        db.add(
+            PullRequest(
+                repo_id=second.id, github_pr_number=7, title="t", author="a",
+                base_branch="main", head_branch="f", status="open",
+                auto_review=False,
+            )
+        )
+        db.flush()
+        db.add(
+            PullRequest(
+                repo_id=owner_repo_id, github_pr_number=7, title="t", author="a",
+                base_branch="main", head_branch="f", status="open",
+                auto_review=True,
+            )
+        )
+        db.commit()
+
+    response = _post(dict(PR_OPENED, action="synchronize"))
+
+    assert response.json()["status"] == "queued"
+    assert len(enqueued) == 1

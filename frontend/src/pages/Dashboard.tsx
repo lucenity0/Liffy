@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { LatestFinding } from "@/components/dashboard/LatestFinding";
 import { ThisWeek } from "@/components/dashboard/ThisWeek";
 import { NeedsAttention } from "@/components/repo/NeedsAttention";
 import { RepoList } from "@/components/repo/RepoList";
@@ -38,6 +39,14 @@ export function Dashboard() {
           it, and a second line 8px under the first reads as a mistake. */}
       <Band>
         <ThisWeek />
+      </Band>
+
+      {/* Directly under the figures, above everything administrative: the
+          first thing below the counts should be the thing being counted.
+          Renders nothing until there is a finding, and the rule goes with it
+          — same `empty:hidden` mechanism as the band below. */}
+      <Band ruled>
+        <LatestFinding />
       </Band>
 
       {/* Renders nothing at all when nothing is wrong — a permanently present

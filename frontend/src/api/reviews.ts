@@ -1,5 +1,6 @@
 import { apiClient } from "./client";
 import type {
+  LatestFindingOut,
   ReviewDetailOut,
   ReviewListPage,
   ReviewStatus,
@@ -14,6 +15,11 @@ export interface ListReviewsParams {
   repoId?: string;
   prNumber?: number;
   status?: ReviewStatus;
+  /**
+   * Drop failed reviews from both the page and the total. Defaults to true
+   * server-side, so omitting it keeps every existing caller's answer.
+   */
+  includeFailed?: boolean;
   sort?: ReviewSort;
 }
 
@@ -23,6 +29,7 @@ export async function listReviews({
   repoId,
   prNumber,
   status,
+  includeFailed,
   sort,
 }: ListReviewsParams = {}): Promise<ReviewListPage> {
   const { data } = await apiClient.get<ReviewListPage>("/reviews", {
@@ -39,9 +46,24 @@ export async function listReviews({
       repo_id: repoId,
       pr_number: prNumber,
       status,
+      include_failed: includeFailed,
       sort,
     },
   });
+  return data;
+}
+
+/**
+ * The most recent finding worth showing, or `null` when there is not one yet.
+ *
+ * `null` is a 200 with a null body, not a 404 — an account that has not
+ * produced a finding is ordinary, and a 404 here would make react-query treat
+ * a healthy new install as a failed request.
+ */
+export async function getLatestFinding(): Promise<LatestFindingOut | null> {
+  const { data } = await apiClient.get<LatestFindingOut | null>(
+    "/reviews/latest-finding",
+  );
   return data;
 }
 

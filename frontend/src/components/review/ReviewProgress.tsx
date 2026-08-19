@@ -43,12 +43,21 @@ export function ReviewProgress({ review }: { review: ReviewDetailOut }) {
   );
   const willPost = posts ? String(posts.value) === "true" : undefined;
 
-  const fileCount = useMemo(
-    () => (review.raw_diff ? parseDiff(review.raw_diff).length : null),
+  // The real files, not a count derived from one. `raw_diff` is populated
+  // before the row is inserted, so during `processing` this is the actual set
+  // the model is working through — which is what makes showing it honest.
+  const files = useMemo(
+    () => (review.raw_diff ? parseDiff(review.raw_diff) : []),
     [review.raw_diff],
   );
+  const fileCount = review.raw_diff ? files.length : null;
 
-  const steps: { id: string; label: string; state: StepState; note?: string }[] = [
+  const steps: {
+    id: string;
+    label: string;
+    state: StepState;
+    note?: string;
+  }[] = [
     {
       id: "fetch",
       label: "Fetch",
@@ -89,67 +98,106 @@ export function ReviewProgress({ review }: { review: ReviewDetailOut }) {
   return (
     <Sheet aria-label="Review progress">
       <Sheet.Header title={queued ? "Queued" : "Reviewing"} />
-      <Sheet.Body className="flex flex-col gap-4">
-        <ol className="flex flex-col gap-1.5 font-code text-sm">
-          {steps.map((step, index) => (
-            <li key={step.id} className="flex items-baseline gap-3">
-              <span data-numeric className="w-6 shrink-0 text-ink-sub">
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <span
-                className={cn(
-                  "w-24 shrink-0 uppercase",
-                  step.state === "waiting" || step.state === "skipped"
-                    ? "text-ink-sub"
-                    : "text-ink",
-                )}
-              >
-                {step.label}
-              </span>
-              <span
-                className={cn(
-                  "w-24 shrink-0",
-                  step.state === "done" && "text-sage",
-                  step.state === "active" && "text-ochre",
-                  (step.state === "waiting" || step.state === "skipped") &&
-                    "text-ink-sub",
-                )}
-              >
-                {/* motion-safe, and the codebase's reduced-motion backstop
+      <Sheet.Body className="flex flex-col gap-4 md:flex-row md:items-start md:gap-8">
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+          <ol className="flex flex-col gap-1.5 font-code text-sm">
+            {steps.map((step, index) => (
+              <li key={step.id} className="flex items-baseline gap-3">
+                <span data-numeric className="w-6 shrink-0 text-ink-sub">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span
+                  className={cn(
+                    "w-24 shrink-0 uppercase",
+                    step.state === "waiting" || step.state === "skipped"
+                      ? "text-ink-sub"
+                      : "text-ink",
+                  )}
+                >
+                  {step.label}
+                </span>
+                <span
+                  className={cn(
+                    "w-24 shrink-0",
+                    step.state === "done" && "text-sage",
+                    step.state === "active" && "text-ochre",
+                    (step.state === "waiting" || step.state === "skipped") &&
+                      "text-ink-sub",
+                  )}
+                >
+                  {/* motion-safe, and the codebase's reduced-motion backstop
                     stops the pulse outright for anyone who asked. */}
-                {step.state === "active" && (
-                  <span
-                    aria-hidden="true"
-                    className="mr-1.5 inline-block size-1.5 rounded-full bg-ochre motion-safe:animate-pulse"
-                  />
+                  {step.state === "active" && (
+                    <span
+                      aria-hidden="true"
+                      className="mr-1.5 inline-block size-1.5 rounded-full bg-ochre motion-safe:animate-pulse"
+                    />
+                  )}
+                  {STATE_LABEL[step.state]}
+                </span>
+                {step.note && (
+                  <span className="min-w-0 truncate text-ink-dim">
+                    {step.note}
+                  </span>
                 )}
-                {STATE_LABEL[step.state]}
-              </span>
-              {step.note && (
-                <span className="min-w-0 truncate text-ink-dim">{step.note}</span>
-              )}
-            </li>
-          ))}
-        </ol>
+              </li>
+            ))}
+          </ol>
 
-        <p className="max-w-prose text-sm text-ink-dim">
-          {queued ? (
-            "Waiting for a worker to pick this up. This page updates itself the moment it starts."
-          ) : (
-            <>
-              {/* No "under a minute" here. That number came from the §8.1
+          <p className="max-w-prose text-sm text-ink-dim">
+            {queued ? (
+              "Waiting for a worker to pick this up. This page updates itself the moment it starts."
+            ) : (
+              <>
+                {/* No "under a minute" here. That number came from the §8.1
                   target, measured on the API providers; the subscription
                   providers drive a local CLI and take several minutes on a
                   real pull request. Promising a minute turned a healthy
                   six-minute review into "this is broken". */}
-              {`Started ${formatRelative(review.created_at)}. A large diff takes a few minutes — longer on the subscription providers, which run the model through a local CLI. `}
-              <span className="text-ink-sub">
-                Retrieval and review are reported together: the worker records
-                one status for both.
-              </span>
-            </>
-          )}
-        </p>
+                {`Started ${formatRelative(review.created_at)}. A large diff takes a few minutes — longer on the subscription providers, which run the model through a local CLI. `}
+                <span className="text-ink-sub">
+                  Retrieval and review are reported together: the worker records
+                  one status for both.
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+
+        {/* The half of this panel that used to be empty.
+
+            Deliberately *not* a per-file ticker reading "chain.py — reading →
+            read". A review is one model call: the worker has no idea which
+            file is under the model's attention at any moment, and animating
+            one would be inventing telemetry on a page whose whole design rule
+            is that every state is derived from something the API proves.
+
+            What is honest: the cat, which claims nothing, and the actual file
+            list, which `raw_diff` already contains. Labelled "in this review"
+            rather than "reading now" for that reason. */}
+        {!queued && files.length > 0 && (
+          <div
+            aria-hidden="true"
+            className="hidden shrink-0 flex-col items-center gap-3 md:flex md:w-64"
+          >
+            <img
+              src="/hero-cat.gif"
+              alt=""
+              className="w-40 rounded-chip border border-rule"
+            />
+            <p className="label text-ink-sub">In this review</p>
+            <ul className="max-h-32 w-full overflow-hidden font-code text-sm text-ink-dim">
+              {files.slice(0, 6).map((file) => (
+                <li key={file.path} className="truncate">
+                  {file.path}
+                </li>
+              ))}
+              {files.length > 6 && (
+                <li className="text-ink-sub">and {files.length - 6} more</li>
+              )}
+            </ul>
+          </div>
+        )}
       </Sheet.Body>
     </Sheet>
   );

@@ -83,7 +83,10 @@ type Palette = Record<string, string>;
  * change does not leave a requestAnimationFrame loop running against a
  * detached canvas.
  */
-export function mountCafeScene(canvas: HTMLCanvasElement): () => void {
+export function mountCafeScene(
+  canvas: HTMLCanvasElement,
+  options: { reading?: boolean } = {},
+): () => void {
   const g = canvas.getContext("2d");
   if (!g) return () => {};
 
@@ -396,33 +399,88 @@ export function mountCafeScene(canvas: HTMLCanvasElement): () => void {
     px(WX + WW, WY + OY, 2, WH, C.rule);
 
     /* ---- what stands on the sill, in front of the light -------------- */
+    /* In the reading scene a monitor takes the books' and cup's place beside
+       the cat. It is the one lit thing in a backlit room, which is the whole
+       reason it reads as "something is happening here" while everything else
+       reads as "and the cat is not worried about it".
+
+       The lines on it are abstract on purpose. A review is one model call, so
+       nothing knows which file the model is looking at — a screen naming real
+       files as they scrolled would be inventing that. Shapes that read as text
+       claim nothing, and the step list beside this says what is actually
+       known. */
+    if (options.reading) {
+      const SCREEN_X = 44;
+      const SCREEN_Y = 150 + OY;
+      const SCREEN_W = 52;
+      const SCREEN_H = 34;
+
+      /* Stand and base first, so the bezel sits over them. */
+      px(SCREEN_X + 22, SCREEN_Y + SCREEN_H, 8, 5, C.ink);
+      px(SCREEN_X + 14, SCREEN_Y + SCREEN_H + 5, 24, 3, C.ink);
+
+      /* Bezel, then the lit panel inset inside it. */
+      px(SCREEN_X, SCREEN_Y, SCREEN_W, SCREEN_H, C.ink);
+      px(SCREEN_X + 3, SCREEN_Y + 3, SCREEN_W - 6, SCREEN_H - 6, C.glow);
+
+      /* The spill of light onto the sill in front of it. Three bands rather
+         than a gradient: this grid is one pixel per unit, and a gradient at
+         this size is a smudge. */
+      g!.globalAlpha = 0.5;
+      px(SCREEN_X - 2, SCREEN_Y + SCREEN_H + 8, SCREEN_W + 4, 2, C.glow);
+      g!.globalAlpha = 0.3;
+      px(SCREEN_X - 5, SCREEN_Y + SCREEN_H + 10, SCREEN_W + 10, 2, C.glow);
+      g!.globalAlpha = 1;
+
+      /* The text. Six rows scrolling upward, each row's width driven by its
+         index so the block reads as prose rather than as a bar chart, and two
+         rows tinted warm so it reads as a diff without being one. */
+      const ROW = 4;
+      const rows = Math.floor((SCREEN_H - 8) / ROW);
+      const scroll = (t / 90) % ROW;
+      for (let i = 0; i < rows + 1; i += 1) {
+        const y = SCREEN_Y + 5 + i * ROW - scroll;
+        if (y < SCREEN_Y + 4 || y > SCREEN_Y + SCREEN_H - 6) continue;
+        /* Deterministic pseudo-width: no Math.random, so a repaint on resize
+           does not reshuffle the whole block under the reader. */
+        const seed = Math.floor(i + t / (90 * ROW));
+        const w = 12 + ((seed * 37) % (SCREEN_W - 22));
+        const changed = (seed * 7) % 5 === 0;
+        g!.globalAlpha = changed ? 0.9 : 0.55;
+        px(SCREEN_X + 6, Math.round(y), w, 2, changed ? C.warm : C.ink);
+      }
+      g!.globalAlpha = 1;
+    }
+
     /* Two books seen edge-on: dark boards with a block of pages between.
        Boards in the darkest ink, like the cup — everything on this sill is
        backlit, and backlit things are shapes before they are objects. */
-    px(46, 176 + OY, 22, 2, C.ink);
-    px(46, 178 + OY, 22, 2, C.frameHi);
-    px(46, 180 + OY, 22, 2, C.ink);
-    px(44, 182 + OY, 26, 2, C.ink);
-    px(44, 184 + OY, 26, 3, C.frameHi);
-    px(44, 187 + OY, 26, 2, C.ink);
+    if (!options.reading) {
+      px(46, 176 + OY, 22, 2, C.ink);
+      px(46, 178 + OY, 22, 2, C.frameHi);
+      px(46, 180 + OY, 22, 2, C.ink);
+      px(44, 182 + OY, 26, 2, C.ink);
+      px(44, 184 + OY, 26, 3, C.frameHi);
+      px(44, 187 + OY, 26, 2, C.ink);
 
-    /* The cup. Body in the darkest ink so it silhouettes against the glass;
+      /* The cup. Body in the darkest ink so it silhouettes against the glass;
        the rim catches the window, which is what sells the depth. */
-    px(76, 174 + OY, 16, 16, C.ink);
-    px(74, 171 + OY, 20, 3, C.frameHi);
-    px(92, 177 + OY, 4, 3, C.ink);
-    px(95, 180 + OY, 3, 3, C.ink);
-    px(92, 183 + OY, 4, 3, C.ink);
+      px(76, 174 + OY, 16, 16, C.ink);
+      px(74, 171 + OY, 20, 3, C.frameHi);
+      px(92, 177 + OY, 4, 3, C.ink);
+      px(95, 180 + OY, 3, 3, C.ink);
+      px(92, 183 + OY, 4, 3, C.ink);
 
-    /* A plant on the far side of the cat, to answer the cup. */
-    px(238, 176 + OY, 18, 13, C.ink);
-    px(236, 173 + OY, 22, 3, C.frameHi);
-    px(246, 160 + OY, 3, 13, C.tree);
-    px(240, 157 + OY, 6, 3, C.tree);
-    px(237, 153 + OY, 4, 3, C.tree);
-    px(249, 154 + OY, 6, 3, C.tree);
-    px(253, 150 + OY, 4, 3, C.tree);
-    px(244, 149 + OY, 4, 3, C.tree);
+      /* A plant on the far side of the cat, to answer the cup. */
+      px(238, 176 + OY, 18, 13, C.ink);
+      px(236, 173 + OY, 22, 3, C.frameHi);
+      px(246, 160 + OY, 3, 13, C.tree);
+      px(240, 157 + OY, 6, 3, C.tree);
+      px(237, 153 + OY, 4, 3, C.tree);
+      px(249, 154 + OY, 6, 3, C.tree);
+      px(253, 150 + OY, 4, 3, C.tree);
+      px(244, 149 + OY, 4, 3, C.tree);
+    }
 
     /* ---- the sill ---------------------------------------------------- */
     px(38, SILL + OY, 244, 9, C.frameHi);

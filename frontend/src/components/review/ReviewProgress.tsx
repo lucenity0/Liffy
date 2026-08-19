@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { CafeScene } from "@/components/ui/CafeScene";
 import { Sheet } from "@/components/ui/Sheet";
 import { useSettings } from "@/hooks/useSettings";
 import { parseDiff } from "@/lib/diff";
@@ -43,14 +44,10 @@ export function ReviewProgress({ review }: { review: ReviewDetailOut }) {
   );
   const willPost = posts ? String(posts.value) === "true" : undefined;
 
-  // The real files, not a count derived from one. `raw_diff` is populated
-  // before the row is inserted, so during `processing` this is the actual set
-  // the model is working through — which is what makes showing it honest.
-  const files = useMemo(
-    () => (review.raw_diff ? parseDiff(review.raw_diff) : []),
+  const fileCount = useMemo(
+    () => (review.raw_diff ? parseDiff(review.raw_diff).length : null),
     [review.raw_diff],
   );
-  const fileCount = review.raw_diff ? files.length : null;
 
   const steps: {
     id: string;
@@ -166,37 +163,26 @@ export function ReviewProgress({ review }: { review: ReviewDetailOut }) {
 
         {/* The half of this panel that used to be empty.
 
-            Deliberately *not* a per-file ticker reading "chain.py — reading →
-            read". A review is one model call: the worker has no idea which
-            file is under the model's attention at any moment, and animating
-            one would be inventing telemetry on a page whose whole design rule
-            is that every state is derived from something the API proves.
+            The scene rather than a still: a review takes minutes, and minutes
+            of a static panel is what made people conclude it had hung. The
+            monitor beside the cat is lit and its screen scrolls, which is the
+            only thing here that moves.
 
-            What is honest: the cat, which claims nothing, and the actual file
-            list, which `raw_diff` already contains. Labelled "in this review"
-            rather than "reading now" for that reason. */}
-        {!queued && files.length > 0 && (
-          <div
-            aria-hidden="true"
-            className="hidden shrink-0 flex-col items-center gap-3 md:flex md:w-64"
-          >
-            <img
-              src="/hero-cat.gif"
-              alt=""
-              className="w-40 rounded-chip border border-rule"
-            />
-            <p className="label text-ink-sub">In this review</p>
-            <ul className="max-h-32 w-full overflow-hidden font-code text-sm text-ink-dim">
-              {files.slice(0, 6).map((file) => (
-                <li key={file.path} className="truncate">
-                  {file.path}
-                </li>
-              ))}
-              {files.length > 6 && (
-                <li className="text-ink-sub">and {files.length - 6} more</li>
-              )}
-            </ul>
-          </div>
+            Those lines are abstract on purpose. A review is one model call, so
+            nothing knows which file the model has in front of it — a screen
+            naming real files as they scrolled would be inventing telemetry on
+            a panel whose stated rule is that every state is derived from
+            something the API proves. The step list beside it says what is
+            actually known; this says only "something is being read", which is
+            true.
+
+            `md:` and aria-hidden: it is ambience, and it carries nothing the
+            step list does not already state. */}
+        {!queued && (
+          <CafeScene
+            reading
+            className="hidden w-full shrink-0 md:block md:max-w-sm"
+          />
         )}
       </Sheet.Body>
     </Sheet>

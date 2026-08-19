@@ -1682,3 +1682,35 @@ def test_an_unexplained_failure_is_marked_unknown(
 
     assert caught.value.kind == "unknown"
     assert caught.value.detail is not None
+
+
+def test_an_unrecognised_kind_falls_back_rather_than_reaching_the_column() -> None:
+    """`kind` is written to a String(32) column inside the failure handler.
+
+    A misspelled or over-long value from a future raise site would turn a
+    recorded failure into a database error and lose the record — in the one
+    code path that must never fail twice.
+    """
+    from app.llm.chain import FAILURE_KIND, ClaudeCodeError
+
+    assert ClaudeCodeError("x", kind="cli_missing").kind == "cli_missing"
+    assert ClaudeCodeError("x", kind="clii_missing").kind == "unknown"
+    assert ClaudeCodeError("x", kind="k" * 64).kind == "unknown"
+
+    # And every declared kind fits the column it is written to.
+    assert all(len(k) <= 32 for k in FAILURE_KIND)
+
+
+def test_every_default_kind_is_a_declared_kind() -> None:
+    """The constant is only worth having if the subclasses agree with it."""
+    from app.llm import chain
+
+    subclasses = [
+        chain.SubscriptionCLIError,
+        chain.ClaudeCodeError,
+        chain.CodexError,
+        chain.SubscriptionLimitError,
+        chain.SubscriptionAuthError,
+    ]
+    for cls in subclasses:
+        assert cls.default_kind in chain.FAILURE_KIND, cls.__name__

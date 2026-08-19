@@ -182,7 +182,11 @@ Migration `f0c3a91b47e2` splits it:
 
 `unknown` is the load-bearing value. It means nothing we could advise would help, so the panel offers **Report this** — prefilled with the repository and PR — instead of sending someone to check a setting that is fine. An unrecognised kind, and every row written before the migration, falls through to the same path, which is the honest default.
 
-All 12 rows above were backfilled: the `Output: {…}` tails moved into `failure_detail`, and the raw text the first rewrite had already replaced was restored from the pre-rewrite export this document was built from. Eight rows now have a log to view; no failure summary contains JSON any more.
+**The migration performs this split itself** — `op.execute` moves the `Output: {…}` tail into `failure_detail`, trims the sentence, and classifies what is left from the wording. It is guarded on the `Output: {` shape rather than on `status='failed'`, so it is idempotent and leaves alone the failures that never had a tail. The downgrade welds the detail back onto `summary` before dropping the column, so going back a revision loses formatting rather than information.
+
+That matters beyond this database: without it, every *other* deployment would keep the welded tail, get NULL in both columns, and see the new panel render raw JSON with no **View log** and an unconditional "Report this" — the exact state the change exists to remove.
+
+The 12 rows here were split by hand before the migration was written, and one extra step was needed that the migration cannot do for anyone else: the raw text of 7 rows had already been replaced by an earlier rewrite, and was restored from the pre-rewrite export this document was built from. Eight rows now have a log to view; no failure summary contains JSON any more.
 
 ### Still worth doing
 

@@ -267,7 +267,20 @@ class SubscriptionCLIError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.detail = detail
-        self.kind = kind or type(self).default_kind
+
+        # Validated, not just documented. A constant nothing reads drifts as
+        # quietly as the copies it replaced — and the failure here is not
+        # cosmetic: `kind` goes straight into a `String(32)` column, inside the
+        # handler that has to stay total, so a misspelled or over-long value
+        # from some future raise site turns a recorded failure into a database
+        # error that loses the record.
+        #
+        # Unrecognised falls back to `unknown` rather than raising. This runs
+        # while something has *already* gone wrong; the last thing that path
+        # should do is fail again over a label. `unknown` also happens to be
+        # the right answer for a kind nothing knows how to advise on.
+        resolved = kind or type(self).default_kind
+        self.kind = resolved if resolved in FAILURE_KIND else "unknown"
 
 
 class ClaudeCodeError(SubscriptionCLIError):

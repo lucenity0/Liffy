@@ -17,6 +17,13 @@ file a report.
 Both nullable: every existing row predates them, and a successful review has
 neither.
 
+Existing rows are migrated rather than left behind. Without that step a
+deployment that already has failures keeps the welded ``Output: {…}`` tail
+inside ``summary`` and gets NULL in both new columns — so the panel renders raw
+JSON in the sentence, shows no **View log**, and always falls through to the
+"Report this" path. That is precisely the state this change exists to remove,
+and it would be the state of every database except the one it was written on.
+
 Revision ID: f0c3a91b47e2
 Revises: d4a2c8b19e73
 """
@@ -36,7 +43,58 @@ def upgrade() -> None:
     op.add_column("reviews", sa.Column("failure_detail", sa.Text(), nullable=True))
     op.add_column("reviews", sa.Column("failure_kind", sa.String(32), nullable=True))
 
+    # Split the welded messages. The old classifier appended the provider's
+    # output to its own sentence as `Output: {…}`, so the boundary is findable
+    # and this is a move rather than a guess.
+    #
+    # Guarded on the `Output: {` shape rather than on `status='failed'` alone,
+    # which makes it idempotent and leaves alone the failures that never had a
+    # tail — `'claude' is not on PATH` was always just a sentence.
+    op.execute(
+        r"""
+        UPDATE reviews
+           SET failure_detail = substring(summary from 'Output:\s*(\{.*)$'),
+               summary = rtrim(regexp_replace(summary, 'Output:\s*\{.*$', ''))
+         WHERE status = 'failed'
+           AND summary ~ 'Output:\s*\{'
+        """
+    )
+
+    # Then classify what is left, from the sentence, because the sentence is
+    # all a historical row has. `unknown` is the fallback and the honest one:
+    # it makes the panel offer a bug report rather than advice that may not
+    # apply to a failure nobody has classified.
+    op.execute(
+        """
+        UPDATE reviews
+           SET failure_kind = CASE
+                 WHEN summary ILIKE '%rate limit%'
+                   OR summary ILIKE '%quota%'            THEN 'limit'
+                 WHEN summary ILIKE '%not on PATH%'      THEN 'cli_missing'
+                 WHEN summary ILIKE '%not authenticated%'
+                   OR summary ILIKE '%not signed in%'    THEN 'auth'
+                 WHEN summary ILIKE '%Connection refused%'
+                   OR summary ILIKE '%Errno 111%'        THEN 'infra'
+                 ELSE 'unknown'
+               END
+         WHERE status = 'failed'
+           AND failure_kind IS NULL
+        """
+    )
+
 
 def downgrade() -> None:
+    # Weld the detail back on before dropping it, so the downgrade loses
+    # formatting rather than information. Without this, going back one revision
+    # silently discards every failure's provider output — and on the rows this
+    # migration split, that output exists nowhere else.
+    op.execute(
+        """
+        UPDATE reviews
+           SET summary = summary || ' Output: ' || failure_detail
+         WHERE failure_detail IS NOT NULL
+           AND summary IS NOT NULL
+        """
+    )
     op.drop_column("reviews", "failure_kind")
     op.drop_column("reviews", "failure_detail")

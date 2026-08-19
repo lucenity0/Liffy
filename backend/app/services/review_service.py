@@ -250,7 +250,8 @@ def run_review(
         # as reviewing it from scratch.
         file_diffs = parse_diff(raw_diff)
         review_diffs, since = _diffs_to_review(
-            gh, owner, repo_name, db, pr.id, review, meta, file_diffs
+            gh, owner, repo_name, db, pr.id, review, meta, file_diffs,
+            automatic=received_at is not None,
         )
 
         # Retrieval follows what is being reviewed, not the whole pull request.
@@ -417,13 +418,24 @@ def _last_reviewed_sha(db: Session, pr_id: uuid.UUID, review: Review) -> str | N
 
 def _diffs_to_review(
     gh, owner: str, repo_name: str, db: Session, pr_id: uuid.UUID,
-    review: Review, meta, file_diffs,
+    review: Review, meta, file_diffs, *, automatic: bool,
 ):
     """What to show the model, and whether it is an increment.
 
     Returns ``(diffs, since_sha)``. ``since_sha`` is ``None`` when the whole
-    pull request is being reviewed, which is the first review, a re-review at
-    the same commit, and every failure path below.
+    pull request is being reviewed, which is the first review, every review a
+    person asked for by hand, and every failure path below.
+
+    **Only automatic reviews are narrowed**, and that split is the answer to
+    what narrowing costs. Reviewing an increment means each hunk gets looked at
+    once, where before every pass re-read everything and a later pass could
+    catch what an earlier one missed. That redundancy was accidental, but it
+    was doing real work — on this repository's own #274, passes two and three
+    each found defects that had been present and unremarked during pass one.
+
+    So a push gets the cheap check, and a person clicking Re-review gets the
+    whole pull request. A miss is never permanent, and the escape hatch is the
+    button already labelled for it.
 
     **Every failure here falls back to the full diff rather than raising.**
     This is an optimisation; a pull request that cannot be compared — a
@@ -431,6 +443,12 @@ def _diffs_to_review(
     deserves a review, and getting an expensive one is a far better outcome
     than getting none.
     """
+    if not automatic:
+        # Asked for by a person: `received_at` is set only by the webhook, so
+        # its absence means the trigger endpoint or the Re-review button. Both
+        # mean "look at this properly", which an increment cannot answer.
+        return file_diffs, None
+
     since = _last_reviewed_sha(db, pr_id, review)
     head = meta.head_sha or ""
 

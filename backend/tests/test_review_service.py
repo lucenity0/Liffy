@@ -893,13 +893,18 @@ index 1111111..2222222 100644
 """
 
 
-def _run_gh(db: Session, llm: FakeLLM, gh: FakeGitHub) -> Review:
+def _run_gh(
+    db: Session, llm: FakeLLM, gh: FakeGitHub, *, automatic: bool = True
+) -> Review:
+    """`received_at` is what the webhook sets and a button does not, so it is
+    also what decides whether a review may be narrowed."""
     return run_review(
         db, "octo", "demo", 7,
         gh=gh,
         chroma_client=shared_chroma_client(),
         embedder=DeterministicEmbeddings(),
         llm=llm,
+        received_at=datetime(2026, 8, 1, tzinfo=timezone.utc) if automatic else None,
     )
 
 
@@ -1007,3 +1012,31 @@ def test_raw_diff_is_always_the_whole_pull_request(db: Session) -> None:
 
     assert review.raw_diff == DIFF
     assert "added later" not in review.raw_diff
+
+
+def test_a_review_a_person_asked_for_reads_everything(db: Session) -> None:
+    """Narrowing means each hunk is looked at once, where before every pass
+    re-read everything and a later pass could catch what an earlier one missed.
+
+    That redundancy was accidental but real — on #274, passes two and three
+    each found defects present and unremarked during pass one. So a push gets
+    the cheap check and a person clicking Re-review gets the whole pull
+    request, and a miss is never permanent.
+    """
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = FakeGitHub(pr_meta=_meta_at("def456"), pr_diff=DIFF)
+    gh.compare_diff = SECOND_DIFF
+    _run_gh(db, FakeLLM([_payload([])]), gh, automatic=False)
+
+    assert gh.compare_calls == []
+
+
+def test_a_push_still_gets_the_cheap_check(db: Session) -> None:
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = FakeGitHub(pr_meta=_meta_at("def456"), pr_diff=DIFF)
+    gh.compare_diff = SECOND_DIFF
+    _run_gh(db, FakeLLM([_payload([])]), gh, automatic=True)
+
+    assert gh.compare_calls == [("abc123", "def456")]

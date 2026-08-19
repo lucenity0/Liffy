@@ -252,6 +252,11 @@ export const handlers = [
    * as `reviewId="latest-finding"`, misses the fixture map, and answers 404 —
    * the mock would disagree with the server about a route that works.
    */
+  http.patch("*/prs/:prId/auto-review", async ({ request }) => {
+    const { enabled } = (await request.json()) as { enabled: boolean };
+    return HttpResponse.json({ pr_id: "x", auto_review: enabled });
+  }),
+
   http.get("*/reviews/latest-finding", () =>
     HttpResponse.json(fixtureLatestFinding),
   ),

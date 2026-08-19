@@ -1714,3 +1714,57 @@ def test_every_default_kind_is_a_declared_kind() -> None:
     ]
     for cls in subclasses:
         assert cls.default_kind in chain.FAILURE_KIND, cls.__name__
+
+
+def test_the_suggestion_strip_says_what_it_did(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A review with no suggestion blocks is otherwise indistinguishable from
+    one whose suggestions were all thrown away here.
+
+    Asked on #274 and could not be answered: the data showed 0 suggestions on
+    17 comments, and nothing recorded whether the model had offered any.
+    """
+    import logging
+
+    from app.llm.chain import _remove_prose_suggestions
+    from app.schemas.review import LLMReviewComment, LLMReviewOutput
+
+    def comment(suggestion):
+        return LLMReviewComment(
+            file="a.py", line_start=1, line_end=1, category="improvement",
+            severity="info", comment="c", suggestion=suggestion,
+        )
+
+    output = LLMReviewOutput(
+        summary="s", verdict="comment",
+        comments=[
+            comment("return 2"),                       # kept
+            comment("Consider rewriting this bit."),   # prose, dropped
+            comment(None),                             # none offered
+        ],
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.llm.chain"):
+        result = _remove_prose_suggestions(output)
+
+    assert "2 offered on 3 comment(s), 1 dropped as prose" in caplog.text
+    assert "Consider rewriting this bit." in caplog.text
+    assert [c.suggestion for c in result.comments] == ["return 2", None, None]
+
+
+def test_nothing_is_logged_for_a_review_with_no_comments(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An approving review should not narrate an empty strip."""
+    import logging
+
+    from app.llm.chain import _remove_prose_suggestions
+    from app.schemas.review import LLMReviewOutput
+
+    with caplog.at_level(logging.INFO, logger="app.llm.chain"):
+        _remove_prose_suggestions(
+            LLMReviewOutput(summary="fine", verdict="approve", comments=[])
+        )
+
+    assert "suggestions:" not in caplog.text

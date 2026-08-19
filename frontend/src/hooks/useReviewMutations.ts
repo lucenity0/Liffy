@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { rereview, triggerReview } from "@/api/reviews";
+import { rereview, setAutoReview, triggerReview } from "@/api/reviews";
 import { keys } from "./keys";
 
 /**
@@ -30,5 +30,21 @@ export function useRereview() {
   return useMutation({
     mutationFn: (reviewId: string) => rereview(reviewId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.reviews.all }),
+  });
+}
+
+/**
+ * Invalidates the *detail* query, not the list: `auto_review` is rendered from
+ * the review currently on screen, and the list does not show it. Invalidating
+ * `reviews.all` would refetch every open list for a flag none of them display.
+ */
+export function useSetAutoReview(reviewId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ prId, enabled }: { prId: string; enabled: boolean }) =>
+      setAutoReview(prId, enabled),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: keys.reviews.detail(reviewId) }),
   });
 }

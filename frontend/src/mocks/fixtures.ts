@@ -139,6 +139,8 @@ export const fixtureReviewCompleted: ReviewDetailOut = {
   pr_id: "cccccccc-0000-0000-0000-000000000001",
   pr_number: 58,
   repo_full_name: "lucenity0/Liffy",
+  // Off, like every real pull request until somebody turns it on.
+  auto_review: false,
   status: "completed",
   summary_detail: {
     changes: [
@@ -192,6 +194,8 @@ export const fixtureReviewApproved: ReviewDetailOut = {
   pr_id: "cccccccc-0000-0000-0000-000000000002",
   pr_number: 59,
   repo_full_name: "lucenity0/portfolio",
+  // Off, like every real pull request until somebody turns it on.
+  auto_review: false,
   status: "completed",
   summary_detail: null,
   summary: "Clean change. No issues found.",
@@ -212,6 +216,8 @@ export const fixtureReviewPending: ReviewDetailOut = {
   pr_id: "cccccccc-0000-0000-0000-000000000003",
   pr_number: 62,
   repo_full_name: "lucenity0/Liffy",
+  // Off, like every real pull request until somebody turns it on.
+  auto_review: false,
   status: "pending",
   summary_detail: null,
   summary: null,
@@ -242,6 +248,8 @@ export const fixtureReviewFailed: ReviewDetailOut = {
   pr_id: "cccccccc-0000-0000-0000-000000000005",
   pr_number: 61,
   repo_full_name: "lucenity0/Liffy",
+  // Off, like every real pull request until somebody turns it on.
+  auto_review: false,
   status: "failed",
   summary_detail: null,
   summary: null,

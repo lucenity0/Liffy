@@ -67,6 +67,20 @@ export async function getLatestFinding(): Promise<LatestFindingOut | null> {
   return data;
 }
 
+/**
+ * Turn review-on-every-push on or off for one pull request.
+ *
+ * Addressed by pull request rather than by review: the setting outlives any
+ * single review of it, and every later review reads the same flag.
+ */
+export async function setAutoReview(
+  prId: string,
+  enabled: boolean,
+): Promise<{ pr_id: string; auto_review: boolean }> {
+  const { data } = await apiClient.patch(`/prs/${prId}/auto-review`, { enabled });
+  return data;
+}
+
 export async function getReview(reviewId: string): Promise<ReviewDetailOut> {
   const { data } = await apiClient.get<ReviewDetailOut>(`/reviews/${reviewId}`);
   return data;

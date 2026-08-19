@@ -873,3 +873,137 @@ def test_a_connection_error_is_recorded_as_infrastructure(db: Session) -> None:
     review = db.scalars(select(Review)).one()
     assert review.failure_kind == "infra"
     assert review.failure_detail is None
+
+
+# ── Incremental re-review ─────────────────────────────────────────────────────
+#
+# Every re-review used to re-fetch `base...head` and hand all of it to the
+# model, so pushing a one-line fix to a large pull request cost the same as
+# reviewing it from scratch — measured at ~100k tokens a pass on this
+# repository's own PRs.
+
+SECOND_DIFF = """diff --git a/app/util.py b/app/util.py
+index 1111111..2222222 100644
+--- a/app/util.py
++++ b/app/util.py
+@@ -30,2 +30,3 @@ def other():
+ keep
++added later
+ tail
+"""
+
+
+def _run_gh(db: Session, llm: FakeLLM, gh: FakeGitHub) -> Review:
+    return run_review(
+        db, "octo", "demo", 7,
+        gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=llm,
+    )
+
+
+def _meta_at(sha: str) -> PullRequestMeta:
+    return PullRequestMeta(
+        number=7, title="Fix util", author="octocat", base_branch="main",
+        head_branch="fix/util", head_sha=sha, state="open",
+    )
+
+
+def test_the_first_review_records_what_it_looked_at(db: Session) -> None:
+    review = _run(db, FakeLLM([_payload([])]))
+    assert review.head_sha == "abc123"
+
+
+def test_the_first_review_is_not_scoped(db: Session) -> None:
+    """Nothing to diff from, so it sees the whole pull request."""
+    gh = FakeGitHub(pr_meta=META, pr_diff=DIFF)
+    _run_gh(db, FakeLLM([_payload([])]), gh)
+    assert gh.compare_calls == []
+
+
+def test_a_re_review_at_a_new_commit_only_sees_what_landed(db: Session) -> None:
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = FakeGitHub(pr_meta=_meta_at("def456"), pr_diff=DIFF)
+    gh.compare_diff = SECOND_DIFF
+    _run_gh(db, FakeLLM([_payload([])]), gh)
+
+    assert gh.compare_calls == [("abc123", "def456")]
+
+
+def test_a_re_review_at_the_same_commit_still_reads_everything(db: Session) -> None:
+    """A re-review at the same commit is a deliberate "look again".
+
+    Narrowing it to an empty diff would answer a request to re-read with
+    silence, which is worse than the cost it saves.
+    """
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = FakeGitHub(pr_meta=META, pr_diff=DIFF)
+    _run_gh(db, FakeLLM([_payload([])]), gh)
+
+    assert gh.compare_calls == []
+
+
+def test_a_failed_predecessor_is_not_diffed_from(db: Session) -> None:
+    """A review that failed said nothing about the code.
+
+    Diffing from it would skip every commit between it and the one before —
+    the difference between a cheaper review and one with a hole in it.
+    """
+    with pytest.raises(LLMOutputError):
+        _run(db, FakeLLM(["nonsense"] * 3))
+
+    gh = FakeGitHub(pr_meta=_meta_at("def456"), pr_diff=DIFF)
+    gh.compare_diff = SECOND_DIFF
+    _run_gh(db, FakeLLM([_payload([])]), gh)
+
+    assert gh.compare_calls == []
+
+
+def test_an_unreachable_commit_falls_back_to_the_whole_diff(db: Session) -> None:
+    """A force-push orphans the old commit and GitHub answers 404.
+
+    This is an optimisation; an expensive review is a far better outcome than
+    no review, so nothing here may raise.
+    """
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = FakeGitHub(pr_meta=_meta_at("def456"), pr_diff=DIFF)
+    gh.compare_diff = None  # makes compare raise
+    review = _run_gh(db, FakeLLM([_payload([])]), gh)
+
+    assert gh.compare_calls == [("abc123", "def456")]
+    assert review.status == "completed"
+
+
+def test_an_empty_comparison_falls_back_rather_than_reviewing_nothing(
+    db: Session,
+) -> None:
+    """A comparison that parses to no files is a merge commit or a base move."""
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = FakeGitHub(pr_meta=_meta_at("def456"), pr_diff=DIFF)
+    gh.compare_diff = ""
+    review = _run_gh(db, FakeLLM([_payload([])]), gh)
+
+    assert review.status == "completed"
+
+
+def test_raw_diff_is_always_the_whole_pull_request(db: Session) -> None:
+    """Comments are anchored and posted against this, never the increment.
+
+    GitHub only accepts an inline comment on a line in the pull request's own
+    diff, and a line touched in one commit and reverted in the next is in the
+    increment but not in `base...head`. Validating against the narrower diff
+    risks a 422 that rejects the whole review.
+    """
+    _run(db, FakeLLM([_payload([])]))
+
+    gh = FakeGitHub(pr_meta=_meta_at("def456"), pr_diff=DIFF)
+    gh.compare_diff = SECOND_DIFF
+    review = _run_gh(db, FakeLLM([_payload([])]), gh)
+
+    assert review.raw_diff == DIFF
+    assert "added later" not in review.raw_diff

@@ -553,6 +553,27 @@ class GitHubClient:
         )
         return response.text
 
+    def get_comparison_diff(
+        self, owner: str, repo: str, base: str, head: str
+    ) -> str:
+        """The unified diff between two commits.
+
+        `base...head` — three dots, GitHub's own spelling — so this is what
+        landed on the head branch since `base`, not everything that differs
+        between the two. A pull request whose base branch moved on underneath
+        it would otherwise report that movement as the author's work.
+
+        Used to scope a re-review to what changed since the last one. The
+        caller is expected to fall back to the whole pull request diff when
+        this fails: a force-push can leave `base` unreachable, and GitHub
+        answers 404 for a commit that is no longer in the repository.
+        """
+        response = self._get(
+            f"/repos/{owner}/{repo}/compare/{base}...{head}",
+            accept="application/vnd.github.v3.diff",
+        )
+        return response.text
+
     def get_repository(self, owner: str, repo: str) -> RepositoryMeta:
         data = self._get(f"/repos/{owner}/{repo}").json()
         return RepositoryMeta(

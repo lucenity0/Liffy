@@ -336,3 +336,49 @@ def test_system_prompt_states_the_data_rule() -> None:
     assert any(
         phrase in lowered for phrase in ("hostile", "stranger", "untrusted")
     ), "the prompt must say the author may be untrusted"
+
+
+# ── Prior findings on an incremental re-review ───────────────────────────────
+
+
+def test_prior_findings_are_absent_when_there_are_none():
+    """The common case — a first review — must not gain an empty block."""
+    from app.llm.prompts import build_review_prompt
+
+    prompt = build_review_prompt("t", [], [])
+    assert "PREVIOUS REVIEW" not in prompt
+
+
+def test_prior_findings_are_delimited_as_untrusted():
+    """They are model output derived from an attacker-authored diff.
+
+    A previous finding quoting a hostile string is the same injection surface
+    as the diff it came from, so it gets the same fencing.
+    """
+    from app.llm.prompts import build_review_prompt
+
+    prompt = build_review_prompt("t", [], [], ["a.py:1 [warning] Still broken."])
+    assert "BEGIN UNTRUSTED FINDINGS FROM YOUR PREVIOUS REVIEW" in prompt
+    assert "END UNTRUSTED FINDINGS FROM YOUR PREVIOUS REVIEW" in prompt
+    assert "Still broken." in prompt
+
+
+def test_prior_findings_are_bounded():
+    """A pull request re-reviewed many times would otherwise grow without limit."""
+    from app.llm.prompts import MAX_PRIOR_FINDINGS, build_review_prompt
+
+    findings = [f"a.py:{i} [info] finding {i}" for i in range(MAX_PRIOR_FINDINGS + 7)]
+    prompt = build_review_prompt("t", [], [], findings)
+
+    assert f"finding {MAX_PRIOR_FINDINGS - 1}" in prompt
+    assert f"finding {MAX_PRIOR_FINDINGS}" not in prompt
+    assert "and 7 more, not shown" in prompt
+
+
+def test_the_system_prompt_says_the_diff_may_be_partial():
+    """Without this the model reviews an increment as though it were the whole
+    pull request, and reports the absence of everything it cannot see."""
+    from app.llm.prompts import SYSTEM_PROMPT
+
+    assert "only what has been pushed since that review" in SYSTEM_PROMPT
+    assert "still stand" in SYSTEM_PROMPT

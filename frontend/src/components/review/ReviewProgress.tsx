@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { CafeScene } from "@/components/ui/CafeScene";
 import { Sheet } from "@/components/ui/Sheet";
 import { useSettings } from "@/hooks/useSettings";
 import { parseDiff } from "@/lib/diff";
@@ -48,7 +49,12 @@ export function ReviewProgress({ review }: { review: ReviewDetailOut }) {
     [review.raw_diff],
   );
 
-  const steps: { id: string; label: string; state: StepState; note?: string }[] = [
+  const steps: {
+    id: string;
+    label: string;
+    state: StepState;
+    note?: string;
+  }[] = [
     {
       id: "fetch",
       label: "Fetch",
@@ -89,67 +95,99 @@ export function ReviewProgress({ review }: { review: ReviewDetailOut }) {
   return (
     <Sheet aria-label="Review progress">
       <Sheet.Header title={queued ? "Queued" : "Reviewing"} />
-      <Sheet.Body className="flex flex-col gap-4">
-        <ol className="flex flex-col gap-1.5 font-code text-sm">
-          {steps.map((step, index) => (
-            <li key={step.id} className="flex items-baseline gap-3">
-              <span data-numeric className="w-6 shrink-0 text-ink-sub">
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <span
-                className={cn(
-                  "w-24 shrink-0 uppercase",
-                  step.state === "waiting" || step.state === "skipped"
-                    ? "text-ink-sub"
-                    : "text-ink",
-                )}
-              >
-                {step.label}
-              </span>
-              <span
-                className={cn(
-                  "w-24 shrink-0",
-                  step.state === "done" && "text-sage",
-                  step.state === "active" && "text-ochre",
-                  (step.state === "waiting" || step.state === "skipped") &&
-                    "text-ink-sub",
-                )}
-              >
-                {/* motion-safe, and the codebase's reduced-motion backstop
+      <Sheet.Body className="flex flex-col gap-4 md:flex-row md:items-start md:gap-8">
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+          <ol className="flex flex-col gap-1.5 font-code text-sm">
+            {steps.map((step, index) => (
+              <li key={step.id} className="flex items-baseline gap-3">
+                <span data-numeric className="w-6 shrink-0 text-ink-sub">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span
+                  className={cn(
+                    "w-24 shrink-0 uppercase",
+                    step.state === "waiting" || step.state === "skipped"
+                      ? "text-ink-sub"
+                      : "text-ink",
+                  )}
+                >
+                  {step.label}
+                </span>
+                <span
+                  className={cn(
+                    "w-24 shrink-0",
+                    step.state === "done" && "text-sage",
+                    step.state === "active" && "text-ochre",
+                    (step.state === "waiting" || step.state === "skipped") &&
+                      "text-ink-sub",
+                  )}
+                >
+                  {/* motion-safe, and the codebase's reduced-motion backstop
                     stops the pulse outright for anyone who asked. */}
-                {step.state === "active" && (
-                  <span
-                    aria-hidden="true"
-                    className="mr-1.5 inline-block size-1.5 rounded-full bg-ochre motion-safe:animate-pulse"
-                  />
+                  {step.state === "active" && (
+                    <span
+                      aria-hidden="true"
+                      className="mr-1.5 inline-block size-1.5 rounded-full bg-ochre motion-safe:animate-pulse"
+                    />
+                  )}
+                  {STATE_LABEL[step.state]}
+                </span>
+                {step.note && (
+                  <span className="min-w-0 truncate text-ink-dim">
+                    {step.note}
+                  </span>
                 )}
-                {STATE_LABEL[step.state]}
-              </span>
-              {step.note && (
-                <span className="min-w-0 truncate text-ink-dim">{step.note}</span>
-              )}
-            </li>
-          ))}
-        </ol>
+              </li>
+            ))}
+          </ol>
 
-        <p className="max-w-prose text-sm text-ink-dim">
-          {queued ? (
-            "Waiting for a worker to pick this up. This page updates itself the moment it starts."
-          ) : (
-            <>
-              {/* No "under a minute" here. That number came from the §8.1
+          <p className="max-w-prose text-sm text-ink-dim">
+            {queued ? (
+              "Waiting for a worker to pick this up. This page updates itself the moment it starts."
+            ) : (
+              <>
+                {/* No "under a minute" here. That number came from the §8.1
                   target, measured on the API providers; the subscription
                   providers drive a local CLI and take several minutes on a
                   real pull request. Promising a minute turned a healthy
                   six-minute review into "this is broken". */}
-              {`Started ${formatRelative(review.created_at)}. A large diff takes a few minutes — longer on the subscription providers, which run the model through a local CLI. `}
-              <span className="text-ink-sub">
-                Retrieval and review are reported together: the worker records
-                one status for both.
-              </span>
-            </>
-          )}
-        </p>
+                {`Started ${formatRelative(review.created_at)}. A large diff takes a few minutes — longer on the subscription providers, which run the model through a local CLI. `}
+                <span className="text-ink-sub">
+                  Retrieval and review are reported together: the worker records
+                  one status for both.
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+
+        {/* The half of this panel that used to be empty.
+
+            The scene rather than a still: a review takes minutes, and minutes
+            of a static panel is what made people conclude it had hung. The
+            monitor beside the cat is lit and its screen scrolls, which is the
+            only thing here that moves.
+
+            Those lines are abstract on purpose. A review is one model call, so
+            nothing knows which file the model has in front of it — a screen
+            naming real files as they scrolled would be inventing telemetry on
+            a panel whose stated rule is that every state is derived from
+            something the API proves. The step list beside it says what is
+            actually known; this says only "something is being read", which is
+            true.
+
+            `md:` only. It keeps `CafeScene`'s own `role="img"` and label
+            rather than being hidden — that is what every other use of the
+            scene does, and a reader who reaches it should be told there is a
+            picture rather than finding a gap. It is not announced on its own:
+            nothing here is live, so it is read when navigated to and not
+            while waiting. */}
+        {!queued && (
+          <CafeScene
+            reading
+            className="hidden w-full shrink-0 md:block md:max-w-sm"
+          />
+        )}
       </Sheet.Body>
     </Sheet>
   );

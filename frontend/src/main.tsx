@@ -52,6 +52,27 @@ if (import.meta.env.DEV && import.meta.env.VITE_USE_MSW === "true") {
     // changes anything for a sub-path build.
     serviceWorker: { url: `${import.meta.env.BASE_URL}mockServiceWorker.js` },
   });
+
+  // Sign the mock session in.
+  //
+  // The handlers answer `/auth/me` with 401 unless a request carries an
+  // Authorization header, which is right for tests — each one sets up the auth
+  // state it wants. In a browser it meant `dev:mock` opened on the login
+  // screen, and Login went to the *real* OAuth flow and bounced to whichever
+  // port the backend's redirect URI names. So the one mode that exists to run
+  // without a backend was the one mode that required one.
+  //
+  // Seeding the store rather than loosening the handler keeps the real auth
+  // path in play: the client attaches the header, `/auth/me` answers, and the
+  // session behaves as it does in production.
+  const { hasTokens, setTokens } = await import("./lib/tokenStore");
+  if (!hasTokens()) {
+    setTokens({
+      access_token: "msw-access-token",
+      refresh_token: "msw-refresh-token",
+    });
+  }
+
   render();
 } else {
   render();

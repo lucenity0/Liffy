@@ -21,20 +21,39 @@ import {
  * The frame's aspect-ratio is the canvas's, not a round number, because the
  * two layers only line up if the whole thing scales as one drawing.
  */
-export function CafeScene({ className }: { className?: string }) {
+export function CafeScene({
+  className,
+  reading = false,
+}: {
+  className?: string;
+  /**
+   * Swap the books and cup on the sill for a lit monitor scrolling abstract
+   * text — the review-in-progress scene.
+   *
+   * The lines are abstract deliberately. A review is one model call, so
+   * nothing knows which file the model has in front of it; a screen naming
+   * real files as they scrolled would be inventing telemetry. Shapes that
+   * read as text claim nothing.
+   */
+  reading?: boolean;
+}) {
   const canvas = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     if (!canvas.current) return;
-    return mountCafeScene(canvas.current);
-  }, []);
+    return mountCafeScene(canvas.current, { reading });
+  }, [reading]);
 
   return (
     // One label on the frame with both layers hidden: it is a single
     // picture, and a screen reader should hear it as one.
     <div
       role="img"
-      aria-label="A cat asleep on a cushion on a café windowsill, beside a steaming cup and a stack of books, with rooftops and slow clouds through the glass."
+      aria-label={
+        reading
+          ? "A cat asleep on a cushion on a café windowsill beside a glowing monitor, its screen scrolling, with rooftops and slow clouds through the glass."
+          : "A cat asleep on a cushion on a café windowsill, beside a steaming cup and a stack of books, with rooftops and slow clouds through the glass."
+      }
       className={cn(
         "rounded-sheet border-rule bg-card shadow-hard relative overflow-hidden border",
         // The room's own ratio is the default; a caller that stretches this

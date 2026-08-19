@@ -120,12 +120,22 @@ export function ReviewDetail() {
 
   if (!data) return <DetailSkeleton />;
 
+  // What the review read, not what the pull request contains, when those
+  // differ. `raw_diff` is always the whole pull request — comments anchor
+  // against it — so a narrowed review would otherwise advertise a file count
+  // it never looked at.
+  const scope = data.summary_detail?.scope;
+  const fileStat =
+    files.length === 0
+      ? null
+      : scope
+        ? `${scope.files_reviewed} of ${scope.files_in_diff} files reviewed`
+        : `${stat.files} file${stat.files === 1 ? "" : "s"} · +${stat.additions} −${stat.deletions}`;
+
   const headerMeta = [
     data.model_used,
     data.tokens_used !== null ? `${formatCount(data.tokens_used)} tokens` : null,
-    files.length > 0
-      ? `${stat.files} file${stat.files === 1 ? "" : "s"} · +${stat.additions} −${stat.deletions}`
-      : null,
+    fileStat,
   ]
     .filter(Boolean)
     .join(" · ");

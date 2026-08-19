@@ -677,3 +677,30 @@ describe("ReviewDetail — missing", () => {
     );
   });
 });
+
+describe("ReviewDetail — a narrowed review", () => {
+  it("reports what it read rather than what the pull request contains", async () => {
+    server.use(
+      http.get("*/reviews/:reviewId", () =>
+        HttpResponse.json({
+          ...fixtureReviewCompleted,
+          summary_detail: {
+            ...fixtureReviewCompleted.summary_detail,
+            scope: { files_reviewed: 3, files_in_diff: 17 },
+          },
+        }),
+      ),
+    );
+
+    renderDetail(fixtureReviewCompleted.id);
+
+    expect(await screen.findByText(/3 of 17 files reviewed/)).toBeInTheDocument();
+  });
+
+  it("reports the plain file count when nothing was narrowed", async () => {
+    renderDetail(fixtureReviewCompleted.id);
+
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByText(/files reviewed/)).not.toBeInTheDocument();
+  });
+});

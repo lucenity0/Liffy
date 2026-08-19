@@ -1151,3 +1151,55 @@ def test_raw_diff_stays_whole_under_a_selection(db: Session) -> None:
     )
 
     assert review.raw_diff == DIFF
+
+
+TWO_FILE_DIFF = """\
+diff --git a/app/util.py b/app/util.py
+--- a/app/util.py
++++ b/app/util.py
+@@ -10,4 +10,5 @@ def helper():
+ context
+-old
++new
++extra
+ context
+diff --git a/docs/notes.md b/docs/notes.md
+--- a/docs/notes.md
++++ b/docs/notes.md
+@@ -1,2 +1,3 @@ notes
+ keep
++a line nobody selected
+ tail
+"""
+
+
+def test_a_narrowed_review_records_what_it_actually_read(db: Session) -> None:
+    """`raw_diff` is the whole pull request, so the header would otherwise
+    report its file count for a review that read a fraction of it.
+
+    Somebody who picked three commits and saw "17 files" would reasonably
+    conclude the picker had not worked. It had; the page was describing the
+    wrong thing.
+    """
+    gh = _picker_gh({"c1": ["app/util.py"]})
+    gh.pr_diff = TWO_FILE_DIFF  # the selection has something to exclude
+
+    review = run_review(
+        db, "octo", "demo", 7, gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+        commit_shas=["c1"],
+    )
+
+    scope = (review.summary_detail or {}).get("scope")
+    assert scope is not None
+    assert scope["files_reviewed"] < scope["files_in_diff"]
+
+
+def test_an_unnarrowed_review_records_no_scope(db: Session) -> None:
+    """Nothing to explain when everything was read — and a scope line on every
+    review would be noise on the common case."""
+    review = _run(db, FakeLLM([_payload([])]))
+
+    assert "scope" not in (review.summary_detail or {})

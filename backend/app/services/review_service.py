@@ -288,7 +288,31 @@ def run_review(
         # Stored only when the model actually produced it: null means "not
         # asked or not answered", which is true of every review written before
         # this existed and of any model that returned the older output shape.
-        review.summary_detail = (
+        # What was actually looked at, when it was not everything.
+        #
+        # `raw_diff` is deliberately the whole pull request — comments anchor
+        # and post against it — so without this the header reports the pull
+        # request's file count for a review that read four of them. A reader
+        # who picked three commits and saw "17 files" would reasonably
+        # conclude the picker had not worked. It did; the page was describing
+        # the wrong thing.
+        #
+        # In `summary_detail` rather than a column of its own: that field is
+        # already the loose presentational payload, which is what this is.
+        scope = (
+            {
+                "files_reviewed": len(review_diffs),
+                "files_in_diff": len(file_diffs),
+            }
+            if len(review_diffs) < len(file_diffs)
+            else None
+        )
+
+        # `scope` is enough on its own to make the payload worth writing: a
+        # narrowed review has something to say about itself even when the
+        # model returned no overview, and that is exactly the review whose
+        # file count would otherwise mislead.
+        overview = (
             {
                 "changes": result.output.changes,
                 "files": [
@@ -297,7 +321,10 @@ def run_review(
                 ],
             }
             if (result.output.changes or result.output.files)
-            else None
+            else {}
+        )
+        review.summary_detail = (
+            {**({"scope": scope} if scope else {}), **overview} or None
         )
         review.verdict = result.output.verdict.value
         review.status = "completed"

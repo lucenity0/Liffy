@@ -55,9 +55,12 @@ export function CommitPicker({ prId }: { prId: string }) {
     });
   }
 
+  // `w-fit` on the button: this sits in a `flex flex-col` on the review page,
+  // where the default `align-items: stretch` pulls a lone button across the
+  // whole column.
   if (!open) {
     return (
-      <Button variant="ghost" onClick={() => setOpen(true)}>
+      <Button variant="ghost" className="w-fit" onClick={() => setOpen(true)}>
         Fetch new commits
       </Button>
     );

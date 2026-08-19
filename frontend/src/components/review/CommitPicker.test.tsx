@@ -101,3 +101,15 @@ describe("CommitPicker", () => {
     expect(alert).not.toHaveTextContent("is it private");
   });
 });
+
+describe("CommitPicker — layout", () => {
+  it("does not stretch across the column it sits in", () => {
+    renderWithProviders(<CommitPicker prId={PR_ID} />);
+
+    // The review page wraps this in a `flex flex-col`, whose default
+    // `align-items: stretch` pulled the collapsed button the full width.
+    expect(screen.getByRole("button", { name: "Fetch new commits" })).toHaveClass(
+      "w-fit",
+    );
+  });
+});

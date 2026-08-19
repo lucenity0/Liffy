@@ -312,7 +312,7 @@ def list_pr_commits(
         (
             head_sha
             for head_sha, detail in rows
-            if head_sha and not (detail or {}).get("scope")
+            if head_sha and not ((detail or {}).get("scope") or {}).get("commits")
         ),
         None,
     )

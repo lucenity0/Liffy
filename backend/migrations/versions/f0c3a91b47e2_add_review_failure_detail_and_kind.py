@@ -43,6 +43,20 @@ def upgrade() -> None:
     op.add_column("reviews", sa.Column("failure_detail", sa.Text(), nullable=True))
     op.add_column("reviews", sa.Column("failure_kind", sa.String(32), nullable=True))
 
+    # The backfill below is PostgreSQL-only — `substring(x from 'regex')`,
+    # `regexp_replace`, `~` and `ILIKE` are all its dialect. The two
+    # `add_column` calls above are portable, so without this guard anyone
+    # running `alembic upgrade head` against SQLite or MySQL fails on the data
+    # step *after* the schema step and ends up half-migrated.
+    #
+    # Skipped rather than reimplemented: Postgres is what `docker-compose.yml`
+    # runs and what `DATABASE_URL` defaults to, and the columns are nullable, so
+    # on another backend the new panel degrades to the pre-migration behaviour
+    # instead of breaking. A backfill nobody can run is worse than one that
+    # says it did nothing.
+    if op.get_bind().dialect.name != "postgresql":
+        return
+
     # Split the welded messages. The old classifier appended the provider's
     # output to its own sentence as `Output: {…}`, so the boundary is findable
     # and this is a move rather than a guess.
@@ -84,17 +98,32 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Same dialect guard as `upgrade`: `left()` is portable but there is
+    # nothing to weld back on a backend where the backfill never ran.
+    if op.get_bind().dialect.name == "postgresql":
+        _weld_detail_back()
+
+    op.drop_column("reviews", "failure_kind")
+    op.drop_column("reviews", "failure_detail")
+
+
+def _weld_detail_back() -> None:
     # Weld the detail back on before dropping it, so the downgrade loses
     # formatting rather than information. Without this, going back one revision
     # silently discards every failure's provider output — and on the rows this
     # migration split, that output exists nowhere else.
+    #
+    # Truncated to 300, which is what the format being restored actually held:
+    # the old classifier appended `Output: {blob[:300]}`. Welding the uncapped
+    # detail back would produce summaries longer than any row that existed
+    # before this migration, in the column the reviews list renders for every
+    # review — reintroducing a worse version of the problem the upgrade
+    # removes.
     op.execute(
         """
         UPDATE reviews
-           SET summary = summary || ' Output: ' || failure_detail
+           SET summary = summary || ' Output: ' || left(failure_detail, 300)
          WHERE failure_detail IS NOT NULL
            AND summary IS NOT NULL
         """
     )
-    op.drop_column("reviews", "failure_kind")
-    op.drop_column("reviews", "failure_detail")

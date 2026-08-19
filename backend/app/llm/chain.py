@@ -403,10 +403,16 @@ def _cli_failure_blob(stdout: str | None, stderr: str | None) -> str:
     # The raw event goes *last*, after everything legible.
     #
     # It has to still be here: `_classify_cli_failure` scans this whole string,
-    # and a limit or auth marker can sit in a field the summary above drops, so
-    # removing it would silently downgrade a recognisable failure to a generic
-    # one. But only the *message* is truncated at 300 characters, so appending
-    # it costs nothing a reader sees while keeping classification exhaustive.
+    # and a limit or auth marker can sit in a field `_result_event_summary`
+    # drops — `usage`, in the case `test_a_limit_marker_in_a_dropped_field_is_
+    # still_classified` pins. Removing it would silently downgrade a
+    # recognisable failure to a generic one.
+    #
+    # The reader does see it: this becomes `failure_detail`, which the View log
+    # disclosure renders verbatim. So the duplication is deliberate rather than
+    # free — the summary above is what makes the cause legible at a glance, and
+    # this is what keeps classification exhaustive and lets someone paste the
+    # whole event into a bug report.
     if result is not None:
         parts.append(json.dumps(result))
 

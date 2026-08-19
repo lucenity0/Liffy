@@ -236,12 +236,35 @@ export const fixtureReviewPending: ReviewDetailOut = {
   raw_diff: null,
 };
 
+/**
+ * A review the worker has picked up.
+ *
+ * `raw_diff` is set, and that is not decoration: `review_service` fetches the
+ * diff *before* it inserts the row, so a `processing` review always has one.
+ * Inheriting the pending fixture's `null` modelled a state that cannot exist —
+ * and it left both things that read the diff during a review, the Fetch step's
+ * file count and the panel beside it, unreachable in mock mode.
+ */
 export const fixtureReviewProcessing: ReviewDetailOut = {
   ...fixtureReviewPending,
   id: "bbbbbbbb-0000-0000-0000-000000000004",
   pr_id: "cccccccc-0000-0000-0000-000000000004",
   pr_number: 60,
   status: "processing",
+  raw_diff: [
+    "backend/app/llm/chain.py",
+    "backend/app/services/review_service.py",
+    "backend/tests/test_llm_chain.py",
+    "frontend/src/components/review/ReviewProgress.tsx",
+    "frontend/src/hooks/useReview.ts",
+    "frontend/src/lib/diff.ts",
+    "docs/SETUP.md",
+  ]
+    .map(
+      (path) =>
+        `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,1 +1,2 @@\n context\n+added\n`,
+    )
+    .join(""),
 };
 
 export const fixtureReviewFailed: ReviewDetailOut = {

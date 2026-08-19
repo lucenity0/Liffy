@@ -9,6 +9,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.pull_request import PullRequest
 from app.models.repository import Repository
+from app.models.user import User
 from app.services.github_service import verify_webhook_signature
 from app.services.review_service import resolve_repo_owner
 from app.workers import review_worker
@@ -63,7 +64,8 @@ async def github_webhook(
     # review to. Ignored rather than absorbed by a phantom user (AUTH-4), which
     # let an unsolicited webhook create rows. Checked here rather than in the
     # worker so the work is never queued.
-    if resolve_repo_owner(db, full_name) is None:
+    owner_user = resolve_repo_owner(db, full_name)
+    if owner_user is None:
         return {"status": "ignored", "reason": "repository not connected"}
 
     owner, repo_name = full_name.split("/", 1)
@@ -79,24 +81,40 @@ async def github_webhook(
     # `opened` and `reopened` are not gated: a pull request nobody has looked
     # at yet is the one case where an unrequested review is the whole point,
     # and it is what the toggle below is opted *out* of rather than into.
-    if action == "synchronize" and not _auto_review_enabled(db, full_name, pr_number):
+    if action == "synchronize" and not _auto_review_enabled(
+        db, owner_user, full_name, pr_number
+    ):
         return {"status": "ignored", "reason": "auto-review off for this pull request"}
 
     review_worker.enqueue_review(owner, repo_name, pr_number, received_at.isoformat())
     return {"status": "queued", "pr_number": pr_number}
 
 
-def _auto_review_enabled(db: Session, full_name: str, pr_number: int) -> bool:
+def _auto_review_enabled(
+    db: Session, owner: User, full_name: str, pr_number: int
+) -> bool:
     """Whether this pull request opted into being reviewed on every push.
 
+    Scoped to the *owner* and not just to `full_name`, because `full_name` has
+    no unique constraint: nothing stops two users connecting the same
+    repository, and each connection gets its own `Repository` row and its own
+    `PullRequest` rows. Filtering on the name alone lets an arbitrary one win,
+    so the gate could read one user's flag while the review it gates belongs
+    to another's.
+
+    `resolve_repo_owner` has already picked which connection this delivery
+    belongs to — first connector wins — so reusing its answer is what keeps
+    the gate and the enqueue talking about the same row.
+
     A pull request Liffy has never seen has no row, and no row means off —
-    which is the same answer as the column's default and needs no special case.
+    the same answer as the column's default, so it needs no special case.
     """
     return bool(
         db.scalar(
             select(PullRequest.auto_review)
             .join(Repository, PullRequest.repo_id == Repository.id)
             .where(
+                Repository.user_id == owner.id,
                 Repository.full_name == full_name,
                 PullRequest.github_pr_number == pr_number,
             )

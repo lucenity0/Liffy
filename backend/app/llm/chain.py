@@ -62,17 +62,36 @@ def _is_prose_suggestion(value: str | None) -> bool:
 
 
 def _remove_prose_suggestions(output: LLMReviewOutput) -> LLMReviewOutput:
-    """Keep comments, but never publish prose as a pasteable suggestion."""
-    return output.model_copy(
-        update={
-            "comments": [
-                comment.model_copy(update={"suggestion": None})
-                if _is_prose_suggestion(comment.suggestion)
-                else comment
-                for comment in output.comments
-            ]
-        }
-    )
+    """Keep comments, but never publish prose as a pasteable suggestion.
+
+    Logs what it drops, and what the model offered in the first place.
+    Without that line the strip is invisible after the fact: a review with no
+    suggestion blocks is indistinguishable from one whose suggestions were all
+    thrown away here, and answering "why are there no suggestions" needs
+    guessing at what the model sent. Asked and could not be answered on #274.
+    """
+    offered = sum(1 for c in output.comments if c.suggestion)
+    kept = [
+        comment.model_copy(update={"suggestion": None})
+        if _is_prose_suggestion(comment.suggestion)
+        else comment
+        for comment in output.comments
+    ]
+    dropped = offered - sum(1 for c in kept if c.suggestion)
+
+    if output.comments:
+        logger.info(
+            "suggestions: %d offered on %d comment(s), %d dropped as prose",
+            offered, len(output.comments), dropped,
+        )
+    for comment in output.comments:
+        if _is_prose_suggestion(comment.suggestion):
+            logger.info(
+                "dropped a prose suggestion on %s:%s: %r",
+                comment.file, comment.line_start, (comment.suggestion or "")[:120],
+            )
+
+    return output.model_copy(update={"comments": kept})
 
 
 @dataclass

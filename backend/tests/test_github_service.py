@@ -71,6 +71,120 @@ def test_get_pull_request_parses_metadata() -> None:
     )
 
 
+def test_get_pull_request_reads_merged_at() -> None:
+    """GitHub returns it; nothing was reading it.
+
+    `state` is `open` or `closed` and says nothing about *how* it closed, so
+    for as long as this field went unread a merged pull request and an
+    abandoned one were the same row.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "number": 7,
+                "title": "Add feature",
+                "state": "closed",
+                "merged": True,
+                "merged_at": "2026-08-21T18:39:30Z",
+                "user": {"login": "octocat"},
+                "base": {"ref": "main"},
+                "head": {"ref": "feature", "sha": "abc123"},
+            },
+        )
+
+    pr = _client(handler).get_pull_request("octo", "hello", 7)
+    assert pr.state == "closed"
+    assert pr.merged_at == "2026-08-21T18:39:30Z"
+
+
+def test_get_pull_request_merged_at_is_none_when_absent() -> None:
+    """An open pull request has no merge date, and the absent key must not
+    become an empty string — `parse_github_timestamp` treats both as None, but
+    a falsy sentinel in the dataclass would read as "merged at the epoch" to
+    anything that checked truthiness differently."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "number": 7,
+                "title": "Add feature",
+                "state": "open",
+                "user": {"login": "octocat"},
+                "base": {"ref": "main"},
+                "head": {"ref": "feature", "sha": "abc123"},
+            },
+        )
+
+    assert _client(handler).get_pull_request("octo", "hello", 7).merged_at is None
+
+
+def test_list_pull_requests_reads_merged_at() -> None:
+    """The list endpoint returns the same field, and the picker path has to
+    carry it too — otherwise reviewing a PR chosen from the list would write a
+    null over a merge date the single-PR path would have captured."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 7,
+                    "title": "Add feature",
+                    "state": "closed",
+                    "merged_at": "2026-08-21T18:39:30Z",
+                    "user": {"login": "octocat"},
+                    "base": {"ref": "main"},
+                    "head": {"ref": "feature", "sha": "abc123"},
+                },
+                {
+                    "number": 8,
+                    "title": "Abandoned",
+                    "state": "closed",
+                    "merged_at": None,
+                    "user": {"login": "octocat"},
+                    "base": {"ref": "main"},
+                    "head": {"ref": "dead", "sha": "def456"},
+                },
+            ],
+        )
+
+    prs = _client(handler).list_pull_requests("octo", "hello", state="all")
+    assert prs[0].merged_at == "2026-08-21T18:39:30Z"
+    assert prs[1].merged_at is None
+
+
+def test_parse_github_timestamp_handles_the_z_suffix() -> None:
+    """`Z` is not something `fromisoformat` accepted before 3.11, and the
+    columns this feeds are `timezone=True`. A naive datetime stored there reads
+    back as local, which on a merge date means the merge appearing to happen
+    hours away from when it did."""
+    from datetime import timezone as tz
+
+    from app.services.github_service import parse_github_timestamp
+
+    parsed = parse_github_timestamp("2026-08-21T18:39:30Z")
+    assert parsed is not None
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == tz.utc.utcoffset(None)
+
+
+def test_parse_github_timestamp_returns_none_rather_than_raising() -> None:
+    """A malformed timestamp should cost one merge date, not the whole sweep
+    it arrived in."""
+    from app.services.github_service import parse_github_timestamp
+
+    assert parse_github_timestamp("not-a-timestamp") is None
+    assert parse_github_timestamp(None) is None
+    assert parse_github_timestamp("") is None
+    # "Anything" has to include the wrong *type*, not just the wrong string:
+    # this is reached straight off a webhook body, where the value is whatever
+    # the request contained. `.replace` on a non-string raises AttributeError,
+    # which on that route becomes an unhandled 500 and a GitHub retry.
+    assert parse_github_timestamp(1755800000) is None
+    assert parse_github_timestamp({"at": "2026-08-21T18:39:30Z"}) is None
+    assert parse_github_timestamp(["2026-08-21T18:39:30Z"]) is None
+
+
 def test_get_pull_request_diff_requests_diff_media_type() -> None:
     diff_text = "diff --git a/x b/x\n@@ -1 +1 @@\n-old\n+new\n"
 

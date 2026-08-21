@@ -44,10 +44,20 @@ class Metric(BaseModel):
 class SeverityCalibrationRow(BaseModel):
     """One severity's row of §8.1's calibration audit.
 
-    ``prs_still_open`` is **not** a blocked-merge count. GitHub's REST ``state``
-    is ``open`` or ``closed`` and does not distinguish merged from
-    closed-without-merging, so this is a proxy for "not yet resolved". Do not
-    label it "blocked merge" on screen — the data cannot support the claim.
+    ``prs_still_open`` is **not** a blocked-merge count, and the field is named
+    for what it measures: pull requests carrying such a comment that have not
+    been closed. Do not label it "blocked merge" on screen — nothing here shows
+    that Liffy's comment is *why* a pull request is still open, and a
+    correlation between severity and staying open is all this can ever be.
+
+    It is now an honest count rather than an artefact. ``pull_requests.status``
+    used to be written only at review time and never re-synced, so every row
+    read ``open`` forever and this rate was closer to "how many pull requests
+    Liffy has reviewed" than to anything about severity. #279 added the
+    ``closed`` webhook branch and the daily sweep that keep it current, and
+    ``pull_requests.merged_at`` alongside it — so merged and
+    closed-without-merging are distinguishable now, whichever this column
+    eventually chooses to show.
     """
 
     model_config = ConfigDict(from_attributes=True)

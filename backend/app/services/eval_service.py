@@ -196,13 +196,23 @@ class SeverityCalibrationRow:
     """One severity's share of §8.1's calibration audit.
 
     ``prs_still_open`` is **not** a blocked-merge count, and the field is named
-    for what it measures. Liffy does not track merges: ``pull_requests.status``
-    is synced from GitHub's REST ``state``, which is ``open`` or ``closed`` and
-    **does not distinguish merged from closed-without-merging**. So "still
-    open" is the honest proxy available today — it means "carrying such a
-    comment and not yet resolved" — and calling it a merge rate would be a
-    claim the data cannot support. Storing ``merged_at`` off the PR payload
-    would close the gap properly; that is a follow-up, not this metric.
+    for what it measures: pull requests carrying such a comment that are not
+    yet closed. Calling it a merge rate would claim Liffy's comment is *why*
+    the pull request is open, which nothing here shows.
+
+    **This number used to be an artefact.** ``pull_requests.status`` was written
+    once, by ``ensure_repo_and_pr`` at review time — when the pull request was
+    open by definition — and never re-synced, so every row read ``open``
+    forever and this rate measured how many pull requests Liffy had reviewed
+    rather than anything about severity. #279 fixed that: the webhook now
+    handles ``closed``, and ``liffy.sync_pull_request_state`` sweeps daily for
+    the transitions no delivery ever arrives for.
+
+    The old caveat here claimed GitHub's API could not tell a merge from a
+    close. It can, and always could — ``merged_at`` is on the pull request
+    payload and on both REST endpoints. It was simply never read. It is stored
+    on ``pull_requests.merged_at`` now, so a merged pull request and an
+    abandoned one are distinguishable whenever this audit wants to split them.
 
     ``prs_with_comment`` is the sample size and travels with the rate
     everywhere. §8.1 calls this a *monthly* audit precisely because n is tiny:

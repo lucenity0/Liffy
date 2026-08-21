@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.pull_request import PullRequest
 from app.models.repository import Repository
 from app.models.user import User
-from app.services.github_service import verify_webhook_signature
+from app.services.github_service import parse_github_timestamp, verify_webhook_signature
 from app.services.review_service import resolve_repo_owner
 from app.workers import review_worker
 
@@ -18,6 +18,22 @@ router = APIRouter()
 
 # PR events that warrant a (re-)review (report §3.1 step 02).
 _REVIEWABLE_ACTIONS = {"opened", "synchronize", "reopened"}
+
+# PR events that carry a state change worth recording.
+#
+# `reopened` is in both this set and the reviewable one, deliberately. It does
+# go through `ensure_repo_and_pr` on the review path, which re-syncs `status` —
+# but only if the review actually runs. If the broker is down, or `run_review`
+# raises before it reaches `ensure_repo_and_pr` (`gh.get_pull_request` is
+# called first and can 5xx or hit a rate limit), the row keeps the `closed`
+# this webhook wrote when it closed. And nothing ever corrects it: the daily
+# sweep scopes itself to `status != "closed"`, so a wrongly-closed row is
+# invisible to the one job that exists to fix wrong rows.
+#
+# Syncing here as well costs one write and closes that hole. The write is
+# idempotent with the one `ensure_repo_and_pr` makes later, so the redundancy
+# is the point rather than a cost.
+_STATE_ACTIONS = {"closed", "reopened"}
 
 
 # Deliberately unauthenticated: GitHub cannot present a JWT. This route is
@@ -56,8 +72,11 @@ async def github_webhook(
     action = payload.get("action")
     full_name = (payload.get("repository") or {}).get("full_name", "")
 
-    if not pull_request or action not in _REVIEWABLE_ACTIONS or "/" not in full_name:
+    if not pull_request or "/" not in full_name:
         # 200 so GitHub does not retry pings/irrelevant events.
+        return {"status": "ignored"}
+
+    if action not in _REVIEWABLE_ACTIONS and action not in _STATE_ACTIONS:
         return {"status": "ignored"}
 
     # A delivery for a repository nobody connected has no owner to attribute the
@@ -70,6 +89,23 @@ async def github_webhook(
 
     owner, repo_name = full_name.split("/", 1)
     pr_number = int(pull_request["number"])
+
+    # A pull request closing is not a reason to review it, but it is the only
+    # moment Liffy is ever told the state changed.
+    #
+    # Without this branch `pull_requests.status` is written once — by
+    # `ensure_repo_and_pr` at review time, when the pull request was open by
+    # definition — and never again. Every row stays `open` forever, which is
+    # what made the §8.1 calibration audit report two thirds of pull requests
+    # unresolved on a repository where every one of them had merged.
+    #
+    # Recorded first, then the review decision below. A state action that is
+    # *also* reviewable (`reopened`) must not return here — that would swallow
+    # the review it is supposed to trigger.
+    if action in _STATE_ACTIONS:
+        synced = _sync_pr_state(db, owner_user, full_name, pr_number, pull_request)
+        if action not in _REVIEWABLE_ACTIONS:
+            return synced
 
     # A push only reviews if somebody asked it to.
     #
@@ -120,3 +156,50 @@ def _auto_review_enabled(
             )
         )
     )
+
+
+def _sync_pr_state(
+    db: Session,
+    owner: User,
+    full_name: str,
+    pr_number: int,
+    payload: dict,
+) -> dict[str, str | int]:
+    """Record that a pull request closed, and whether it merged.
+
+    **Updates an existing row; never creates one.** A `closed` delivery for a
+    pull request Liffy has never reviewed must not conjure a `PullRequest` row
+    — that is the AUTH-4 phantom-row failure the `resolve_repo_owner` guard
+    above exists to prevent, and here it would additionally poison the
+    *denominator* of every rate on the calibration table by adding pull
+    requests that carry no comments at all.
+
+    Scoped to the owner for the same reason `_auto_review_enabled` is: nothing
+    stops two users connecting the same repository, and each connection has its
+    own rows.
+
+    No API call. GitHub's `pull_request.closed` payload already carries both
+    `state` and `merged_at`, so asking it again would spend a rate-limit unit
+    to learn what is in the request body.
+    """
+    pr = db.scalar(
+        select(PullRequest)
+        .join(Repository, PullRequest.repo_id == Repository.id)
+        .where(
+            Repository.user_id == owner.id,
+            Repository.full_name == full_name,
+            PullRequest.github_pr_number == pr_number,
+        )
+    )
+    if pr is None:
+        return {"status": "ignored", "reason": "pull request not tracked"}
+
+    pr.status = payload.get("state") or "closed"
+    # Only when it merged. `merged_at` is null on a close-without-merge, and
+    # that null is the whole distinction this column exists to carry — so it is
+    # written rather than skipped, unlike the re-review path where a null means
+    # "GitHub did not say".
+    pr.merged_at = parse_github_timestamp(payload.get("merged_at"))
+    db.commit()
+
+    return {"status": "state-synced", "pr_number": pr_number}

@@ -23,6 +23,7 @@ def test_every_worker_module_is_included() -> None:
         "app.workers.review_worker",
         "app.workers.index_worker",
         "app.workers.eval_worker",
+        "app.workers.pr_state_worker",
     }
 
 
@@ -63,3 +64,25 @@ def test_the_scheduled_task_name_matches_a_real_task() -> None:
 
     scheduled = celery.conf.beat_schedule["compute-eval-scores-weekly"]["task"]
     assert scheduled in celery.tasks
+
+
+def test_beat_schedule_registers_the_state_sync_task() -> None:
+    """Scheduled *and* imported — the pairing this file exists to guard."""
+    entry = celery.conf.beat_schedule["sync-pull-request-state-daily"]
+    assert entry["task"] == "liffy.sync_pull_request_state"
+    assert "app.workers.pr_state_worker" in celery.conf.include
+
+
+def test_the_state_sync_does_not_contend_with_the_eval_job() -> None:
+    """Both are `crontab`, for the reason above, and on different hours.
+
+    Not a correctness requirement — Celery would run them concurrently
+    happily — but they share a database and one of them walks every review.
+    Separating them costs nothing and keeps a slow week from turning into two
+    jobs fighting over the same connections at 03:00.
+    """
+    evals = celery.conf.beat_schedule["compute-eval-scores-weekly"]["schedule"]
+    state = celery.conf.beat_schedule["sync-pull-request-state-daily"]["schedule"]
+
+    assert isinstance(state, crontab)
+    assert evals.hour != state.hour

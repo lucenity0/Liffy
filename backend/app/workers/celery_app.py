@@ -27,6 +27,7 @@ celery = Celery(
         "app.workers.review_worker",
         "app.workers.index_worker",
         "app.workers.eval_worker",
+        "app.workers.pr_state_worker",
     ],
 )
 
@@ -53,6 +54,22 @@ celery.conf.update(
         "compute-eval-scores-weekly": {
             "task": "liffy.compute_eval_scores",
             "schedule": crontab(hour=3, minute=0, day_of_week=1),
+        },
+        # Pull request state goes stale silently. The webhook catches `closed`
+        # for repositories Liffy was listening to at the time; this catches the
+        # rest — a repository connected after the fact, a delivery that failed
+        # while the worker was down, a pull request closed during an outage.
+        #
+        # Daily, not weekly: the calibration audit reads this column, and a
+        # metric that is a week behind reality reads as a metric that is wrong.
+        # It is one API call per not-yet-closed pull request, so the cost scales
+        # with open work rather than with history.
+        #
+        # `crontab`, not `timedelta`, for the reason spelled out above — and
+        # 04:00 rather than 03:00 so it does not contend with the eval job.
+        "sync-pull-request-state-daily": {
+            "task": "liffy.sync_pull_request_state",
+            "schedule": crontab(hour=4, minute=0),
         },
     },
 )

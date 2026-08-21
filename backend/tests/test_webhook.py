@@ -210,7 +210,10 @@ def test_webhook_malformed_json_returns_400(enqueued) -> None:
 def test_webhook_ignores_irrelevant_events(enqueued) -> None:
     for payload in (
         {},  # ping-like
-        dict(PR_OPENED, action="closed"),  # non-reviewable action
+        # `labeled`, not `closed`: closed is neither reviewable nor irrelevant
+        # any more — it is how Liffy learns the pull request finished, and it
+        # has its own tests below.
+        dict(PR_OPENED, action="labeled"),  # non-reviewable, non-state action
         {"action": "opened", "pull_request": {"number": 7}},  # no repository
     ):
         response = _post(payload)
@@ -353,3 +356,210 @@ def test_the_gate_reads_the_flag_of_the_repository_the_review_belongs_to(
 
     assert response.json()["status"] == "queued"
     assert len(enqueued) == 1
+
+
+# ── `closed` re-syncs state without reviewing (#279) ─────────────────────────
+
+
+def _closed(*, merged_at: str | None, number: int = 7) -> dict:
+    return {
+        "action": "closed",
+        "pull_request": {
+            "number": number,
+            "state": "closed",
+            "merged": merged_at is not None,
+            "merged_at": merged_at,
+        },
+        "repository": {"full_name": "octo/demo"},
+    }
+
+
+def _fetch_pr(factory, number: int = 7):
+    from app.models.pull_request import PullRequest
+
+    with factory() as db:
+        return db.scalar(
+            select(PullRequest).where(PullRequest.github_pr_number == number)
+        )
+
+
+def test_a_merged_pull_request_is_recorded_as_closed_and_merged(
+    connected_repo, enqueued
+) -> None:
+    """The transition nothing was listening for.
+
+    `pull_requests.status` was written once, at review time, when the pull
+    request was open by definition — and never again. Every row stayed `open`
+    forever, which is what made the calibration audit report two thirds of
+    pull requests unresolved on a repository where all of them had merged.
+    """
+    _seed_pr(connected_repo, auto_review=False)
+
+    response = _post(_closed(merged_at="2026-08-21T18:39:30Z"))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "state-synced", "pr_number": 7}
+
+    pr = _fetch_pr(connected_repo)
+    assert pr is not None
+    assert pr.status == "closed"
+    assert pr.merged_at is not None
+    assert pr.merged_at.year == 2026 and pr.merged_at.month == 8
+
+
+def test_a_pull_request_closed_without_merging_leaves_merged_at_null(
+    connected_repo, enqueued
+) -> None:
+    """The distinction the column exists to carry.
+
+    GitHub's `state` is `closed` either way. A null `merged_at` on a closed
+    pull request is what says it was abandoned rather than shipped — so it is
+    written, not skipped.
+    """
+    _seed_pr(connected_repo, auto_review=False)
+
+    _post(_closed(merged_at=None))
+
+    pr = _fetch_pr(connected_repo)
+    assert pr is not None
+    assert pr.status == "closed"
+    assert pr.merged_at is None
+
+
+def test_closing_a_pull_request_does_not_queue_a_review(
+    connected_repo, enqueued
+) -> None:
+    """A pull request closing is not a reason to review it.
+
+    Reviewing on `closed` would bill a full review — tokens, and on a
+    subscription rate-limit quota — to comment on a pull request nobody can act
+    on any more.
+    """
+    _seed_pr(connected_repo, auto_review=True)
+
+    _post(_closed(merged_at="2026-08-21T18:39:30Z"))
+
+    assert enqueued == []
+
+
+def test_closing_an_untracked_pull_request_creates_no_row(
+    connected_repo, enqueued
+) -> None:
+    """**Update only, never create.**
+
+    A `closed` delivery for a pull request Liffy has never reviewed must not
+    conjure a `PullRequest` row. That is the AUTH-4 phantom-row failure the
+    `resolve_repo_owner` guard exists to prevent, and here it would also poison
+    the *denominator* of every rate on the calibration table by adding pull
+    requests that carry no comments at all.
+    """
+    from app.models.pull_request import PullRequest
+
+    response = _post(_closed(merged_at="2026-08-21T18:39:30Z", number=999))
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+
+    with connected_repo() as db:
+        assert db.scalars(select(PullRequest)).all() == []
+    assert enqueued == []
+
+
+def test_closing_a_pull_request_on_an_unconnected_repo_is_ignored(enqueued) -> None:
+    """Same guard as every other delivery: no owner, no rows."""
+    payload = _closed(merged_at=None)
+    payload["repository"]["full_name"] = "stranger/unknown"
+
+    response = _post(payload)
+
+    assert response.status_code == 200
+    assert response.json()["reason"] == "repository not connected"
+
+
+def test_a_malformed_merge_timestamp_costs_the_date_not_the_sync(
+    connected_repo, enqueued
+) -> None:
+    """The close still records. One bad field must not lose the transition."""
+    _seed_pr(connected_repo, auto_review=False)
+
+    payload = _closed(merged_at="not-a-timestamp")
+    _post(payload)
+
+    pr = _fetch_pr(connected_repo)
+    assert pr is not None
+    assert pr.status == "closed"
+    assert pr.merged_at is None
+
+
+def test_reopening_syncs_state_and_still_queues_the_review(
+    connected_repo, enqueued
+) -> None:
+    """`reopened` is in both action sets, and both halves have to happen.
+
+    Returning early after the state sync — the obvious way to add `reopened` —
+    would swallow the review it is supposed to trigger. A reopened pull request
+    is one nobody has looked at in its new form, which is the case an
+    unrequested review exists for.
+    """
+    _seed_pr(connected_repo, auto_review=False)
+    _post(_closed(merged_at=None))  # close it first
+    assert _fetch_pr(connected_repo).status == "closed"
+
+    response = _post({
+        "action": "reopened",
+        "pull_request": {"number": 7, "state": "open", "merged_at": None},
+        "repository": {"full_name": "octo/demo"},
+    })
+
+    assert response.json() == {"status": "queued", "pr_number": 7}
+    assert [c[:3] for c in enqueued] == [("octo", "demo", 7)]
+    # ...and the row no longer claims to be closed, without waiting for the
+    # worker to get there.
+    assert _fetch_pr(connected_repo).status == "open"
+
+
+def test_a_reopened_row_is_corrected_even_if_the_review_never_runs(
+    connected_repo, enqueued
+) -> None:
+    """The hole this closes.
+
+    If the broker is down or `run_review` raises before `ensure_repo_and_pr`,
+    the row keeps the `closed` written when it closed — and the daily sweep
+    scopes itself to `status != "closed"`, so the one job that fixes wrong rows
+    cannot see it. The webhook write is what makes that unreachable.
+    """
+    _seed_pr(connected_repo, auto_review=False)
+    _post(_closed(merged_at="2026-08-21T18:39:30Z"))
+
+    _post({
+        "action": "reopened",
+        "pull_request": {"number": 7, "state": "open", "merged_at": None},
+        "repository": {"full_name": "octo/demo"},
+    })
+
+    pr = _fetch_pr(connected_repo)
+    assert pr.status == "open"          # visible to the sweep again
+    assert pr.merged_at is None         # and no longer claiming a merge
+
+
+def test_a_non_string_merge_timestamp_does_not_500_the_webhook(
+    connected_repo, enqueued
+) -> None:
+    """The route is unauthenticated by design and GitHub retries 5xx.
+
+    `parse_github_timestamp` promises to return None on anything unparseable;
+    a payload whose `merged_at` is a number would otherwise raise
+    AttributeError inside it and surface as an unhandled 500.
+    """
+    _seed_pr(connected_repo, auto_review=False)
+
+    response = _post({
+        "action": "closed",
+        "pull_request": {"number": 7, "state": "closed", "merged_at": 1755800000},
+        "repository": {"full_name": "octo/demo"},
+    })
+
+    assert response.status_code == 200
+    pr = _fetch_pr(connected_repo)
+    assert pr.status == "closed"
+    assert pr.merged_at is None

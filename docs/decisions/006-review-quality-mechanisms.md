@@ -63,24 +63,35 @@ untouched; a plausible finding posts like any other, visually marked.
 
 ## What the numbers say
 
-Three live reviews after the milestone — two under `anthropic`, one under
-`claude_code`, both resolving to `claude-opus-5` — across PRs #261, #274, #277.
-Eight findings.
+Three live reviews after the milestone, across PRs #261, #274, #277. Eight
+findings.
+
+**All three ran under `claude_code`, not two providers.** They were intended to
+cover `anthropic` as well, and the script that ran them set
+`settings.llm_provider` directly — which does nothing, because
+`Settings.__getattribute__` (`config.py:177`) consults the runtime override
+store *before* the field's own value, and the store said `claude_code`. The
+same mistake also defeated the `post_reviews_to_github = False` guard, so these
+three reviews posted to GitHub. Both are recorded here rather than quietly
+re-run: **the numbers below are single-provider**, and the cross-provider claim
+#270 asks for has not been made.
 
 | | |
 |---|---|
 | Findings carrying a `failure_scenario` | **8 of 8** |
-| `raw_attempts` | **1**, on all three reviews, both providers |
+| `raw_attempts` | **1**, on all three reviews (`claude_code` only) |
 | `dropped_comments` | **0** |
 | Confidence split | **7 confirmed / 1 plausible** (87.5% / 12.5%) |
 | Mean scenario length | 339 chars, against 616-char comments |
 
-**The required field costs nothing.** `raw_attempts` was 1 every time: the
-model complies on the first attempt, so the retry storm the issue warned about
-— three calls and a failed review, expensive on `claude_code` and `codex` where
-each attempt is a 600s-timeout subprocess — did not materialise. This is the
-number to keep watching; a median above 1 in a provider would change the
-verdict.
+**The required field costs nothing — on `claude_code`.** `raw_attempts` was 1
+every time: the model complies on the first attempt, so the retry storm the
+issue warned about — three calls and a failed review, expensive on
+`claude_code` and `codex` where each attempt is a 600s-timeout subprocess — did
+not materialise on the one provider actually exercised. That is the provider
+where a storm would hurt most, which makes it the useful single data point and
+not a substitute for the others. `anthropic`, `openai` and `codex` remain
+unmeasured; a median above 1 on any of them would change the verdict.
 
 **The scenarios are real.** They name inputs and results rather than restating
 the comment — *"A PR with 120 commits whose last completed review has head_sha
@@ -129,7 +140,7 @@ Two things blocking it that are worth fixing regardless:
 |---|---|
 | #267 five-angle sweep | **Stay scrapped.** Wrong tool for this job, and the recall problem it fixes was never demonstrated. |
 | #268 ranking rule | **Stay scrapped.** Returns with an output cap, if one is ever introduced. |
-| #270 `failure_scenario` | **Keep.** 100% compliance, zero retry cost, substantive output. The clearest win in the milestone. |
+| #270 `failure_scenario` | **Keep.** 100% compliance, zero retry cost, substantive output — on `claude_code`. The clearest win in the milestone, on one provider. |
 | #271 `confidence` | **Keep, and re-measure.** The split is non-degenerate but the sample is 8, and there is a known miscall in it. Do not filter on it until #273 has real data. |
 | #272 dashboard rendering | **Keep.** Presentation only. |
 

@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -7,6 +8,8 @@ import httpx
 
 from app.config import settings
 from app.services.diff_parser import DiffHunk, FileDiff, FileStatus
+
+logger = logging.getLogger(__name__)
 
 GITHUB_API_BASE = "https://api.github.com"
 _DEFAULT_TIMEOUT = 30.0
@@ -247,6 +250,46 @@ class PullRequestMeta:
     head_branch: str
     head_sha: str
     state: str
+
+    # ISO-8601 from GitHub, or None when the pull request has not been merged.
+    #
+    # `state` is `open` or `closed` and says nothing about *how* it closed.
+    # This is the field that separates a merge from an abandonment, and GitHub
+    # has always returned it on both the single-PR and the list endpoint — it
+    # was simply never read. Kept as the raw string GitHub sends rather than
+    # parsed here, so this dataclass stays a transport shape and SQLAlchemy
+    # does the coercion at the column.
+    merged_at: str | None = None
+
+
+def parse_github_timestamp(value: str | None) -> datetime | None:
+    """GitHub's ISO-8601 (``2026-08-21T18:39:30Z``) as an aware datetime.
+
+    Lives here rather than at either call site because the format is GitHub's,
+    not the caller's — both the webhook payload and the REST endpoints spell it
+    this way, and a second copy of the same `Z` handling is a second place to
+    get it wrong.
+
+    The `Z` matters: `fromisoformat` did not accept it before Python 3.11, and
+    the columns these feed are `timezone=True`. A naive datetime stored there
+    reads back as though it were local time, which on a merge date means the
+    merge appearing to happen hours away from when it did.
+
+    Returns None rather than raising on **anything** unparseable, which has to
+    include the wrong *type* and not just the wrong string. This is reached
+    straight off a webhook payload (`webhook._sync_pr_state`), so the value is
+    whatever the request body contained — a number or an object there would
+    make `.replace` raise `AttributeError`, turn into an unhandled 500 on an
+    unauthenticated-by-design route, and have GitHub retry the delivery. That
+    is the opposite of "cost one merge date, not the whole sync".
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("unparseable GitHub timestamp: %r", value)
+        return None
 
 
 @dataclass(frozen=True)
@@ -508,6 +551,7 @@ class GitHubClient:
             head_branch=head.get("ref", ""),
             head_sha=head.get("sha", ""),
             state=data.get("state", ""),
+            merged_at=data.get("merged_at"),
         )
 
     def list_pull_requests(
@@ -552,6 +596,7 @@ class GitHubClient:
                 head_branch=(item.get("head") or {}).get("ref", ""),
                 head_sha=(item.get("head") or {}).get("sha", ""),
                 state=item.get("state", ""),
+                merged_at=item.get("merged_at"),
             )
             for item in data
         ]

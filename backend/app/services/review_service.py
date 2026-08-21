@@ -25,7 +25,11 @@ from app.models.review import Review
 from app.models.review_comment import ReviewComment
 from app.models.user import User
 from app.services.diff_parser import FileStatus, parse_diff
-from app.services.github_service import GitHubClient, PullRequestMeta
+from app.services.github_service import (
+    GitHubClient,
+    PullRequestMeta,
+    parse_github_timestamp,
+)
 from app.services.rag_service import RetrievedChunk, retrieve_for_file_diff
 from app.services.review_publisher import (
     build_review_body,
@@ -126,6 +130,11 @@ def ensure_repo_and_pr(
     pr.base_branch = pr_meta.base_branch
     pr.head_branch = pr_meta.head_branch
     pr.status = pr_meta.state
+    # Only when GitHub says so. Not cleared on a null, because a re-review of a
+    # merged pull request would otherwise unmerge it in the database, and
+    # nothing else ever sets it back.
+    if pr_meta.merged_at:
+        pr.merged_at = parse_github_timestamp(pr_meta.merged_at)
     db.flush()
     return repo, pr
 

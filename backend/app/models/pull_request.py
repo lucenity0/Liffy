@@ -32,6 +32,20 @@ class PullRequest(Base):
     head_branch: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="open")
 
+    # When this pull request was merged, or null if it was not (yet, or ever).
+    #
+    # `status` carries GitHub's own vocabulary, which is `open` or `closed` and
+    # nothing else — a pull request closed without merging and one merged
+    # cleanly are both `closed` there. This is the column that tells them
+    # apart, and GitHub hands it over freely: `merged_at` is on the pull request
+    # payload, on the single-PR endpoint and on the list endpoint alike.
+    #
+    # Null is not "unknown". A pull request that is open has not been merged,
+    # and one closed without merging never will be; both are honestly null.
+    merged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Whether a push to this pull request reviews it automatically.
     #
     # Off by default, deliberately. `synchronize` fires on every push, so

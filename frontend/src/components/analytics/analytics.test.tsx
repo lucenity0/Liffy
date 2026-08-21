@@ -300,9 +300,13 @@ describe("SeverityCalibration", () => {
   });
 
   /**
-   * GitHub's REST `state` does not distinguish merged from closed-without-
-   * merging, so the data cannot support the words "blocked merge". Asserted
+   * Nothing here shows that Liffy's comment is *why* a pull request is still
+   * open, so the data cannot support the words "blocked merge". Asserted
    * rather than trusted, because it is exactly the phrase someone reaches for.
+   *
+   * The footnote no longer blames GitHub's API for the gap. It never was
+   * GitHub's — `merged_at` is on every pull request payload and was simply
+   * never read (#279). What the column is honestly limited to is correlation.
    */
   it("never says 'blocked merge'", () => {
     const { container } = renderWithProviders(
@@ -310,7 +314,24 @@ describe("SeverityCalibration", () => {
     );
 
     expect(container.textContent?.toLowerCase()).not.toContain("blocked");
-    expect(screen.getByText(/proxy for unresolved/i)).toBeInTheDocument();
+    expect(screen.getByText(/correlation, not a measure/i)).toBeInTheDocument();
+  });
+
+  /**
+   * The old footnote said GitHub's API "does not distinguish merged from
+   * closed-without-merging". It does, and always did. A confidently wrong
+   * caveat is worse than none: it sent the next reader looking for a limit
+   * that was never there and away from the real bug, which was that the
+   * status column was never re-synced at all.
+   */
+  it("does not blame GitHub's API for the limitation", () => {
+    const { container } = renderWithProviders(
+      <SeverityCalibration rows={severityRows} />,
+    );
+
+    expect(container.textContent?.toLowerCase()).not.toContain(
+      "does not distinguish",
+    );
   });
 
   /** No PRs at that severity means no rate — an em dash, never 0%. */

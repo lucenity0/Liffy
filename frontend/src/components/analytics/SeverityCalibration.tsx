@@ -29,11 +29,15 @@ export function SeverityCalibration({
               <Th>Comments</Th>
               <Th>PRs</Th>
               {/*
-                `still_open_rate`, spelled the way #193 spells it. GitHub's
-                REST `state` is `open` or `closed` and does not distinguish
-                merged from closed-without-merging, so this measures "not yet
-                resolved". The words "blocked merge" describe something the
-                data cannot support and must not reach the screen.
+                `still_open_rate`, spelled the way #193 spells it. The words
+                "blocked merge" describe something the data cannot support —
+                nothing here shows Liffy's comment is *why* a pull request is
+                open — and must not reach the screen.
+
+                This column used to be an artefact rather than a measurement:
+                `pull_requests.status` was written at review time and never
+                re-synced, so every row read `open` forever. #279 fixed the
+                data behind it; the column itself is unchanged.
               */}
               <Th>Still open</Th>
             </tr>
@@ -72,9 +76,9 @@ export function SeverityCalibration({
       <Sheet.Footer>
         <p className="text-sm text-ink-dim">
           "Still open" counts pull requests carrying at least one comment at
-          that severity that are not yet closed. GitHub's API does not
-          distinguish merged from closed-without-merging, so this is a proxy
-          for unresolved, not a measure of Liffy's effect on merges.
+          that severity that are not yet closed. It is a correlation, not a
+          measure of Liffy's effect: nothing here shows that a comment is why a
+          pull request stayed open.
         </p>
       </Sheet.Footer>
     </Sheet>

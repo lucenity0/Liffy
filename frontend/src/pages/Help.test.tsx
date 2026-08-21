@@ -339,3 +339,51 @@ describe("Help — illustrations", () => {
     expect(await answer()).toHaveTextContent(/until a worker picks it up/i);
   });
 });
+
+describe("Help — the failure log arrives with the report (#284)", () => {
+  const LOG = 'Traceback: duration_api_ms=41200\nclaude-code exited 1: ENOENT';
+
+  /**
+   * The behaviour, not the plumbing. A reader arrives from "Report this" on a
+   * failed review having been told the log goes with it — so the log has to be
+   * in the box they are about to submit.
+   *
+   * The shared helper takes a location object here rather than a path,
+   * because what is under test is router *state* — which is exactly why the
+   * log does not travel in the query string.
+   */
+  const renderFromReview = () =>
+    renderWithProviders(<Help />, {
+      route: {
+        pathname: "/help",
+        search: "?report=Review%20failed%20on%20octo%2Fdemo%20%2361",
+        state: { reportDetail: LOG },
+      },
+    });
+
+  it("prefills the report body with the failure detail", async () => {
+    renderFromReview();
+
+    // The form opens on `bug`, whose body label is "What went wrong?".
+    const body = await screen.findByRole("textbox", { name: /What went wrong/i });
+    expect((body as HTMLTextAreaElement).value).toContain("duration_api_ms=41200");
+  });
+
+  it("opens the form rather than leaving it collapsed", async () => {
+    renderFromReview();
+
+    expect(
+      screen.queryByRole("button", { name: /Still stuck\? Report a problem/ }),
+    ).toBeNull();
+  });
+
+  it("leaves the body empty for someone who just opened the page", async () => {
+    renderWithProviders(<Help />, { route: "/help" });
+
+    await screen.findByText("Queued vs processing");
+    expect(
+      screen.getByRole("button", { name: /Still stuck\? Report a problem/ }),
+    ).toBeInTheDocument();
+  });
+});
+

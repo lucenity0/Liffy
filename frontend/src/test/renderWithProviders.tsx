@@ -53,12 +53,24 @@ export function createWrapper({
   return { Wrapper, queryClient, auth: value };
 }
 
+/**
+ * Where the router starts.
+ *
+ * A plain path covers almost every test. The object form exists for the cases
+ * that turn on router *state* rather than the URL — a failed review handing its
+ * log to the report form, for one — which cannot be expressed as a string and
+ * must not be smuggled into the query string instead.
+ */
+export type RenderRoute =
+  | string
+  | { pathname: string; search?: string; state?: unknown };
+
 export function renderWithProviders(
   ui: ReactNode,
   {
     route = "/",
     auth,
-  }: { route?: string; auth?: Partial<AuthContextValue> } = {},
+  }: { route?: RenderRoute; auth?: Partial<AuthContextValue> } = {},
 ) {
   const queryClient = createQueryClient({ retry: false });
   const value = authValue(auth);

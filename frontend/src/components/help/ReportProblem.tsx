@@ -69,6 +69,7 @@ const COPY = {
 export function ReportProblem({
   query,
   prefillTitle,
+  prefillBody,
 }: {
   query: string;
   /**
@@ -81,11 +82,29 @@ export function ReportProblem({
    * re-render.
    */
   prefillTitle?: string;
+  /**
+   * Body text handed over by whoever linked here — the provider output from a
+   * failed review, today.
+   *
+   * The panel that links here says the log goes with the report, and for a
+   * `failure_kind: "unknown"` failure that log is the *only* useful thing in
+   * it: there is no setting to point at, and the reporter has no way to know
+   * which parts matter. Prefilling is what makes that sentence true, rather
+   * than rewording it to ask them to paste it themselves.
+   *
+   * Initial state only, like `prefillTitle` — it seeds the field and then the
+   * field is the user's, so editing it is not undone by a re-render.
+   *
+   * Rendered into a `<textarea>`, so it is text by construction. This is
+   * provider output about an attacker-authored diff and must never reach a
+   * markdown or HTML renderer.
+   */
+  prefillBody?: string;
 }) {
-  const [open, setOpen] = useState(Boolean(prefillTitle));
+  const [open, setOpen] = useState(Boolean(prefillTitle || prefillBody));
   const [kind, setKind] = useState<Kind>("bug");
   const [title, setTitle] = useState(prefillTitle ?? "");
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(prefillBody ?? "");
   const report = useSubmitReport();
 
   const reset = () => {

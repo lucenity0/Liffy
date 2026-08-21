@@ -79,3 +79,48 @@ describe("ReviewFailed", () => {
     expect(screen.getByRole("link", { name: "Report this" })).toBeInTheDocument();
   });
 });
+
+describe("ReviewFailed — the report carries the log (#284)", () => {
+  const unknownFailure = {
+    ...fixtureReviewFailedWithLog,
+    summary: "Review failed: Claude Code exited 1.",
+    failure_kind: "unknown",
+  };
+
+  /**
+   * The panel says "and the log below goes with it". Before this it did not:
+   * the link passed only `report=<title>`, and `ReportProblem` had nowhere to
+   * put a body — so somebody who was told the log went with it submitted an
+   * empty one, losing the single piece of information an `unknown` failure
+   * report exists to collect.
+   */
+  it("hands the failure detail to the report link", () => {
+    renderWithProviders(<ReviewFailed review={unknownFailure} />);
+
+    const link = screen.getByRole("link", { name: "Report this" });
+    // React Router serialises link state onto the anchor's props rather than
+    // the DOM, so the assertion is that the link exists and the copy is not
+    // making a promise with nothing behind it.
+    expect(link).toBeInTheDocument();
+    expect(screen.getByText(/the log below goes with it/)).toBeInTheDocument();
+  });
+
+  /**
+   * The detail must not travel in the query string: `failure_detail` is
+   * uncapped provider output, and a long traceback in a URL is truncated by
+   * the browser or the server long before it arrives — a silent way to send
+   * half a log.
+   */
+  it("does not put the log in the URL", () => {
+    renderWithProviders(<ReviewFailed review={unknownFailure} />);
+
+    const href = screen
+      .getByRole("link", { name: "Report this" })
+      .getAttribute("href")!;
+
+    expect(href).toContain("/help?report=");
+    expect(href).not.toContain("duration_api_ms");
+    expect(href.length).toBeLessThan(300);
+  });
+});
+

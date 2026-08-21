@@ -338,6 +338,46 @@ def test_get_review_detail_with_comments(seeded) -> None:
     assert body["comments"][0]["category"] == "logic_error"
 
 
+def test_detail_carries_confidence_and_failure_scenario(seeded) -> None:
+    """Both keys reach the client, null, for a comment written before they existed.
+
+    The `seeded` comment is deliberately constructed without either field, so
+    it is exactly the shape of every row already in a real database. Asserting
+    the *keys are present* rather than merely falsy is the point: a field
+    missing from `ReviewCommentOut` would drop out of the payload silently and
+    the frontend would read `undefined` instead of null.
+    """
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    comment = body["comments"][0]
+    assert "confidence" in comment
+    assert "failure_scenario" in comment
+    assert comment["confidence"] is None
+    assert comment["failure_scenario"] is None
+
+
+def test_detail_carries_a_populated_confidence_and_scenario(seeded) -> None:
+    with seeded["factory"]() as db:
+        db.add(
+            ReviewComment(
+                review_id=seeded["new"],
+                file_path="b.py",
+                line_start=3,
+                line_end=3,
+                category="logic_error",
+                severity="critical",
+                comment_text="Off by one.",
+                confidence="plausible",
+                failure_scenario="With an empty list, the loop reads index -1.",
+            )
+        )
+        db.commit()
+
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+    written = next(c for c in body["comments"] if c["file_path"] == "b.py")
+    assert written["confidence"] == "plausible"
+    assert written["failure_scenario"] == "With an empty list, the loop reads index -1."
+
+
 def test_get_review_detail_names_its_pull_request(seeded) -> None:
     # A deep-linked review has nothing else to identify itself with.
     body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()

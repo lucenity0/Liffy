@@ -16,6 +16,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401
+import app.services.review_service as review_service
 from app.database import Base
 from app.llm.output_parser import LLMOutputError
 from app.models.pull_request import PullRequest
@@ -845,9 +846,13 @@ def test_a_non_string_detail_does_not_take_the_record_down_with_it(
 
     review = db.scalars(select(Review)).one()
     assert review.status == "failed"
-    # Neither impostor attribute reached the columns.
-    assert review.failure_detail is None
+    # Neither impostor attribute reached the columns: `kind` is the literal
+    # "unknown", and `detail` is this handler's own traceback rather than the
+    # dict the exception was carrying under that name.
     assert review.failure_kind == "unknown"
+    assert isinstance(review.failure_detail, str)
+    assert "not" not in str(review.failure_detail).split("Traceback")[0]
+    assert "Impostor" in review.failure_detail
 
 
 def test_a_subscription_error_records_its_detail_and_kind(db: Session) -> None:
@@ -1400,3 +1405,58 @@ def test_dropped_comments_reaches_the_column(db: Session) -> None:
     review = _run(db, FakeLLM([_payload([outside])]))
 
     assert review.dropped_comments == 1
+
+
+# ── code review follow-ups ───────────────────────────────────────────────────
+
+
+def test_an_unknown_failure_records_a_log_to_report(db: Session) -> None:
+    """The case the report link exists for.
+
+    `ReviewStates` offers "Report this" precisely when `failure_kind` is
+    `unknown` — a bug in Liffy's own code, the failure nobody can be advised
+    about. That branch recorded no `failure_detail`, so the panel promised "the
+    log below goes with it" with no log: an empty report body, and nothing to
+    expand either.
+    """
+
+    def cannot_build() -> FakeLLM:
+        raise RuntimeError("'claude' is not on PATH")
+
+    with pytest.raises(RuntimeError):
+        _run(db, cannot_build)
+
+    review = db.scalars(select(Review)).one()
+    assert review.failure_kind == "unknown"
+    assert review.failure_detail
+    assert "not on PATH" in review.failure_detail
+    # A traceback, because for our own bug the stack is the whole value and the
+    # reporter cannot be expected to know that.
+    assert "Traceback" in review.failure_detail
+
+
+def test_a_late_failure_keeps_the_attempt_count(db: Session) -> None:
+    """The most expensive review must not record NULL.
+
+    A failure *after* `generate_review` returned carries no count on its
+    exception, so overwriting unconditionally discarded a real measurement on
+    exactly the review worth investigating.
+    """
+    llm = FakeLLM(["not json at all", _payload([VALID_COMMENT])])
+    # Fails while writing the comment rows — after `generate_review` returned,
+    # and on a path the failure handler itself does not touch.
+    original = review_service.ReviewComment
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError("failed after the model answered")
+
+    review_service.ReviewComment = _explode
+    try:
+        with pytest.raises(RuntimeError, match="after the model answered"):
+            _run(db, llm)
+    finally:
+        review_service.ReviewComment = original
+
+    review = db.scalars(select(Review)).one()
+    assert review.status == "failed"
+    assert review.raw_attempts == 2

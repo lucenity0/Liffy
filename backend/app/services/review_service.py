@@ -282,6 +282,17 @@ def run_review(
                     severity=comment.severity.value,
                     comment_text=comment.comment,
                     suggestion=comment.suggestion,
+                    # Scaffolding, not a pattern. These columns exist before
+                    # the model is asked for them, so `comment` is still the
+                    # older `LLMReviewComment` shape without either attribute
+                    # and a direct access would raise. The issues that add the
+                    # schema fields replace each of these with a plain
+                    # `failure_scenario=comment.failure_scenario` /
+                    # `confidence=comment.confidence.value` — delete the
+                    # getattr when you do, rather than leaving it to calcify
+                    # into a permanent shrug about what the model returns.
+                    confidence=getattr(comment, "confidence", None),
+                    failure_scenario=getattr(comment, "failure_scenario", None),
                 )
             )
         review.summary = result.output.summary

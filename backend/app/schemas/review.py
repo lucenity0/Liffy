@@ -97,6 +97,14 @@ class ReviewCommentOut(BaseModel):
     comment_text: str
     suggestion: str | None
     created_at: datetime
+
+    # Both null on every comment written before this milestone, which today is
+    # the majority of the table. Null is "not asked or not answered", not a
+    # third value, and the dashboard has to render it as nothing rather than as
+    # an empty container.
+    confidence: str | None = None
+    failure_scenario: str | None = None
+
     # The *caller's own* rating: 1, -1, or None when they have not rated it.
     # Scoped to the authenticated user — another user's rating never appears
     # here, which is what stops a shared review leaking who thought what.

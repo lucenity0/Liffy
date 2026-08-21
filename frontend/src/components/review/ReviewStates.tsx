@@ -66,12 +66,23 @@ export function ReviewFailed({ review }: { review: ReviewDetailOut }) {
         ) : (
           // No guidance means no *honest* guidance. Say so, and hand over the
           // one action that still helps: telling somebody. The report carries
-          // the detail below, so it does not depend on the reporter knowing
-          // which parts of it matter.
+          // the detail below — prefilled into the form's body, so it does not
+          // depend on the reporter knowing which parts of it matter.
+          //
+          // That sentence used to be false. The link passed only the title, and
+          // `ReportProblem` had nowhere to put a body, so a reader who was told
+          // the log went with it submitted an empty one — losing the single
+          // piece of information an `unknown` failure report exists to collect.
           <p className="max-w-prose text-base text-ink-dim">
             Nothing here points at a setting you can change.{" "}
             <Link
               to={`/help?report=${encodeURIComponent(reportTitle(review))}`}
+              // The detail travels as router state rather than in the query
+              // string: `failure_detail` is uncapped provider output, and a
+              // long traceback in a URL is truncated by the browser or the
+              // server long before it arrives — a silent way to send half a
+              // log. State has no such limit and never appears in history.
+              state={{ reportDetail: review.failure_detail ?? undefined }}
               className="underline decoration-rule underline-offset-4 hover:text-ink"
             >
               Report this

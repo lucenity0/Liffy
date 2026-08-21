@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
@@ -28,6 +28,13 @@ export function Help() {
   const query = params.get("q") ?? "";
   // Handed over by a failed review's "Report this" link.
   const prefillTitle = params.get("report") ?? undefined;
+  // Router state, not a query parameter. `failure_detail` is uncapped provider
+  // output — a long traceback in the URL would be truncated by the browser or
+  // the server long before it reached the form, which is a silent way to send
+  // half a log.
+  const location = useLocation();
+  const prefillBody =
+    (location.state as { reportDetail?: string } | null)?.reportDetail ?? undefined;
   const selectedSlug = params.get("page");
 
   // The input is local and the URL follows it, not the other way around.
@@ -163,7 +170,11 @@ export function Help() {
         </div>
       </div>
 
-      <ReportProblem query={query} prefillTitle={prefillTitle} />
+      <ReportProblem
+        query={query}
+        prefillTitle={prefillTitle}
+        prefillBody={prefillBody}
+      />
     </div>
   );
 }

@@ -226,6 +226,13 @@ class ReviewOut(BaseModel):
     failure_kind: str | None = None
     model_used: str | None
     tokens_used: int | None
+    # How many times the model was asked before its output validated, and how
+    # many findings anchoring discarded. Null on every review written before
+    # the instrumentation landed, and on any failure raised outside the LLM
+    # call — so every consumer has to tolerate None rather than assume a
+    # number. Operational metrics: not rendered next to what the review said.
+    raw_attempts: int | None = None
+    dropped_comments: int | None = None
     # Report §8.1. Null on rows written before the instrumentation landed, and
     # on any review still in flight — so every consumer has to tolerate None
     # rather than assume a number.

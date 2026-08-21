@@ -373,6 +373,8 @@ def run_review(
         review.status = "completed"
         review.model_used = result.model_used
         review.tokens_used = result.tokens_used
+        review.raw_attempts = result.raw_attempts
+        review.dropped_comments = result.dropped_comments
         review.duration_ms = elapsed_ms()
         # One instant for both, so `total_ms` stays reconstructible from the
         # row as `completed_at - queued_at`.
@@ -392,6 +394,12 @@ def run_review(
         # A review that took forty seconds to fail is the most useful data
         # point in the table, so the failure path records the clock too.
         review.status = "failed"
+        # A review that burned every retry and then failed is the clearest
+        # signal a required field is costing more than it is worth, so the
+        # count is recorded here too. `generate_review` raises rather than
+        # returning, so it arrives on the exception; anything raised elsewhere
+        # in the pipeline has no attempt count and correctly records none.
+        review.raw_attempts = getattr(sys.exc_info()[1], "raw_attempts", None)
         # Why it failed, where somebody will actually see it.
         #
         # There is no dedicated column and adding one is a migration; `summary`

@@ -1331,3 +1331,72 @@ def test_a_selection_matching_nothing_records_no_commits(db: Session) -> None:
 
     scope = (review.summary_detail or {}).get("scope")
     assert scope is None or "commits" not in scope
+
+
+# ── #281: the retry cost is recorded, not recomputed by hand ─────────────────
+
+
+def test_a_clean_review_records_one_attempt(db: Session) -> None:
+    review = _run(db, FakeLLM([_payload([VALID_COMMENT])]))
+
+    assert review.raw_attempts == 1
+    assert review.dropped_comments == 0
+
+
+def test_a_retried_review_records_both_attempts(db: Session) -> None:
+    """The number the required `failure_scenario` field is measured by.
+
+    A model that omits it burns a retry. Occasional is the price; systematic
+    means the prompt is not eliciting the field — and there was no way to tell
+    those apart, because the count was computed on `LLMResult` and discarded.
+    """
+    review = _run(db, FakeLLM(["not json at all", _payload([VALID_COMMENT])]))
+
+    assert review.status == "completed"
+    assert review.raw_attempts == 2
+
+
+def test_a_failed_review_records_the_attempts_it_burned(db: Session) -> None:
+    """The most interesting row in the table, and the one most easily lost.
+
+    `generate_review` raises rather than returning once the retries are gone,
+    so there is no `ReviewResult` to read the count off — a review that cost
+    three calls and produced nothing would have recorded null, which is
+    indistinguishable from one that never reached the model.
+    """
+    with pytest.raises(LLMOutputError):
+        _run(db, FakeLLM(["bad", "worse", "still bad"]))
+
+    review = db.scalars(select(Review)).one()
+    assert review.status == "failed"
+    assert review.raw_attempts == 3
+
+
+def test_a_failure_outside_the_model_records_no_attempts(db: Session) -> None:
+    """Null means "not recorded", and has to stay reachable.
+
+    A review that fails before it ever asks the model has no attempt count, and
+    inventing a 0 or a 1 for it would put a measurement in the column that
+    nothing took.
+    """
+    def cannot_build() -> FakeLLM:
+        raise RuntimeError("'claude' is not on PATH")
+
+    with pytest.raises(RuntimeError, match="not on PATH"):
+        _run(db, cannot_build)
+
+    review = db.scalars(select(Review)).one()
+    assert review.status == "failed"
+    assert review.raw_attempts is None
+
+
+def test_dropped_comments_reaches_the_column(db: Session) -> None:
+    """`_anchor_comments` discards findings whose line is not in the diff.
+
+    Answers "is the model inventing line numbers", which is what #227 was
+    about, and costs the same one column to keep.
+    """
+    outside = dict(VALID_COMMENT, line_start=9000, line_end=9000)
+    review = _run(db, FakeLLM([_payload([outside])]))
+
+    assert review.dropped_comments == 1

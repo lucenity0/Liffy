@@ -378,6 +378,34 @@ def test_detail_carries_a_populated_confidence_and_scenario(seeded) -> None:
     assert written["failure_scenario"] == "With an empty list, the loop reads index -1."
 
 
+def test_detail_carries_raw_attempts_and_dropped_comments(seeded) -> None:
+    """Both keys reach the client, null, on a review written before they existed.
+
+    Present-and-null rather than absent: a field missing from `ReviewOut` drops
+    out of the payload silently and a consumer reads `undefined` instead of
+    "not recorded", which is the distinction #273 depends on.
+    """
+    body = client.get(f"/reviews/{seeded['old']}", headers=seeded["headers"]).json()
+
+    assert "raw_attempts" in body
+    assert "dropped_comments" in body
+    assert body["raw_attempts"] is None
+    assert body["dropped_comments"] is None
+
+
+def test_detail_carries_a_recorded_attempt_count(seeded) -> None:
+    with seeded["factory"]() as db:
+        review = db.get(Review, seeded["new"])
+        review.raw_attempts = 2
+        review.dropped_comments = 1
+        db.commit()
+
+    body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()
+
+    assert body["raw_attempts"] == 2
+    assert body["dropped_comments"] == 1
+
+
 def test_get_review_detail_names_its_pull_request(seeded) -> None:
     # A deep-linked review has nothing else to identify itself with.
     body = client.get(f"/reviews/{seeded['new']}", headers=seeded["headers"]).json()

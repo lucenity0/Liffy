@@ -16,6 +16,8 @@ function comment(
     comment_text: "…",
     suggestion: null,
     created_at: "2026-07-26T10:00:00Z",
+    confidence: null,
+    failure_scenario: null,
     my_rating: null,
     ...overrides,
   };

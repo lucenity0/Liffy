@@ -102,6 +102,12 @@ const fixtureComment: ReviewCommentOut = {
     "Consider quoting $HOME here — unquoted expansion works today but will break the moment this script runs under a path with a space in it.",
   suggestion: 'BREW_PREFIX="$HOME/.brew"',
   created_at: "2026-07-25T14:32:10Z",
+  // Plausible, so the marker has somewhere to render in the dev UI without a
+  // test having to construct one. It is also honest for this finding: the
+  // mechanism is real, the trigger is a path nobody may ever use.
+  confidence: "plausible",
+  failure_scenario:
+    "Run the script with HOME set to a path containing a space — /Users/ada lovelace — and the unquoted expansion splits into two words, so brew installs into /Users/ada.",
   // Unrated — the state most comments are in, and the one #198's control has
   // to look right in.
   my_rating: null,
@@ -118,6 +124,11 @@ const fixtureCommentCritical: ReviewCommentOut = {
     "This assumes every hunk has an explicit line count, but the unified diff format allows omitting it (defaults to 1). As written, a single-line hunk will desync every line number after it.",
   suggestion: "const count = match[2] === undefined ? 1 : Number(match[2]);",
   created_at: "2026-07-25T14:32:11Z",
+  // Confirmed, so the pair covers both states: this one shows a scenario and
+  // *no* marker, which is the common case and the easier one to get wrong.
+  confidence: "confirmed",
+  failure_scenario:
+    "A diff containing `@@ -1 +1,3 @@` — no count on the old side — sets count to NaN, so every line number after that hunk is off by the length of the file.",
   // Already rated, so the pressed state has something to render against
   // without a test having to POST first.
   my_rating: 1,

@@ -109,8 +109,9 @@ confirm your repo data survived a rebuild. On Windows `liffy.bat` is a shim
 around `liffy.ps1` — use it rather than the `.ps1` directly, or PowerShell's
 execution policy blocks the script before it starts.
 
-**Or run the services yourself** — `cp .env.example backend/.env`, fill in your
-keys, then three terminals (from the right directories, with the backend venv
+**Or run the services yourself** — `cp backend/.env.example backend/.env` and
+fill in your keys, `cp frontend/.env.example frontend/.env` (nothing to fill in
+there), then three terminals (from the right directories, with the backend venv
 active):
 - `cd backend && uvicorn app.main:app --reload`
 - `cd backend && celery -A app.workers.celery_app worker --loglevel=info` (macOS and Windows: add `--pool=solo`)

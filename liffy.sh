@@ -187,8 +187,8 @@ suggest_subscription_providers() {
 
 ensure_env_file() {
     if [ ! -f backend/.env ]; then
-        [ -f .env.example ] || error ".env.example not found. Are you in the Liffy root directory?"
-        cp .env.example backend/.env
+        [ -f backend/.env.example ] || error "backend/.env.example not found. Are you in the Liffy root directory?"
+        cp backend/.env.example backend/.env
         JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "dev-only-insecure-secret-change-me-before-deploy")
         sed -i '' "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$JWT_SECRET/" backend/.env 2>/dev/null || \
             sed -i "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$JWT_SECRET/" backend/.env
@@ -197,6 +197,29 @@ ensure_env_file() {
     else
         success "backend/.env already exists — skipping"
     fi
+}
+
+# The frontend needs a dotfile of its own, for the same reason the backend does:
+# `frontend/.env` is gitignored, so a fresh clone has none.
+#
+# Without VITE_API_BASE_URL every call becomes root-relative and lands on the
+# Vite dev server instead of the API — including the "Continue with GitHub"
+# link, which `Login.tsx` builds as `${base}/auth/github`. Vite's SPA fallback
+# answers /auth/github with index.html, the router matches its catch-all
+# (behind RequireAuth), and an anonymous visitor is redirected straight back to
+# /login. Sign-in reads as silently broken rather than as a missing file, and
+# the browser never reaches GitHub at all.
+#
+# A straight copy with nothing to fill in afterwards: unlike backend/.env this
+# file holds no secrets, only the API's URL.
+ensure_frontend_env_file() {
+    if [ -f frontend/.env ]; then
+        success "frontend/.env already exists — skipping"
+        return 0
+    fi
+    [ -f frontend/.env.example ] || error "frontend/.env.example not found. Are you in the Liffy root directory?"
+    cp frontend/.env.example frontend/.env
+    success "Created frontend/.env"
 }
 
 wait_for_backend() {
@@ -240,6 +263,7 @@ stop_frontend() {
 cmd_up() {
     require_docker
     ensure_env_file
+    ensure_frontend_env_file
     select_compose_files
 
     log "Starting docker services: ${ALL_SERVICES[*]}"

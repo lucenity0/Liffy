@@ -284,9 +284,9 @@ function Initialize-EnvFile {
         return
     }
 
-    $examplePath = Join-Path $LiffyRoot '.env.example'
+    $examplePath = Join-Path $LiffyRoot 'backend\.env.example'
     if (-not (Test-Path $examplePath)) {
-        Write-Err ".env.example not found. Are you in the Liffy root directory?"
+        Write-Err "backend\.env.example not found. Are you in the Liffy root directory?"
     }
 
     $lines = Get-Content $examplePath -Encoding UTF8
@@ -307,6 +307,39 @@ function Initialize-EnvFile {
 
     Write-Success "Created backend\.env with a generated JWT secret"
     Write-Warn "Open backend\.env and fill in GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET / an LLM key when you're ready for real runs"
+}
+
+# The frontend needs a dotfile of its own, for the same reason the backend does:
+# `frontend\.env` is gitignored, so a fresh clone has none.
+#
+# Without VITE_API_BASE_URL every call becomes root-relative and lands on the
+# Vite dev server instead of the API - including the "Continue with GitHub"
+# link, which Login.tsx builds as "$base/auth/github". Vite's SPA fallback
+# answers /auth/github with index.html, the router matches its catch-all
+# (behind RequireAuth), and an anonymous visitor is redirected straight back to
+# /login. Sign-in reads as silently broken rather than as a missing file, and
+# the browser never reaches GitHub at all.
+#
+# Written through .NET for the same two reasons Initialize-EnvFile is: no BOM,
+# and LF endings. A BOM here would make Vite read the first key as
+# `\ufeffVITE_API_BASE_URL` and the variable would be undefined anyway - the
+# exact bug this function exists to prevent, reintroduced by the writer.
+function Initialize-FrontendEnvFile {
+    $envPath = Join-Path $FrontendDir '.env'
+    if (Test-Path $envPath) {
+        Write-Success "frontend\.env already exists - skipping"
+        return
+    }
+
+    $examplePath = Join-Path $FrontendDir '.env.example'
+    if (-not (Test-Path $examplePath)) {
+        Write-Err "frontend\.env.example not found. Are you in the Liffy root directory?"
+    }
+
+    $text = ((Get-Content $examplePath -Encoding UTF8) -join "`n") + "`n"
+    [System.IO.File]::WriteAllText($envPath, $text, (New-Object System.Text.UTF8Encoding($false)))
+
+    Write-Success "Created frontend\.env"
 }
 
 function Wait-Backend {
@@ -430,6 +463,7 @@ function Invoke-Up {
     Assert-Docker
     Assert-Node
     Initialize-EnvFile
+    Initialize-FrontendEnvFile
     Select-ComposeFiles
 
     Write-Log ("Starting docker services: " + ($AllServices -join ' '))

@@ -259,7 +259,7 @@ def run_review(
         # pushing a one-line fix to a large pull request used to cost the same
         # as reviewing it from scratch.
         file_diffs = parse_diff(raw_diff)
-        review_diffs, since = _diffs_to_review(
+        review_diffs, since, narrowed = _diffs_to_review(
             gh, owner, repo_name, db, pr.id, review, meta, file_diffs,
             automatic=received_at is not None,
             commit_shas=commit_shas,
@@ -333,9 +333,21 @@ def run_review(
                 # been looked at", which is exactly the claim a narrowed review
                 # cannot make. Pick C and D, skip A and B, and A and B come
                 # back marked reviewed with no way to tell.
-                **({"commits": list(commit_shas)} if commit_shas else {}),
+                # `narrowed`, not `commit_shas`. A selection that both
+                # fallbacks in `_diffs_to_review` widened away still has
+                # `commit_shas` set, and that review genuinely read everything —
+                # writing a `commits` key for it would withhold a boundary the
+                # next review is entitled to.
+                **({"commits": list(commit_shas)} if narrowed else {}),
             }
-            if len(review_diffs) < len(file_diffs)
+            # `narrowed or`, because the count comparison alone misses the case
+            # this whole key exists for: a selection whose commits happen to
+            # touch every file in the diff leaves the counts equal, so `scope`
+            # came out None, so `reviews.py` read that narrowed review as a full
+            # one and took its `head_sha` as the boundary — marking every
+            # skipped commit reviewed. The guard worked in every case except the
+            # one where the numbers coincided.
+            if narrowed or len(review_diffs) < len(file_diffs)
             else None
         )
 
@@ -483,9 +495,18 @@ def _diffs_to_review(
 ):
     """What to show the model, and whether it is an increment.
 
-    Returns ``(diffs, since_sha)``. ``since_sha`` is ``None`` when the whole
-    pull request is being reviewed, which is the first review, every review a
-    person asked for by hand, and every failure path below.
+    Returns ``(diffs, since_sha, narrowed)``. ``since_sha`` is ``None`` when the
+    whole pull request is being reviewed, which is the first review, every
+    review a person asked for by hand, and every failure path below.
+
+    ``narrowed`` says whether a commit selection was **actually applied**, and
+    it exists because the caller cannot infer that from the diffs alone. The
+    obvious proxy — ``len(diffs) < len(file_diffs)`` — is wrong in both
+    directions: a selection whose commits happen to touch every file in the
+    pull request leaves the counts equal, and both fallbacks below widen back
+    to the full diff while ``commit_shas`` is still set. Getting that wrong
+    means the picker reports skipped commits as reviewed, so it is answered
+    here, where the decision is made, rather than guessed at afterwards.
 
     **Only automatic reviews are narrowed**, and that split is the answer to
     what narrowing costs. Reviewing an increment means each hunk gets looked at
@@ -521,7 +542,9 @@ def _diffs_to_review(
                 "reviewing the whole diff: %s",
                 len(commit_shas), owner, repo_name, meta.number, exc,
             )
-            return file_diffs, None
+            # Widened, not narrowed: this review really did read everything, so
+            # it *should* set the boundary for the next one.
+            return file_diffs, None, False
 
         chosen = [fd for fd in file_diffs if fd.path in paths]
         if not chosen:
@@ -533,20 +556,21 @@ def _diffs_to_review(
                 "reviewing the whole diff",
                 owner, repo_name, meta.number,
             )
-            return file_diffs, None
+            # Widened for the same reason as above.
+            return file_diffs, None, False
 
         logger.info(
             "reviewing %d of %d file(s) on %s/%s#%s, chosen via %d commit(s)",
             len(chosen), len(file_diffs), owner, repo_name, meta.number,
             len(commit_shas),
         )
-        return chosen, None
+        return chosen, None, True
 
     if not automatic:
         # Asked for by a person: `received_at` is set only by the webhook, so
         # its absence means the trigger endpoint or the Re-review button. Both
         # mean "look at this properly", which an increment cannot answer.
-        return file_diffs, None
+        return file_diffs, None, False
 
     since = _last_reviewed_sha(db, pr_id, review)
     head = meta.head_sha or ""
@@ -555,7 +579,7 @@ def _diffs_to_review(
         # No predecessor, or nothing new since it. A re-review at the same
         # commit is a deliberate "look again", and narrowing it to an empty
         # diff would answer a request to re-read with silence.
-        return file_diffs, None
+        return file_diffs, None, False
 
     try:
         incremental = gh.get_comparison_diff(owner, repo_name, since, head)
@@ -564,7 +588,7 @@ def _diffs_to_review(
             "compare %s...%s failed on %s/%s#%s, reviewing the whole diff: %s",
             since[:8], head[:8], owner, repo_name, meta.number, exc,
         )
-        return file_diffs, None
+        return file_diffs, None, False
 
     incremental_diffs = parse_diff(incremental)
     if not incremental_diffs:
@@ -576,14 +600,17 @@ def _diffs_to_review(
             "compare %s...%s on %s/%s#%s produced no file diffs, reviewing the whole diff",
             since[:8], head[:8], owner, repo_name, meta.number,
         )
-        return file_diffs, None
+        return file_diffs, None, False
 
     logger.info(
         "reviewing %s/%s#%s incrementally: %d file(s) since %s, instead of %d",
         owner, repo_name, meta.number, len(incremental_diffs), since[:8],
         len(file_diffs),
     )
-    return incremental_diffs, since
+    # An increment is not a *narrowed* review in the picker's sense: nobody
+    # chose to skip anything, and `since` already records the boundary it read
+    # from. `narrowed` is about a commit selection specifically.
+    return incremental_diffs, since, False
 
 
 def _prior_findings(db: Session, pr_id: uuid.UUID, review: Review) -> list[str]:

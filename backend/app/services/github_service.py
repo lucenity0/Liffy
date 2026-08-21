@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -260,6 +261,27 @@ class PullRequestMeta:
     # parsed here, so this dataclass stays a transport shape and SQLAlchemy
     # does the coercion at the column.
     merged_at: str | None = None
+
+
+# `<https://api.github.com/...?page=3>; rel="last"` — the page number from a
+# GitHub Link header, or 1 when there is no `last` relation (a single page).
+_LINK_LAST = re.compile(r'<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"')
+
+
+def _last_page(link_header: str) -> int:
+    """How many pages this listing has, per GitHub's ``Link`` header.
+
+    Returns 1 for an absent or unparseable header, which is the safe answer:
+    it degrades to the previous single-page behaviour rather than to an
+    exception on a response shape nobody anticipated.
+    """
+    match = _LINK_LAST.search(link_header or "")
+    if not match:
+        return 1
+    try:
+        return max(1, int(match.group(1)))
+    except ValueError:
+        return 1
 
 
 def parse_github_timestamp(value: str | None) -> datetime | None:
@@ -618,14 +640,46 @@ class GitHubClient:
         because that is the order they were written and the order a person
         reasons about them in.
 
-        One page. A pull request with more than a hundred commits is not one
-        anybody is going to pick through commit by commit, and paginating to
-        support that would be building for a case the feature does not serve.
+        **The newest ``limit`` commits, not the first page of them.** GitHub
+        returns this endpoint oldest-first and paginates, so asking for page 1
+        of a 120-commit pull request hands back commits 1-100 — the oldest, and
+        precisely the ones the picker does not need. Worse than truncation: the
+        commits that landed since the last review would never appear, and the
+        boundary SHA would not be on the page either, so `list_pr_commits` would
+        fall into its force-push branch and mark all 100 stale commits *new*.
+        The maximally wrong answer, arrived at silently.
+
+        Still bounded, and still cheap for the ordinary case. A pull request
+        with a hundred commits or fewer costs exactly one request, as before —
+        the extra fetches happen only past that, and never more than three in
+        total.
         """
-        data = self._get(
-            f"/repos/{owner}/{repo}/pulls/{number}/commits",
-            params={"per_page": min(limit, 100)},
-        ).json()
+        path = f"/repos/{owner}/{repo}/pulls/{number}/commits"
+        per_page = max(1, min(limit, 100))
+        response = self._get(path, params={"per_page": per_page})
+        data = response.json()
+
+        last_page = _last_page(response.headers.get("Link", ""))
+        if last_page > 1:
+            # Walk to the end. The final page can be short — 120 commits over
+            # 100 per page leaves 20 on page 2 — so the page before it is
+            # fetched as well to fill the window back up to `limit`.
+            tail = self._get(path, params={"per_page": per_page, "page": last_page}).json()
+            if len(tail) < per_page:
+                # Page 1 is already in hand from the request above, so the
+                # two-page case — much the most common way to exceed one page —
+                # costs two requests, not three.
+                penultimate = (
+                    data
+                    if last_page == 2
+                    else self._get(
+                        path, params={"per_page": per_page, "page": last_page - 1}
+                    ).json()
+                )
+                tail = penultimate + tail
+            # Oldest-first is preserved: this is the tail of the same sequence,
+            # and `list_pr_commits` walks it in order to find the boundary.
+            data = tail[-per_page:]
 
         return [
             CommitMeta(

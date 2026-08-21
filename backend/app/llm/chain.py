@@ -1241,6 +1241,13 @@ def generate_review(
             user_prompt += _RETRY_SUFFIX.format(error=exc)
     else:
         assert last_error is not None
+        # The count travels on the exception, because a review that burned
+        # every retry and then failed is the most interesting row in the table
+        # and there is no `ReviewResult` to carry it — `generate_review` raises
+        # instead of returning. `run_review` reads it back off the exception
+        # with a `getattr`, so an error raised from anywhere else simply
+        # records nothing.
+        last_error.raw_attempts = attempts
         raise last_error
 
     output, dropped = _anchor_comments(output, file_diffs)

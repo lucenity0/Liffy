@@ -69,6 +69,29 @@ class Review(Base):
     verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # How many times the model had to be asked before its output validated.
+    #
+    # 1 is the good answer. Anything higher is the cost of a required field:
+    # `failure_scenario` is mandatory, and a model that omits it burns a retry,
+    # then another, then fails the review. On `claude_code` and `codex` each
+    # attempt is a subprocess with a 600s timeout, so a retry storm there is
+    # expensive in a way it is not on the API providers.
+    #
+    # Recorded on failed reviews too, and those are the interesting ones: a
+    # review that burned three calls and then failed is exactly the signal this
+    # column exists to surface.
+    #
+    # Nullable, not defaulted to 1. Every review written before this predates
+    # the instrumentation, and a backfilled 1 would be a measurement nobody
+    # took — the same reason `duration_ms` and `total_ms` are nullable on the
+    # rows that predate METRIC-1.
+    raw_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Findings the anchoring step discarded because their line was not in the
+    # diff. Answers "is the model inventing line numbers", which is what #227
+    # was about, and costs the same one column to keep.
+    dropped_comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Wall-clock milliseconds for ``run_review`` — the whole pipeline.
     #
     # A *lower bound* on report §8.1's time-to-review, not that figure: the

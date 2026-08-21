@@ -36,6 +36,28 @@ class ReviewSeverity(str, Enum):
     info = "info"
 
 
+class ReviewConfidence(str, Enum):
+    """How sure the model is that a finding is real.
+
+    The axis ``severity`` has never answered. ``severity`` says how bad this is
+    *if* it is real; a critical finding the model is guessing at and one it can
+    trigger on demand are both "critical", and a reader triaging them has been
+    given no way to tell them apart.
+
+    ``confirmed`` — the model can name the inputs or state that trigger it and
+    the wrong result that follows. ``plausible`` — the mechanism is real but the
+    trigger is uncertain: timing, environment, configuration.
+
+    Presentation only. Nothing filters on this, and nothing should: a plausible
+    finding posts like any other, visually marked. If plausible findings turn
+    out to be noise, that is a follow-up with data behind it rather than a
+    filter added on a hunch.
+    """
+
+    confirmed = "confirmed"
+    plausible = "plausible"
+
+
 class LLMReviewComment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -46,6 +68,27 @@ class LLMReviewComment(BaseModel):
     severity: ReviewSeverity
     comment: str
     suggestion: str | None = None
+
+    confidence: ReviewConfidence = ReviewConfidence.confirmed
+    """Whether the model can trigger this finding or only reason its way to it.
+
+    **Defaulted**, following the load-bearing-default precedent on ``changes``
+    and ``files`` below: a response in the older shape still validates, so the
+    retry budget is not spent arguing about a field that degrades presentation
+    rather than the review.
+
+    The default leans toward ``confirmed``, which is the *less* conservative
+    option, and that is a deliberate trade rather than an oversight. Defaulting
+    to ``plausible`` would mark every older-shaped response as uncertain — a
+    claim about the model that the response never made. The cost is that until
+    the prompt is proven to elicit the field, this measures model *compliance*
+    as much as model confidence; the milestone's measurement issue is what
+    settles which one it is reading.
+
+    Validity is enforced — it is an enum, so nothing arbitrary reaches the
+    column. Accuracy is not, and must not be faked: nothing checks that a
+    ``confirmed`` finding really is one.
+    """
 
     failure_scenario: str
     """The concrete inputs or state that make this finding bite, and the wrong

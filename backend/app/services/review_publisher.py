@@ -147,13 +147,33 @@ def _fence(text: str) -> str:
     return "`" * max(3, longest + 1)
 
 
+# Appended to a finding's head line when the model marked it `plausible`.
+#
+# Subdued on purpose, and asymmetric on purpose. Nothing is appended for
+# `confirmed`, which is the common case and stays quiet — a marker on every
+# comment is not a marker. And it is plain italics rather than a bold shout:
+# on a review where a third of the findings carry it, **PLAUSIBLE** teaches
+# people to skip the header line, taking severity and category with it.
+_PLAUSIBLE_MARKER = " · _plausible_"
+
+
+def _confidence_suffix(confidence: str | None) -> str:
+    """The marker, or nothing at all.
+
+    Null — every comment written before this column existed — reads as nothing,
+    the same as `confirmed`. That is right rather than merely convenient: a row
+    that was never asked the question has not answered `plausible`.
+    """
+    return _PLAUSIBLE_MARKER if confidence == "plausible" else ""
+
+
 def _comment_body(comment: ReviewComment) -> str:
     """One Liffy comment, rendered for GitHub.
 
     Severity and category lead, because they are the triage signal and GitHub
     has nowhere else to put them — the dashboard shows them as badges.
     """
-    head = f"**{comment.severity}** · `{comment.category}`"
+    head = f"**{comment.severity}** · `{comment.category}`{_confidence_suffix(comment.confidence)}"
     body = f"{head}\n\n{defang_model_markdown(comment.comment_text)}"
     if comment.failure_scenario:
         # Its own paragraph, after the finding rather than folded into it: the
@@ -299,8 +319,24 @@ def build_review_body(
 
     if unanchorable:
         lines = "\n".join(
-            f"- `{c.file_path}:{c.line_start}` — **{c.severity}** · `{c.category}` — "
+            # Severity, category, confidence marker and scenario, exactly as the
+            # inline body renders them — so a finding reads the same whether it
+            # anchored or ended up here.
+            #
+            # The scenario matters *more* here, not less. These findings have no
+            # diff line attached, so a reader cannot recover the trigger from the
+            # code around the comment: this text is all they get. Dropping it
+            # here while requiring it everywhere else would take the one enforced
+            # field away from precisely the findings that need it most.
+            f"- `{c.file_path}:{c.line_start}` — **{c.severity}** · `{c.category}`"
+            f"{_confidence_suffix(c.confidence)} — "
             f"{defang_model_markdown(c.comment_text)}"
+            + (
+                # Defanged, like every other model string on this path.
+                f" _Fails when:_ {defang_model_markdown(c.failure_scenario)}"
+                if c.failure_scenario
+                else ""
+            )
             for c in unanchorable
         )
         parts.append(

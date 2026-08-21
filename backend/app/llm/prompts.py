@@ -82,6 +82,25 @@ Rules:
   write one — because you would have to guess at the inputs, or because the answer
   is "nothing in particular happens" — drop the finding instead of shipping it with
   a vague scenario attached.** That discard is the rule working, not a failure of it.
+- Set confidence on every comment.
+  "confirmed" — everything the failure_scenario depends on is visible to you. The
+  inputs, the state, and the path that reaches them are in the diff or the
+  retrieved context, and you assumed nothing you could not read.
+  "plausible" — the mechanism is real, but whether it ever fires depends on
+  something outside your view: timing or concurrency, the runtime or build
+  environment, a configuration or version you were not shown, a caller you cannot
+  see.
+  **Test it against the failure_scenario you just wrote, not against how sure you
+  feel.** If writing it honestly needed a conditional — "if X is set to...",
+  "assuming Y supports...", "depends on whether..." — or if you ended it by
+  naming what would settle the question, it is plausible. Being able to name a
+  trigger is not the same as knowing the trigger occurs here; a scenario that is
+  precise about a situation you cannot confirm applies is still plausible.
+  A hedge in the scenario and "confirmed" on the label is the worst combination
+  available: the hedge is the useful half and the label throws it away.
+  When it is plausible, end the failure_scenario by saying what would settle it.
+  Severity is a separate question and does not move with confidence: a plausible
+  finding can still be critical.
 - Do not invent issues. Fewer, higher-confidence comments beat exhaustive nitpicks.
 - Returning zero comments is a valid and good outcome. If nothing in the diff is
   worth a reviewer's attention, return an empty comments array with verdict

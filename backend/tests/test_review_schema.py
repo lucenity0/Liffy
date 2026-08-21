@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.review import LLMReviewOutput, ReviewCommentOut
+from app.schemas.review import LLMReviewOutput, ReviewCommentOut, ReviewConfidence
 
 
 def test_review_schema_accepts_valid_payload() -> None:
@@ -90,6 +90,53 @@ def test_a_comment_with_no_findings_needs_no_scenario() -> None:
         {"summary": "Nothing to flag.", "verdict": "approve", "comments": []}
     )
     assert parsed.comments == []
+
+
+# ── confidence is defaulted, not required (REV-QUAL-5) ───────────────────────
+
+
+def _payload(**comment_overrides) -> dict:
+    comment = {
+        "file": "backend/app/main.py",
+        "line_start": 1,
+        "line_end": 2,
+        "category": "security",
+        "severity": "warning",
+        "comment": "Validate input.",
+        "suggestion": None,
+        "failure_scenario": "A request with a quote in `q` reaches the query unescaped.",
+    }
+    comment.update(comment_overrides)
+    return {"summary": "s", "verdict": "comment", "comments": [comment]}
+
+
+def test_confidence_defaults_to_confirmed_when_omitted() -> None:
+    """Defaulted, unlike `failure_scenario`, and the asymmetry is the design.
+
+    A response in the older shape still validates rather than burning the retry
+    budget: confidence degrades presentation, `failure_scenario` is the review.
+    The default leans to `confirmed` — the less conservative option — because
+    the alternative marks every older-shaped response as uncertain, which is a
+    claim about the model the response never made.
+    """
+    parsed = LLMReviewOutput.model_validate(_payload())
+    assert parsed.comments[0].confidence is ReviewConfidence.confirmed
+
+
+def test_confidence_accepts_plausible() -> None:
+    parsed = LLMReviewOutput.model_validate(_payload(confidence="plausible"))
+    assert parsed.comments[0].confidence is ReviewConfidence.plausible
+
+
+def test_confidence_rejects_anything_else() -> None:
+    """An enum, so nothing arbitrary reaches the column.
+
+    Validity is enforced here. *Accuracy* is not, anywhere, and deliberately so
+    — nothing checks that a `confirmed` finding really is one, and a checker
+    would only be the model marking its own homework twice.
+    """
+    with pytest.raises(ValidationError):
+        LLMReviewOutput.model_validate(_payload(confidence="pretty sure"))
 
 
 # ── ReviewCommentOut carries the two new columns (REV-QUAL-3) ────────────────

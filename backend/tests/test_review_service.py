@@ -144,6 +144,10 @@ def test_run_review_persists_review_and_comments(db: Session) -> None:
     assert c.category == "logic_error"
     assert c.severity == "warning"
     assert c.suggestion == "return value if value is not None else fallback"
+    assert c.failure_scenario == "With value=None the branch returns the fallback twice."
+    # Defaulted on the schema, so a payload that says nothing about confidence
+    # still lands a real string in the column rather than a null.
+    assert c.confidence == "confirmed"
 
     repo = db.scalar(select(Repository).where(Repository.full_name == "octo/demo"))
     assert repo is not None
@@ -1240,3 +1244,19 @@ def test_an_automatic_incremental_review_records_no_commit_list(db: Session) -> 
     review = _run_gh(db, FakeLLM([_payload([])]), gh, automatic=True)
 
     assert "commits" not in ((review.summary_detail or {}).get("scope") or {})
+
+
+def test_a_plausible_confidence_reaches_the_column(db: Session) -> None:
+    """The value the model chose, stored as the string the column holds.
+
+    `.value`, not the enum — `category` and `severity` beside it are plain
+    strings, and an enum written here would serialise as `ReviewConfidence.
+    plausible` and break every comparison the analytics do.
+    """
+    payload = dict(VALID_COMMENT, confidence="plausible")
+    review = _run(db, FakeLLM([_payload([payload])]))
+
+    fetched = get_review_with_comments(db, review.id)
+    assert fetched is not None
+    _, comments = fetched
+    assert comments[0].confidence == "plausible"

@@ -282,13 +282,13 @@ def run_review(
                     severity=comment.severity.value,
                     comment_text=comment.comment,
                     suggestion=comment.suggestion,
-                    # Scaffolding, not a pattern. `confidence` is not on
-                    # `LLMReviewComment` yet, so a direct access would raise.
-                    # The issue that adds it replaces this with a plain
-                    # `confidence=comment.confidence.value` — delete the getattr
-                    # when you do, rather than leaving it to calcify into a
-                    # permanent shrug about what the model returns.
-                    confidence=getattr(comment, "confidence", None),
+                    # `.value`, not the enum: the column is a plain String,
+                    # matching how `category` and `severity` are stored above.
+                    #
+                    # Defaulted on the schema and required in the column's
+                    # sense — never None on a comment written from here. A null
+                    # in this column means the row predates the field.
+                    confidence=comment.confidence.value,
                     # Required on the schema, so never None here: a comment that
                     # reached this point was validated, and one without a
                     # scenario does not validate.

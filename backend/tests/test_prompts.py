@@ -138,6 +138,71 @@ def test_the_output_schema_marks_failure_scenario_required() -> None:
     assert '"failure_scenario"' in SYSTEM_PROMPT
 
 
+def test_prompt_asks_for_confidence_and_names_both_values() -> None:
+    """Defaulted on the schema, so the prompt is the only thing that elicits it.
+
+    Unlike `failure_scenario`, nothing rejects a response that omits this — an
+    unasked-for field simply arrives as `confirmed` and the column fills with a
+    value the model never chose. So the ask has to be in the prompt, and both
+    values have to be named or one of them is unreachable.
+    """
+    from app.schemas.review import ReviewConfidence
+
+    lowered = SYSTEM_PROMPT.lower()
+    assert "confidence" in lowered
+    for value in ReviewConfidence:
+        assert value.value in lowered, value.value
+
+
+def test_prompt_makes_the_confidence_test_operational() -> None:
+    """The rule has to be checkable against the output, not against a feeling.
+
+    The first wording defined `confirmed` as "you can name the inputs or state
+    that trigger the finding and the wrong result that follows". A live review
+    then produced a finding whose scenario ended *"if Safari <16.4 is out of
+    support, this is a non-issue"* and labelled it `confirmed` — correctly, by
+    the letter of that rule: it *had* named a trigger and a result. What it
+    could not know was whether the trigger applies to this repository.
+
+    So the rule now points the model at the scenario it just wrote and asks
+    whether writing it needed a hedge. That is a test the model can actually
+    run on its own output.
+    """
+    lowered = SYSTEM_PROMPT.lower()
+    assert "failure_scenario" in lowered
+    assert any(
+        phrase in lowered
+        for phrase in ("if x is set to", "assuming", "depends on whether", "conditional")
+    ), "the rule must name the hedge shapes that signal plausible"
+    assert any(
+        phrase in lowered
+        for phrase in (
+            "not the same as knowing",
+            "cannot confirm applies",
+            "outside your view",
+        )
+    ), "naming a trigger must not by itself be treated as confirming it"
+
+
+def test_prompt_keeps_confidence_and_severity_apart() -> None:
+    """The two axes are the whole point of the split.
+
+    If the prompt lets them collapse — plausible implying low severity — the
+    field measures nothing new and the reader is back to one axis wearing two
+    names.
+    """
+    lowered = SYSTEM_PROMPT.lower()
+    assert any(
+        phrase in lowered
+        for phrase in (
+            "severity is a separate question",
+            "separate question",
+            "does not move with confidence",
+            "can still be critical",
+        )
+    ), "the prompt must say confidence and severity are independent"
+
+
 def test_prompt_states_zero_comments_is_acceptable() -> None:
     """A model handed a schema with a `comments` array tends to fill it.
 

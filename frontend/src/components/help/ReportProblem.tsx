@@ -44,6 +44,49 @@ function reportError(error: unknown): string {
  */
 
 const REPO = "lucenity0/Liffy";
+
+// `ReportIn.body` is `max_length=8000`. `maxLength` on the textarea constrains
+// *typing* and not a value React sets, so an oversized prefill sails through to
+// a 422 — which `reportError` renders as "a description of at least 10 are
+// needed", telling the reporter their log is too short. Cut well under the
+// limit so the reporter's own words still fit alongside it.
+const MAX_PREFILL_CHARS = 6000;
+
+/**
+ * Prepare provider output for a report body: bounded, and inert as markdown.
+ *
+ * **Fenced, and that is the load-bearing part.** `api/help.py` posts this body
+ * verbatim into a public issue on the Liffy repository, under the instance's
+ * own token — and a GitHub issue body is a markdown renderer. `failure_detail`
+ * is provider output about a diff written by whoever opened the pull request,
+ * so an unfenced prefill is a path from an attacker-authored diff to rendered
+ * markdown on this repo: a beaconing image, a misleading link. That is the same
+ * hole `defang_model_markdown` closes on the review-posting path, and it must
+ * not be reopened through the report form.
+ *
+ * The fence is sized to the content the way `review_publisher._fence` does it,
+ * because a payload containing ``` would otherwise close the block early and
+ * put the rest back into markdown — which is precisely what somebody trying
+ * this would write.
+ */
+function seedBody(detail?: string): string {
+  if (!detail) return "";
+
+  let text = detail;
+  let note = "";
+  if (text.length > MAX_PREFILL_CHARS) {
+    text = text.slice(0, MAX_PREFILL_CHARS);
+    note = `\n… truncated at ${MAX_PREFILL_CHARS} characters; the full log is on the review page.`;
+  }
+
+  const longestRun = Math.max(
+    0,
+    ...(text.match(/`+/g) ?? []).map((run) => run.length),
+  );
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
+
+  return `\n\n${fence}\n${text}${note}\n${fence}\n`;
+}
 const ADVISORY_URL = `https://github.com/${REPO}/security/advisories/new`;
 
 type Kind = "bug" | "feature" | "security";
@@ -104,7 +147,7 @@ export function ReportProblem({
   const [open, setOpen] = useState(Boolean(prefillTitle || prefillBody));
   const [kind, setKind] = useState<Kind>("bug");
   const [title, setTitle] = useState(prefillTitle ?? "");
-  const [body, setBody] = useState(prefillBody ?? "");
+  const [body, setBody] = useState(() => seedBody(prefillBody));
   const report = useSubmitReport();
 
   const reset = () => {
@@ -294,8 +337,14 @@ export function ReportProblem({
                 {report.isPending ? "Filing…" : copy!.submit}
               </Button>
               <span className="text-xs text-ink-sub">
-                Posts to {REPO} straight away. No tokens, keys, or source code
-                are included.
+                {/* This used to promise that no source code was included, which
+                    stopped being true the moment a failed review could prefill
+                    its provider output here — that output quotes paths and
+                    diff content. Saying "we send what is in the box" is both
+                    accurate and more useful: it tells the reporter the one
+                    thing they can act on, which is to read it first. */}
+                Posts to {REPO} straight away, exactly as written above. No
+                tokens or keys are included — check the rest before you send it.
               </span>
             </div>
           </>

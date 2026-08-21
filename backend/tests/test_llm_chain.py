@@ -55,6 +55,7 @@ def _comment(file: str, start: int, end: int) -> dict:
         "severity": "warning",
         "comment": "Possible bug.",
         "suggestion": None,
+        "failure_scenario": "With value=None the branch returns the fallback twice.",
     }
 
 
@@ -155,6 +156,66 @@ def test_retry_feeds_validation_error_back() -> None:
     assert retry_user.count("failed validation") == 1
 
 
+def test_a_missing_failure_scenario_retries_and_recovers() -> None:
+    """The retry path the required field actually puts pressure on.
+
+    A model that omits `failure_scenario` does not fail the review — it costs
+    one extra call and the correction names the field. This is the shape of the
+    failure to watch in production: if `raw_attempts` sits at 2 across a whole
+    provider, the prompt is not eliciting the field and the cost is systematic
+    rather than occasional.
+    """
+    incomplete = _comment("app/util.py", 11, 11)
+    del incomplete["failure_scenario"]
+
+    llm = FakeLLM([_payload([incomplete]), _payload([_comment("app/util.py", 11, 11)])])
+    result = generate_review(llm, "Fix util", parse_diff(DIFF), CONTEXT)
+
+    assert result.raw_attempts == 2
+    assert "failure_scenario" in llm.prompts[1][1]
+    assert result.output.comments[0].failure_scenario
+
+
+def test_anchoring_preserves_the_failure_scenario() -> None:
+    """`_anchor_comments` rewrites line numbers via `model_copy(update=...)`.
+
+    That preserves unlisted fields — which is worth asserting rather than
+    assuming, because the failure mode is silent: the field would simply be
+    None by the time it reached the column, and every test upstream of the
+    anchor would still pass.
+    """
+    llm = FakeLLM([_payload([_comment("app/util.py", 11, 99)])])
+    result = generate_review(llm, "Fix util", parse_diff(DIFF), CONTEXT)
+
+    assert result.output.comments[0].line_end != 99  # clamped, so a copy was made
+    assert result.output.comments[0].failure_scenario == (
+        "With value=None the branch returns the fallback twice."
+    )
+
+
+def test_the_suggestion_strip_preserves_the_failure_scenario() -> None:
+    """The other `model_copy` site, for the same reason."""
+    from app.llm.chain import _remove_prose_suggestions
+    from app.schemas.review import LLMReviewComment, LLMReviewOutput
+
+    output = LLMReviewOutput(
+        summary="s", verdict="comment",
+        comments=[
+            LLMReviewComment(
+                file="a.py", line_start=1, line_end=1, category="improvement",
+                severity="info", comment="c", suggestion="Consider rewriting this.",
+                failure_scenario="With n=0 the loop never runs and the total stays 0.",
+            )
+        ],
+    )
+
+    cleaned = _remove_prose_suggestions(output)
+    assert cleaned.comments[0].suggestion is None  # stripped, so a copy was made
+    assert cleaned.comments[0].failure_scenario == (
+        "With n=0 the loop never runs and the total stays 0."
+    )
+
+
 def test_retries_exhausted_raises() -> None:
     llm = FakeLLM(["bad", "worse", "still bad"])
     with pytest.raises(LLMOutputError):
@@ -183,6 +244,7 @@ def test_prose_suggestions_are_removed_before_publishing() -> None:
                     "category": "improvement",
                     "severity": "info",
                     "comment": "Keep the toolchain version deliberate.",
+                    "failure_scenario": "A rebuild picks up a new codex minor and the exec parser stops matching.",
                     "suggestion": (
                         "Pin exact versions, e.g. `npm install -g @openai/codex@0.146.0`, "
                         "and bump them deliberately alongside the tests."
@@ -211,6 +273,7 @@ def test_code_suggestions_are_preserved() -> None:
                     "category": "logic_error",
                     "severity": "warning",
                     "comment": "Return the computed value.",
+                    "failure_scenario": "The caller always receives None, so every downstream branch takes the null path.",
                     "suggestion": "return value",
                 }
             ],
@@ -242,6 +305,7 @@ def test_code_like_backticks_and_identifiers_are_preserved() -> None:
                     "category": "improvement",
                     "severity": "info",
                     "comment": "Use the replacement directly.",
+                    "failure_scenario": "The interpolated form is rebuilt on every call, so the cache never hits.",
                     "suggestion": suggestion,
                 }
                 for suggestion in suggestions
@@ -1734,6 +1798,7 @@ def test_the_suggestion_strip_says_what_it_did(
         return LLMReviewComment(
             file="a.py", line_start=1, line_end=1, category="improvement",
             severity="info", comment="c", suggestion=suggestion,
+            failure_scenario="With n=0 the loop never runs and the total stays 0.",
         )
 
     output = LLMReviewOutput(

@@ -47,6 +47,25 @@ class LLMReviewComment(BaseModel):
     comment: str
     suggestion: str | None = None
 
+    failure_scenario: str
+    """The concrete inputs or state that make this finding bite, and the wrong
+    result they produce.
+
+    **Required, and that is the entire point.** The prompt has always asked for
+    specificity — "be specific and actionable; reference identifiers from the
+    code" — which a model satisfies by *sounding* specific. A required field
+    paired with the prompt's discard rule turns specificity from a tone into a
+    filter: a finding nobody can write a trigger for is a finding that does not
+    get emitted.
+
+    Defaulting it would undo that. An optional field gets omitted, the discard
+    rule stops biting, and what is left is the same request in a new shape.
+
+    Being required means a model that omits it costs a retry — `generate_review`
+    feeds the ValidationError back and tries again, twice, before failing the
+    review. That is the price, and `raw_attempts` is where it shows up.
+    """
+
 
 class LLMFileNote(BaseModel):
     """One changed file, and what the change does to it."""

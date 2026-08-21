@@ -155,6 +155,18 @@ def _comment_body(comment: ReviewComment) -> str:
     """
     head = f"**{comment.severity}** · `{comment.category}`"
     body = f"{head}\n\n{defang_model_markdown(comment.comment_text)}"
+    if comment.failure_scenario:
+        # Its own paragraph, after the finding rather than folded into it: the
+        # comment says what is wrong, this says how to make it happen, and a
+        # reader deciding whether to act wants them separable.
+        #
+        # **Defanged.** This is model prose derived from a diff somebody else
+        # wrote — the same provenance as `comment_text` directly above, and the
+        # one new path this milestone opens from model output to a published
+        # GitHub body. `suggestion` below is the exception, not the precedent:
+        # it is code inside a fence, where markdown does not render, and
+        # `_fence` is what keeps it there.
+        body += f"\n\n_Fails when:_ {defang_model_markdown(comment.failure_scenario)}"
     if comment.suggestion:
         # Not defanged: a suggestion is code inside a fence, where markdown does
         # not render. Holding it there is `_fence`'s job.

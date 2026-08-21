@@ -80,6 +80,7 @@ VALID_COMMENT = {
     "severity": "warning",
     "comment": "Possible bug in the new branch.",
     "suggestion": "return value if value is not None else fallback",
+    "failure_scenario": "With value=None the branch returns the fallback twice.",
 }
 
 

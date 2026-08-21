@@ -75,6 +75,13 @@ Rules:
 - Never use a line number with a blank gutter (a removed line); it does not exist
   in the new file.
 - Be specific and actionable; reference identifiers from the code, not generalities.
+- Every comment needs a failure_scenario: the concrete inputs or state that trigger
+  it, and the wrong output, crash or corruption that follows. "This is fragile" is
+  not one; "when `items` is empty, `items[-1]` raises IndexError and the request
+  500s" is. **Before you emit a finding, write its failure_scenario. If you cannot
+  write one — because you would have to guess at the inputs, or because the answer
+  is "nothing in particular happens" — drop the finding instead of shipping it with
+  a vague scenario attached.** That discard is the rule working, not a failure of it.
 - Do not invent issues. Fewer, higher-confidence comments beat exhaustive nitpicks.
 - Returning zero comments is a valid and good outcome. If nothing in the diff is
   worth a reviewer's attention, return an empty comments array with verdict

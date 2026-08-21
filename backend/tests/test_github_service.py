@@ -757,3 +757,99 @@ def test_post_uses_the_same_auth_headers_as_get() -> None:
     get_headers, post_headers = seen
     for key in ("authorization", "accept", "x-github-api-version"):
         assert get_headers[key] == post_headers[key]
+
+
+# ── #283: the picker needs the newest commits, not the first page ────────────
+
+
+def _commit(n: int) -> dict:
+    return {
+        "sha": f"sha{n:03d}",
+        "commit": {"message": f"commit {n}", "author": {"name": "octo", "date": "2026-08-01T00:00:00Z"}},
+    }
+
+
+def test_a_single_page_costs_exactly_one_request() -> None:
+    """The ordinary case must not get more expensive."""
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        return httpx.Response(200, json=[_commit(i) for i in range(1, 6)])
+
+    commits = _client(handler).list_pull_request_commits("octo", "hello", 7)
+
+    assert len(requests) == 1
+    assert [c.sha for c in commits] == [f"sha{i:03d}" for i in range(1, 6)]
+
+
+def test_the_newest_commits_are_returned_not_the_oldest_page() -> None:
+    """The bug: GitHub returns this endpoint oldest-first and paginates.
+
+    Page 1 of a 120-commit pull request is commits 1-100 — the oldest, and
+    exactly the ones the picker does not need. The commits that landed since
+    the last review are on the last page, and so is the boundary SHA.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(dict(request.url.params).get("page", 1))
+        if page == 1:
+            return httpx.Response(
+                200,
+                json=[_commit(i) for i in range(1, 101)],
+                headers={"Link": '<https://api.github.com/x?page=2>; rel="last"'},
+            )
+        # 120 commits total, so page 2 holds the newest 20.
+        return httpx.Response(200, json=[_commit(i) for i in range(101, 121)])
+
+    commits = _client(handler).list_pull_request_commits("octo", "hello", 7)
+    shas = [c.sha for c in commits]
+
+    assert "sha120" in shas, "the newest commit must be present"
+    # Short last page is topped up from the one before, so the window stays full
+    # and stays oldest-first.
+    assert len(shas) == 100
+    assert shas == sorted(shas)
+    assert shas[-1] == "sha120"
+
+
+def test_a_full_last_page_needs_no_third_request() -> None:
+    """200 commits over 100 per page: page 2 is full, so nothing to top up."""
+    requests: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(dict(request.url.params).get("page", 1))
+        requests.append(page)
+        if page == 1:
+            return httpx.Response(
+                200,
+                json=[_commit(i) for i in range(1, 101)],
+                headers={"Link": '<https://api.github.com/x?page=2>; rel="last"'},
+            )
+        return httpx.Response(200, json=[_commit(i) for i in range(101, 201)])
+
+    commits = _client(handler).list_pull_request_commits("octo", "hello", 7)
+
+    assert requests == [1, 2]
+    assert [c.sha for c in commits][-1] == "sha200"
+
+
+def test_an_unparseable_link_header_degrades_to_one_page() -> None:
+    """Safe direction: the previous behaviour, not an exception on a response
+    shape nobody anticipated."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[_commit(1)],
+            headers={"Link": "something GitHub has never sent"},
+        )
+
+    assert len(_client(handler).list_pull_request_commits("octo", "hello", 7)) == 1
+
+
+def test_last_page_parser() -> None:
+    from app.services.github_service import _last_page
+
+    assert _last_page('<https://api.github.com/x?page=2>; rel="next", '
+                      '<https://api.github.com/x?page=9>; rel="last"') == 9
+    assert _last_page("") == 1
+    assert _last_page("garbage") == 1

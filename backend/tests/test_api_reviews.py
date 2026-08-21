@@ -920,6 +920,35 @@ def test_commits_are_flagged_new_after_the_last_reviewed_commit(
     ]
 
 
+def test_a_narrowed_review_does_not_become_the_boundary(
+    seeded, monkeypatch
+) -> None:
+    """The end of the chain #283 is about.
+
+    A review narrowed by a commit selection completes with the pull request's
+    head SHA — it read the head, just not all of it. If it records
+    `scope.commits`, this endpoint skips it when choosing the boundary and the
+    commits it did not read stay new. That is what `narrowed` in
+    `review_service` now guarantees even when the file counts coincide.
+    """
+    with seeded["factory"]() as db:
+        review = db.get(Review, seeded["new"])
+        review.head_sha = "d"
+        review.summary_detail = {"scope": {"files_reviewed": 1, "files_in_diff": 1,
+                                           "commits": ["d"]}}
+        db.commit()
+
+    _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c"), _commit("d")])
+
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    flags = {c["sha"]: c["is_new"] for c in body}
+
+    # The one it actually read is covered; the three it skipped are still new,
+    # rather than being swept up by a boundary that review never earned.
+    assert flags["d"] is False
+    assert flags["a"] and flags["b"] and flags["c"]
+
+
 def test_every_commit_is_new_when_nothing_has_been_reviewed(
     seeded, monkeypatch
 ) -> None:

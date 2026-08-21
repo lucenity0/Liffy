@@ -1260,3 +1260,74 @@ def test_a_plausible_confidence_reaches_the_column(db: Session) -> None:
     assert fetched is not None
     _, comments = fetched
     assert comments[0].confidence == "plausible"
+
+
+# ── #283: a narrowed review must always say so ───────────────────────────────
+
+
+def _run_picked(db, gh, shas):
+    return run_review(
+        db, "octo", "demo", 7, gh=gh,
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=FakeLLM([_payload([])]),
+        commit_shas=shas,
+    )
+
+
+def test_a_selection_touching_every_file_still_records_its_commits(
+    db: Session,
+) -> None:
+    """The case the guard missed, and the reason it existed.
+
+    `scope` was gated on `len(review_diffs) < len(file_diffs)`. When the chosen
+    commits happen to touch every file in the pull request's diff the counts are
+    equal, so no `commits` key was written — and `list_pr_commits` picks the
+    boundary as the newest review with a `head_sha` and *no* `scope.commits`.
+    That narrowed review was therefore read as a full one, its head became the
+    boundary, and every deliberately skipped commit came back marked reviewed.
+
+    `DIFF` here has exactly one file, so selecting a commit that touches it is
+    precisely that coincidence.
+    """
+    gh = _picker_gh({SHA_ONE: ["app/util.py"]})
+
+    review = _run_picked(db, gh, [SHA_ONE])
+
+    scope = (review.summary_detail or {}).get("scope")
+    assert scope is not None, "a narrowed review must record a scope"
+    assert scope["commits"] == [SHA_ONE]
+    # ...and the counts really are equal, so the old guard would have missed it.
+    assert scope["files_reviewed"] == scope["files_in_diff"]
+
+
+def test_a_selection_widened_by_a_github_failure_records_no_commits(
+    db: Session,
+) -> None:
+    """`_diffs_to_review` falls back to the whole diff when the file list
+    cannot be fetched. That review genuinely read everything, so it *should*
+    set the boundary — writing a `commits` key would withhold one the next
+    review is entitled to.
+    """
+    gh = _picker_gh({})
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("GitHub is down")
+
+    gh.list_files_in_commits = _raise
+
+    review = _run_picked(db, gh, [SHA_ONE])
+
+    scope = (review.summary_detail or {}).get("scope")
+    assert scope is None or "commits" not in scope
+
+
+def test_a_selection_matching_nothing_records_no_commits(db: Session) -> None:
+    """The other widening path: the chosen commits touch no file that survives
+    in the diff, so the whole thing is reviewed."""
+    gh = _picker_gh({SHA_ONE: ["docs/unrelated.md"]})
+
+    review = _run_picked(db, gh, [SHA_ONE])
+
+    scope = (review.summary_detail or {}).get("scope")
+    assert scope is None or "commits" not in scope

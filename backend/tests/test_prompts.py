@@ -138,6 +138,41 @@ def test_the_output_schema_marks_failure_scenario_required() -> None:
     assert '"failure_scenario"' in SYSTEM_PROMPT
 
 
+def test_prompt_asks_for_confidence_and_names_both_values() -> None:
+    """Defaulted on the schema, so the prompt is the only thing that elicits it.
+
+    Unlike `failure_scenario`, nothing rejects a response that omits this — an
+    unasked-for field simply arrives as `confirmed` and the column fills with a
+    value the model never chose. So the ask has to be in the prompt, and both
+    values have to be named or one of them is unreachable.
+    """
+    from app.schemas.review import ReviewConfidence
+
+    lowered = SYSTEM_PROMPT.lower()
+    assert "confidence" in lowered
+    for value in ReviewConfidence:
+        assert value.value in lowered, value.value
+
+
+def test_prompt_keeps_confidence_and_severity_apart() -> None:
+    """The two axes are the whole point of the split.
+
+    If the prompt lets them collapse — plausible implying low severity — the
+    field measures nothing new and the reader is back to one axis wearing two
+    names.
+    """
+    lowered = SYSTEM_PROMPT.lower()
+    assert any(
+        phrase in lowered
+        for phrase in (
+            "severity is a separate question",
+            "separate question",
+            "does not move with confidence",
+            "can still be critical",
+        )
+    ), "the prompt must say confidence and severity are independent"
+
+
 def test_prompt_states_zero_comments_is_acceptable() -> None:
     """A model handed a schema with a `comments` array tends to fill it.
 

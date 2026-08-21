@@ -193,6 +193,23 @@ def test_anchoring_preserves_the_failure_scenario() -> None:
     )
 
 
+def test_anchoring_preserves_confidence() -> None:
+    """`model_copy(update=...)` preserves unlisted fields — asserted, not assumed.
+
+    The failure mode is silent: confidence would simply arrive at the column as
+    the default, and every test upstream of the anchor would still pass while
+    the dashboard quietly showed every finding as confirmed.
+    """
+    payload = _comment("app/util.py", 11, 99)
+    payload["confidence"] = "plausible"
+
+    llm = FakeLLM([_payload([payload])])
+    result = generate_review(llm, "Fix util", parse_diff(DIFF), CONTEXT)
+
+    assert result.output.comments[0].line_end != 99  # clamped, so a copy was made
+    assert result.output.comments[0].confidence.value == "plausible"
+
+
 def test_the_suggestion_strip_preserves_the_failure_scenario() -> None:
     """The other `model_copy` site, for the same reason."""
     from app.llm.chain import _remove_prose_suggestions
@@ -205,6 +222,7 @@ def test_the_suggestion_strip_preserves_the_failure_scenario() -> None:
                 file="a.py", line_start=1, line_end=1, category="improvement",
                 severity="info", comment="c", suggestion="Consider rewriting this.",
                 failure_scenario="With n=0 the loop never runs and the total stays 0.",
+                confidence="plausible",
             )
         ],
     )
@@ -214,6 +232,7 @@ def test_the_suggestion_strip_preserves_the_failure_scenario() -> None:
     assert cleaned.comments[0].failure_scenario == (
         "With n=0 the loop never runs and the total stays 0."
     )
+    assert cleaned.comments[0].confidence.value == "plausible"
 
 
 def test_retries_exhausted_raises() -> None:

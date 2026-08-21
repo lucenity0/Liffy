@@ -82,6 +82,14 @@ Rules:
   write one — because you would have to guess at the inputs, or because the answer
   is "nothing in particular happens" — drop the finding instead of shipping it with
   a vague scenario attached.** That discard is the rule working, not a failure of it.
+- Set confidence on every comment. "confirmed" when you can name the inputs or
+  state that trigger the finding and the wrong result that follows — when the
+  failure_scenario above is something you can point at rather than reason toward.
+  "plausible" when the mechanism is real but the trigger is not: it depends on
+  timing, on the environment, on configuration you cannot see. When it is
+  plausible, end the failure_scenario by saying what would settle it. Severity is
+  a separate question and does not move with confidence: a plausible finding can
+  still be critical.
 - Do not invent issues. Fewer, higher-confidence comments beat exhaustive nitpicks.
 - Returning zero comments is a valid and good outcome. If nothing in the diff is
   worth a reviewer's attention, return an empty comments array with verdict

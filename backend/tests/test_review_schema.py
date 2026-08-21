@@ -17,6 +17,7 @@ def test_review_schema_accepts_valid_payload() -> None:
                 "severity": "warning",
                 "comment": "Validate input.",
                 "suggestion": None,
+                "failure_scenario": "A request with `?q=';DROP` reaches the query unescaped.",
             }
         ],
     }
@@ -38,6 +39,7 @@ def test_review_schema_rejects_unknown_enum_values(field: str, value: str) -> No
                 "severity": "warning",
                 "comment": "Validate input.",
                 "suggestion": None,
+                "failure_scenario": "A request with `?q=';DROP` reaches the query unescaped.",
             }
         ],
     }
@@ -45,6 +47,49 @@ def test_review_schema_rejects_unknown_enum_values(field: str, value: str) -> No
 
     with pytest.raises(ValidationError):
         LLMReviewOutput.model_validate(payload)
+
+
+# ── failure_scenario is required (REV-QUAL-4) ────────────────────────────────
+
+
+def test_review_schema_rejects_a_comment_without_a_failure_scenario() -> None:
+    """Required, and being required is the whole mechanism.
+
+    An optional field gets omitted and the prompt's discard rule stops biting —
+    what is left is the same polite request for specificity the prompt already
+    made and the model already satisfied by sounding specific. This assertion
+    is what makes the rule enforced rather than requested, on every provider.
+    """
+    payload = {
+        "summary": "Looks mostly good.",
+        "verdict": "comment",
+        "comments": [
+            {
+                "file": "backend/app/main.py",
+                "line_start": 1,
+                "line_end": 2,
+                "category": "security",
+                "severity": "warning",
+                "comment": "Validate input.",
+                "suggestion": None,
+            }
+        ],
+    }
+
+    with pytest.raises(ValidationError) as exc:
+        LLMReviewOutput.model_validate(payload)
+
+    # The message goes back to the model verbatim on retry, so it has to name
+    # the field. "1 validation error" alone tells it nothing to act on.
+    assert "failure_scenario" in str(exc.value)
+
+
+def test_a_comment_with_no_findings_needs_no_scenario() -> None:
+    """The empty review still validates — the field is per comment, not per review."""
+    parsed = LLMReviewOutput.model_validate(
+        {"summary": "Nothing to flag.", "verdict": "approve", "comments": []}
+    )
+    assert parsed.comments == []
 
 
 # ── ReviewCommentOut carries the two new columns (REV-QUAL-3) ────────────────

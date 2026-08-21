@@ -1,4 +1,9 @@
-from app.services.chunker import _LANGUAGES, MAX_CHUNK_CHARS, chunk_source
+from app.services.chunker import (
+    _FILENAMES,
+    _LANGUAGES,
+    MAX_CHUNK_CHARS,
+    chunk_source,
+)
 
 PY_SOURCE = '''\
 import os
@@ -672,3 +677,138 @@ def test_a_grammar_that_will_not_load_degrades_to_windows() -> None:
         chunker._LANGUAGES.update(original)
         chunker._parsers.pop(".broken", None)
         chunker._unavailable.discard(".broken")
+
+
+# ── #282: coverage, filenames, and range sanity ──────────────────────────────
+
+
+def _oversized_java_class() -> str:
+    """A class over MAX_CHUNK_CHARS, so `_subdivide` runs, with a field and a
+    doc comment sitting *between* two methods and a constant after the last."""
+    pad = "int x = 0; " * 220
+    return (
+        "public class Big {\n"
+        f"  void method0() {{ {pad} }}\n"
+        "  /** Returns the width. */\n"
+        "  private int width;\n"
+        f"  void method1() {{ {pad} }}\n"
+        "  static final int TAIL = 7;\n"
+        "}\n"
+    )
+
+
+def test_text_between_members_reaches_a_chunk() -> None:
+    """Silent data loss, and the worst failure this component has.
+
+    `_subdivide` emitted a header and one chunk per member. Anything between two
+    members — a field, a doc comment, an annotation — was inside the class node
+    and outside every member's byte range, so it reached no chunk at all.
+    Nothing errored, the chunk count looked reasonable, and a search for the
+    field simply returned nothing.
+    """
+    joined = "\n".join(c.text for c in chunk_source("Big.java", _oversized_java_class()))
+
+    assert "private int width" in joined
+    assert "Returns the width" in joined
+
+
+def test_text_after_the_last_member_reaches_a_chunk() -> None:
+    """The tail has the same hole. Usually just `}`, which is dropped as
+    whitespace — but a trailing constant lives there too."""
+    joined = "\n".join(c.text for c in chunk_source("Big.java", _oversized_java_class()))
+
+    assert "TAIL" in joined
+
+
+def test_a_gap_of_only_punctuation_produces_no_chunk() -> None:
+    """The common gap must stay free.
+
+    Members separated by nothing but a newline and a brace would otherwise emit
+    a chunk per gap, doubling the index for no retrievable content.
+    """
+    pad = "int x = 0; " * 220
+    java = (
+        "public class Tight {\n"
+        f"  void a() {{ {pad} }}\n"
+        f"  void b() {{ {pad} }}\n"
+        "}\n"
+    )
+    texts = [c.text for c in chunk_source("Tight.java", java)]
+
+    assert not [t for t in texts if not t.strip()]
+    # header + two members, and no gap chunk between them.
+    assert len(texts) == 3
+
+
+def test_no_chunk_ever_has_end_line_before_start_line() -> None:
+    """A blanket invariant, over every shape in this file's fixtures.
+
+    The header chunk ended on `members[0].start_point[0]` with no `+ 1` — right
+    when the first member is on a later line, and `end_line=0` against
+    `start_line=1` when the node and its first member start on the same row.
+    A minified single-line document hit it. An `end_line` of 0 is not a line,
+    and anything computing `end - start` gets a negative span.
+
+    Asserted across every input rather than only the one that reproduced it,
+    because the next such case will come from a shape nobody predicted.
+    """
+    inner = "".join(f'<div class="row-{i}">cell {i} padding</div>' for i in range(400))
+    cases = {
+        "minified.html": f"<html><body>{inner}</body></html>",
+        "Big.java": _oversized_java_class(),
+        "a.py": PY_SOURCE,
+        "one.json": "{" + ",".join(f'"k{i}":"{"v" * 40}"' for i in range(200)) + "}",
+        "Dockerfile": "FROM x AS a\nRUN y\n\nFROM x AS b\nRUN z\n",
+    }
+
+    for name, source in cases.items():
+        for chunk in chunk_source(name, source):
+            assert chunk.end_line >= chunk.start_line, (
+                f"{name}: {chunk.start_line}-{chunk.end_line}"
+            )
+            assert chunk.start_line >= 1, f"{name}: start_line {chunk.start_line}"
+
+
+def test_an_extensionless_convention_filename_resolves_to_its_grammar() -> None:
+    """`Dockerfile` is the name almost every repository uses.
+
+    The extension lookup needs a dot, so the canonical spelling resolved to `""`
+    and fell back to fixed line windows — while `build.dockerfile` got the full
+    grammar. The Dockerfile support that #261 added never fired for the common
+    case.
+    """
+    source = "FROM python:3.11-slim AS builder\nRUN pip install x\n"
+
+    by_name = chunk_source("Dockerfile", source)
+    by_extension = chunk_source("build.dockerfile", source)
+
+    assert [(c.kind, c.name) for c in by_name] == [
+        (c.kind, c.name) for c in by_extension
+    ]
+    assert any(c.name == "builder" for c in by_name)
+
+
+def test_a_convention_name_with_a_suffix_resolves_too() -> None:
+    """`Dockerfile.prod` and `Dockerfile.dev` are the same file with a label."""
+    source = "FROM python:3.11-slim AS builder\nRUN pip install x\n"
+
+    assert any(c.name == "builder" for c in chunk_source("docker/Dockerfile.prod", source))
+
+
+def test_a_real_extension_is_never_overridden_by_a_convention_stem() -> None:
+    """A file whose stem collides with a convention name but which carries a
+    genuine extension keeps that extension's grammar."""
+    chunks = chunk_source("gemfile.py", "def f():\n    return 1\n")
+
+    assert [c.kind for c in chunks] == ["function"]
+
+
+def test_filename_map_only_points_at_registered_grammars() -> None:
+    """A name mapped to a key with no grammar is not support — it is the same
+    silent fallback as before, dressed up to look like support.
+
+    This is what keeps `Makefile` and `Jenkinsfile` out until the grammars
+    exist, rather than being listed and quietly doing nothing.
+    """
+    for name, key in _FILENAMES.items():
+        assert key in _LANGUAGES, f"{name} -> {key} is not a registered grammar"

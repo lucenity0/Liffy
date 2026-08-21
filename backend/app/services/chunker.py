@@ -8,6 +8,7 @@ diff-side chunking later.
 
 import hashlib
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -690,6 +691,56 @@ def _parser_for(extension: str) -> Parser | None:
 _OBJC_MARKERS = ("@interface", "@implementation", "@protocol", "@end", "#import")
 
 
+# Convention filenames that carry no extension, mapped to the registry key
+# whose grammar they should use.
+#
+# `_LANGUAGES` is keyed by extension, and the derivation below is
+# `"." + path.rsplit(".", 1)[-1] if "." in path else ""` — so `Dockerfile`,
+# the canonical spelling, resolves to `""` and gets no grammar at all while
+# `build.dockerfile` gets the full one. The Dockerfile grammar was added and
+# never fired for the name almost every repository actually uses.
+#
+# Matched case-insensitively on the basename. Not a general "guess the language
+# from content" mechanism — just the handful of names that are a convention
+# rather than an extension.
+# Only names whose target key is actually in `_LANGUAGES`. `Makefile`,
+# `Jenkinsfile` and `CMakeLists.txt` are deliberately absent: Liffy has no make,
+# groovy or cmake grammar, so listing them would map a name onto a key that
+# resolves to nothing — the same silent fallback as today, dressed up to look
+# like support. A test asserts every value here is a real registry key, so
+# adding one of those grammars is what makes its filename eligible.
+_FILENAMES: dict[str, str] = {
+    "dockerfile": ".dockerfile",
+    "containerfile": ".dockerfile",
+    # Ruby by convention rather than by extension — all four are Ruby source
+    # that the grammar parses exactly as a `.rb` file.
+    "rakefile": ".rb",
+    "gemfile": ".rb",
+    "podfile": ".rb",
+    "brewfile": ".rb",
+    "vagrantfile": ".rb",
+}
+
+
+def _registry_key(file_path: str) -> str:
+    """The `_LANGUAGES` key for one path — by filename first, then extension.
+
+    Filename wins because it is the more specific signal: `Dockerfile.prod` and
+    `Dockerfile` are both Dockerfiles, and only one of them has a usable
+    extension. A name not in `_FILENAMES` falls through to the extension, which
+    is how every other file still resolves exactly as it did.
+    """
+    basename = file_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if basename in _FILENAMES:
+        return _FILENAMES[basename]
+    # `Dockerfile.prod`, `Dockerfile.dev` — the convention name with a suffix.
+    # Checked after the exact match so a real extension is never overridden.
+    stem = basename.split(".", 1)[0]
+    if stem in _FILENAMES and f".{basename.rsplit('.', 1)[-1]}" not in _LANGUAGES:
+        return _FILENAMES[stem]
+    return "." + basename.rsplit(".", 1)[-1] if "." in basename else ""
+
+
 def _language_for(extension: str, source: str) -> tuple[str, Parser] | None:
     """Resolve one file to (language name, parser), or None to window it.
 
@@ -956,6 +1007,10 @@ def _body_of(node: Node) -> Node | None:
     return None
 
 
+# A gap worth indexing has to contain something searchable. See `_gap`.
+_WORD = re.compile(r"\w")
+
+
 def _subdivide(
     node: Node, definition_types: frozenset[str], parent: str | None, source: bytes
 ) -> list[tuple[str, int, int, str, str | None]] | None:
@@ -984,16 +1039,62 @@ def _subdivide(
         return None
 
     out: list[tuple[str, int, int, str, str | None]] = []
+
+    def _gap(start_byte: int, end_byte: int, start_line: int, end_line: int) -> None:
+        """Emit the text between two members, if there is any worth keeping.
+
+        Members are not adjacent. Between one and the next sit fields, doc
+        comments, annotations, constants — inside the enclosing node but outside
+        every member's byte range, so before this they reached no chunk at all.
+        Nothing errored and the chunk count looked reasonable; the text was
+        simply not in the index, and a search for it returned nothing.
+
+        The bar is "contains a word character", not "is non-empty". The common
+        gap between two methods is a newline and a closing brace, and `.strip()`
+        alone keeps `}` — which would put one unsearchable punctuation chunk in
+        the index per member, roughly doubling it for nothing. Nobody retrieves
+        a brace.
+        """
+        if start_byte >= end_byte:
+            return
+        text = source[start_byte:end_byte].decode("utf-8", "replace")
+        if not _WORD.search(text):
+            return
+        # `parent` unqualified: this text belongs to the enclosing definition,
+        # not to either member beside it, and inventing `Class.<gap>` would put
+        # a name in the index that appears nowhere in the file.
+        out.append((text, start_line, max(start_line, end_line), "module", parent))
+
     # The declaration line and anything before the first member: `class Foo {`,
     # a docstring, field declarations. Dropping it would lose the type's own
     # signature, which is often the most informative line in the file.
     header = source[node.start_byte : members[0].start_byte].decode("utf-8", "replace")
     if header.strip():
         out.append(
-            (header, node.start_point[0] + 1, members[0].start_point[0], "module", parent)
+            (
+                header,
+                node.start_point[0] + 1,
+                # `max`, because the header ends on the line *before* the first
+                # member — which is not a line at all when both start on the
+                # same row. A single-line minified document produced
+                # `start_line=1, end_line=0`: not a range, and a negative span
+                # for anything that subtracts them.
+                max(node.start_point[0] + 1, members[0].start_point[0]),
+                "module",
+                parent,
+            )
         )
 
-    for member in members:
+    for index, member in enumerate(members):
+        if index > 0:
+            previous = members[index - 1]
+            _gap(
+                previous.end_byte,
+                member.start_byte,
+                previous.end_point[0] + 1,
+                member.start_point[0] + 1,
+            )
+
         name = _node_name(member, source)
         qualified = f"{parent}.{name}" if parent and name else (name or parent)
         text = source[member.start_byte : member.end_byte].decode("utf-8", "replace")
@@ -1006,6 +1107,16 @@ def _subdivide(
                 qualified,
             )
         )
+
+    # And the tail: whatever follows the last member but still belongs to the
+    # node. Usually just `}`, which `_gap` discards — but a trailing constant or
+    # a closing comment lives here too.
+    _gap(
+        members[-1].end_byte,
+        node.end_byte,
+        members[-1].end_point[0] + 1,
+        node.end_point[0] + 1,
+    )
     return out
 
 
@@ -1037,7 +1148,7 @@ def chunk_source(file_path: str, source: str) -> list[CodeChunk]:
     if not source.strip():
         return []
 
-    extension = "." + file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    extension = _registry_key(file_path)
     resolved = _language_for(extension, source)
     # Name and parser come from one resolution rather than two lookups, so they
     # cannot disagree about which language this is — which matters now that one

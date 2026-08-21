@@ -116,22 +116,42 @@ if %errorlevel% neq 0 (
     echo [done]  Database 'liffy' already exists
 )
 
-REM ── 7. Environment file ───────────────────────────────────────────────────────
-echo [liffy] Setting up environment file...
+REM ── 7. Environment files ──────────────────────────────────────────────────────
+echo [liffy] Setting up environment files...
 if not exist "backend\.env" (
-    if exist ".env.example" (
-        copy .env.example backend\.env >nul
+    if exist "backend\.env.example" (
+        copy backend\.env.example backend\.env >nul
         REM Generate a simple random secret using Python
         python -c "import secrets; s=open('backend\\.env').read(); open('backend\\.env','w').write(s.replace('JWT_SECRET_KEY=','JWT_SECRET_KEY='+secrets.token_hex(32)))"
         echo [done]  Created backend\.env
         echo [warn]  Open backend\.env and fill in GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, and OPENAI_API_KEY
     ) else (
-        echo [error] .env.example not found. Are you in the Liffy root folder?
+        echo [error] backend\.env.example not found. Are you in the Liffy root folder?
         pause
         exit /b 1
     )
 ) else (
     echo [done]  backend\.env already exists — skipping
+)
+
+REM The frontend needs one too, and it is just as gitignored — so a fresh clone
+REM has neither. Without VITE_API_BASE_URL every call becomes root-relative and
+REM lands on the Vite dev server instead of the API, including the "Continue
+REM with GitHub" link: Vite's SPA fallback answers /auth/github with index.html,
+REM the router matches its catch-all behind RequireAuth, and an anonymous
+REM visitor is redirected back to /login having never reached GitHub. No secrets
+REM in this one, so there is nothing to fill in afterwards.
+if not exist "frontend\.env" (
+    if exist "frontend\.env.example" (
+        copy frontend\.env.example frontend\.env >nul
+        echo [done]  Created frontend\.env
+    ) else (
+        echo [error] frontend\.env.example not found. Are you in the Liffy root folder?
+        pause
+        exit /b 1
+    )
+) else (
+    echo [done]  frontend\.env already exists — skipping
 )
 
 REM ── 8. Python venv + dependencies ────────────────────────────────────────────

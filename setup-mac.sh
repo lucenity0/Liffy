@@ -117,21 +117,39 @@ else
     success "Database 'liffy' already exists"
 fi
 
-# ── 7. Environment file ───────────────────────────────────────────────────────
-log "Setting up environment file..."
+# ── 7. Environment files ──────────────────────────────────────────────────────
+log "Setting up environment files..."
 if [ ! -f backend/.env ]; then
-    if [ -f .env.example ]; then
-        cp .env.example backend/.env
+    if [ -f backend/.env.example ]; then
+        cp backend/.env.example backend/.env
         # Generate a random JWT secret
         JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
         sed -i '' "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$JWT_SECRET/" backend/.env
         success "Created backend/.env with a generated JWT secret"
         warn "Open backend/.env and fill in GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, and OPENAI_API_KEY"
     else
-        error ".env.example not found. Are you in the Liffy root directory?"
+        error "backend/.env.example not found. Are you in the Liffy root directory?"
     fi
 else
     success "backend/.env already exists — skipping"
+fi
+
+# The frontend needs one too, and it is just as gitignored — so a fresh clone
+# has neither. Without VITE_API_BASE_URL every call becomes root-relative and
+# lands on the Vite dev server instead of the API, including the "Continue with
+# GitHub" link: Vite's SPA fallback answers /auth/github with index.html, the
+# router matches its catch-all behind RequireAuth, and an anonymous visitor is
+# redirected back to /login having never reached GitHub. No secrets in this
+# one, so there is nothing to fill in afterwards.
+if [ ! -f frontend/.env ]; then
+    if [ -f frontend/.env.example ]; then
+        cp frontend/.env.example frontend/.env
+        success "Created frontend/.env"
+    else
+        error "frontend/.env.example not found. Are you in the Liffy root directory?"
+    fi
+else
+    success "frontend/.env already exists — skipping"
 fi
 
 # ── 8. Python virtual environment + dependencies ──────────────────────────────

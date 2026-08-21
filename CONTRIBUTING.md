@@ -25,7 +25,8 @@ hit. The short version:
 ```bash
 git clone https://github.com/lucenity0/Liffy.git
 cd Liffy
-cp .env.example backend/.env   # then fill it in
+cp backend/.env.example backend/.env    # then fill it in
+cp frontend/.env.example frontend/.env  # nothing to fill in — just the API's URL
 ```
 
 You do not need a paid API key to work on Liffy. Point `LLM_PROVIDER` at a local

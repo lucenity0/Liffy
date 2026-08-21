@@ -83,19 +83,17 @@ cd Liffy
 
 ### 2. Environment files
 
-Copy the example env file:
+There are two, one per half of the app, and both are gitignored — a fresh clone
+has neither. Same commands on macOS and on Windows under Git Bash:
 
-**macOS:**
 ```bash
-cp .env.example backend/.env
-```
-
-**Windows (Git Bash):**
-```bash
-cp .env.example backend/.env
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
 ```
 
 Open `backend/.env` and fill in your values — see the Environment Variables section below for what each one means. For local dev, the defaults work except for `JWT_SECRET_KEY` which you should set to any random string.
+
+`frontend/.env` needs no editing: it holds no secrets, only `VITE_API_BASE_URL`. Do not skip it, though. Without that variable every request the UI makes becomes root-relative and hits the Vite dev server instead of the API — including the *Continue with GitHub* link, which Vite answers with the app's own `index.html`. The router matches its catch-all route, the auth guard sees an anonymous visitor, and you land back on the login page having never reached GitHub. It reads exactly like a broken OAuth setup.
 
 ### 3. Create the database
 
@@ -568,6 +566,22 @@ Make sure you're running uvicorn from inside the `backend/` directory with the v
 
 **Frontend `npm run dev` fails with Node version error**
 You need Node 22.12+. Run `nvm use 22.12` before starting the frontend.
+
+**"Continue with GitHub" reloads the login page — GitHub is never reached**
+You have no `frontend/.env`. It is gitignored, so a clone made before the
+launchers started creating it has none, and `VITE_API_BASE_URL` is then
+undefined. Every request the UI makes becomes root-relative and lands on the
+Vite dev server instead of the API — including the sign-in link, which
+`Login.tsx` builds as `${VITE_API_BASE_URL}/auth/github`. Vite's SPA fallback
+answers `/auth/github` with `index.html`, the router matches its catch-all route
+behind `RequireAuth`, and an anonymous visitor is redirected to `/login`. Fix:
+```bash
+cp frontend/.env.example frontend/.env
+```
+then restart the dev server — Vite reads `.env` only at startup. To confirm this
+is what you are hitting before you fix it, right-click the *Continue with GitHub*
+button and copy the link address: it will read `http://localhost:5173/auth/github`
+rather than `http://localhost:8000/auth/github`.
 
 **`liffy.ps1 cannot be loaded because running scripts is disabled` (Windows)**
 The default execution policy blocks unsigned scripts. Run `liffy` (the `.bat`

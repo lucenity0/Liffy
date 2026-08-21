@@ -47,8 +47,8 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
-    # The README says `cp .env.example backend/.env`, and this is the line that
-    # makes Compose actually read it — ${VAR} interpolation only ever expands
+    # The README says `cp backend/.env.example backend/.env`, and this is the line
+    # that makes Compose actually read it — ${VAR} interpolation only ever expands
     # from the *root* .env, so the documented setup produced a container with
     # no credentials at all and an OAuth redirect carrying `client_id=`, which
     # GitHub answers with a 404 on an unknown app.

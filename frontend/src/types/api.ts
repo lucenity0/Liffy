@@ -255,6 +255,29 @@ export interface ReviewCommentOut {
   suggestion: string | null;
   created_at: string;
   /**
+   * How sure Liffy is that the finding is real — `"confirmed"`, `"plausible"`,
+   * or `null`. A separate axis from `severity`, which says how bad it would be
+   * if it were real.
+   *
+   * `null` on every comment written before the field existed, which is the
+   * majority of rows today — and `null` is not a third value. A comment that
+   * was never asked the question has not answered "plausible", so it renders
+   * exactly like a confirmed one: with nothing.
+   *
+   * `string | null` rather than a union, for the same reason `category` and
+   * `severity` are loose above: the column has no DB check constraint.
+   */
+  confidence: string | null;
+  /**
+   * The concrete inputs or state that trigger the finding, and the wrong
+   * result that follows. `null` on pre-milestone comments, same as above.
+   *
+   * Model prose derived from a diff the pull request author wrote. Render it
+   * through `ModelProse`, never as markdown — see that component's note on why
+   * this is the same untrusted string as `comment_text`.
+   */
+  failure_scenario: string | null;
+  /**
    * The *caller's own* rating for this comment — `1`, `-1`, or `null` when
    * they haven't rated it. Another user's rating never appears here.
    *

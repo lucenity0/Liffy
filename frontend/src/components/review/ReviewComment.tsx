@@ -40,6 +40,18 @@ export function ReviewComment({
       <div className="flex flex-wrap items-center gap-2">
         <SeverityBadge value={comment.severity} />
         <CategoryBadge value={comment.category} />
+        {/* Quieter than the category badge, which is already quieter than
+            severity — a de-emphasis signal should not compete with the thing
+            it de-emphasises. Plain dim text rather than a third badge, for the
+            same reason categories are monochrome: severity is what you triage
+            by and it has to stay the loudest thing in this row.
+
+            Rendered only for "plausible". Nothing for "confirmed" — the common
+            case — and nothing for null, which is every comment written before
+            the field existed. A marker on every comment is not a marker. */}
+        {comment.confidence === "plausible" && (
+          <span className="label text-ink-dim">plausible</span>
+        )}
         <span className="ml-auto font-code text-sm text-ink-sub" data-numeric>
           {/* The anchor Liffy posted the comment against, spelled the way a
               diff spells it. */}
@@ -48,6 +60,26 @@ export function ReviewComment({
       </div>
 
       <ModelProse text={comment.comment_text} />
+
+      {/* Secondary to the comment, and after it: the comment says what is
+          wrong, this says how to make it happen, and a reader deciding whether
+          to act wants them in that order.
+
+          Through `ModelProse` like the comment above it — this is the same
+          untrusted model prose, derived from the same attacker-authored diff,
+          and it gets the same structural guarantee rather than a second
+          treatment that might not have one.
+
+          Absent, not empty, when null. Most rows in the table are null. */}
+      {comment.failure_scenario && (
+        <div className="flex flex-col gap-1">
+          <p className="label text-ink-dim">Fails when</p>
+          <ModelProse
+            text={comment.failure_scenario}
+            className="text-ink-sub"
+          />
+        </div>
+      )}
 
       {comment.suggestion && (
         <div className="flex flex-col gap-1">

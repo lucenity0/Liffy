@@ -326,19 +326,25 @@ def test_reading_help_stays_open_to_everyone() -> None:
     assert client.get("/help?q=signing+in").status_code == 200
 
 
-def test_a_reporter_with_no_stored_token_is_503_and_says_what_to_do(
+def test_a_reporter_with_no_stored_token_is_403_and_says_what_to_do(
     seeded, monkeypatch
 ) -> None:
-    """503, not 502, and the difference is the whole point.
-
-    502 means GitHub refused. This is Liffy having no credential to ask with —
-    a local condition nobody at GitHub can help with — and it used to surface
-    as "GitHub couldn't find that repository (is it private?)", sending the
-    reader to check permissions on a public repo that was never the problem.
+    """403 — not 502, and emphatically not 401.
 
     `submit_report` caught `GitHubError` broadly, so `GitHubAuthError` (a
     subclass) arrived as 502; the ordering `api/repos.py` already spells out
-    for `GitHubRateLimitError` was missing here.
+    for `GitHubRateLimitError` was missing here. 502 means GitHub refused, and
+    it surfaced as "GitHub couldn't find that repository (is it private?)" —
+    sending the reader to check permissions on a public repo that was never
+    the problem.
+
+    401 would be worse than the original bug: `api/client.ts` refreshes on 401
+    and ends the session when that fails, so a revoked *GitHub* token would log
+    the user out of *Liffy*.
+
+    503 was the first fix and was wrong for a subtler reason — it assumed the
+    only route here was a missing `GITHUB_TOKEN`, and the next commit deleted
+    that token. Both remaining sources are the caller's own credential.
     """
     from app.models.user import User
     from sqlalchemy import select
@@ -354,5 +360,40 @@ def test_a_reporter_with_no_stored_token_is_503_and_says_what_to_do(
         json={"title": "A title", "body": "A body long enough."},
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 403
     assert "sign in again" in response.json()["detail"]
+
+
+def test_a_revoked_github_token_is_403_not_a_liffy_outage(seeded, monkeypatch) -> None:
+    """The case the 503 mapping got wrong, and the reason 401 is not the answer.
+
+    `_raise_for_status` turns GitHub's 401/403 into `GitHubAuthError`, so a
+    reporter whose OAuth grant was revoked reaches the same clause as one with
+    no token at all. Under 503 that told uptime checks the service was down and
+    told the reporter to look at server configuration they cannot change.
+
+    401 would be worse still: `api/client.ts` refreshes on 401 and ends the
+    session when that fails, so a revoked *GitHub* grant would log the user out
+    of *Liffy* — a good session destroyed by a downstream credential.
+    """
+    from app.services.github_service import GitHubAuthError
+
+    class _Revoked(_FakeClient):
+        def create_issue(self, *_a, **_k):
+            raise GitHubAuthError(
+                "GitHub rejected the credentials. If you revoked Liffy's "
+                "access, reconnect your GitHub account."
+            )
+
+    monkeypatch.setattr(help_api, "GitHubClient", _Revoked)
+
+    response = client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={"title": "A title", "body": "A body long enough."},
+    )
+
+    assert response.status_code == 403
+    # GitHub's own sentence reaches the reader: `normalizeApiError` has no 403
+    # branch, so the default passes `detail` through unchanged.
+    assert "reconnect your GitHub account" in response.json()["detail"]

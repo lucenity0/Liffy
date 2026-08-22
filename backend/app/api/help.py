@@ -188,14 +188,24 @@ def submit_report(
         # an `except` chain in the other order would never reach it — the same
         # ordering `api/repos.py` and `api/reviews.py` already spell out.
         #
-        # 503 rather than 502, and the difference is the whole point here. 502
-        # means "GitHub refused"; this is Liffy having no credential to ask
-        # with, which is a local misconfiguration nobody at GitHub can help
-        # with. `GITHUB_TOKEN` is the only thing this route needs a PAT for —
-        # every other caller acts as the signed-in user — so on an install that
-        # never set one, "Report a problem" is the single feature that breaks,
-        # and it breaks silently until somebody tries to report a problem.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # **403, and the reasoning here changed inside this very branch.** It
+        # was 503 on the grounds that the only way to reach it was Liffy having
+        # no `GITHUB_TOKEN` — a local misconfiguration. The next commit deleted
+        # that token, so both remaining sources are the *caller's* credential:
+        # a user with no stored OAuth token, and GitHub answering 401/403
+        # because it was revoked (see `_raise_for_status`). Neither is the
+        # service being unavailable, and saying 503 tells uptime checks there
+        # is an outage while telling the reporter to look at a `.env` they
+        # cannot fix.
+        #
+        # **Not 401**, which would be worse than the bug. `api/client.ts`
+        # refreshes on 401 and ends the session when that fails, so a revoked
+        # *GitHub* token would log the user out of *Liffy* — punishing a
+        # perfectly good session for a downstream credential. 403 says "your
+        # request was understood and the credential behind it will not do",
+        # which is exactly the case, and `normalizeApiError` passes the
+        # detail through unchanged so the reader gets GitHub's own sentence.
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except GitHubError as exc:
         # 502, not 500: Liffy is fine, GitHub refused. The message carries
         # through so "your token cannot write to that repository" reaches the

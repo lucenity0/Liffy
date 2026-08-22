@@ -1447,6 +1447,167 @@ def test_openai_json_schema_constrains_to_the_review_schema(
     assert {"summary", "verdict", "comments"} <= set(props)
 
 
+# ── #280: the schema strict mode will actually accept ────────────────────────
+
+
+def _objects(node, path="$"):
+    """Every object node in a schema, with a readable path to it."""
+    if isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from _objects(v, f"{path}[{i}]")
+        return
+    if not isinstance(node, dict):
+        return
+    if node.get("type") == "object" and "properties" in node:
+        yield path, node
+    for k, v in node.items():
+        yield from _objects(v, f"{path}.{k}")
+
+
+def _strict():
+    from app.llm.chain import strict_schema
+    from app.schemas.review import LLMReviewOutput
+
+    return strict_schema(LLMReviewOutput.model_json_schema())
+
+
+def test_strict_schema_requires_every_property() -> None:
+    """OpenAI's strict mode requires it, and Pydantic omits defaulted fields.
+
+    `changes`, `files`, `suggestion` and `confidence` all sat outside
+    `required`, so the endpoint would have rejected every review under
+    `openai_use_json_schema=true`. Walked recursively rather than checked on
+    the three models that exist today — the next nested model to be added is
+    the one that would silently reopen this.
+    """
+    for path, node in _objects(_strict()):
+        assert set(node["properties"]) == set(node["required"]), path
+
+
+def test_strict_schema_carries_no_default_keyword() -> None:
+    """The second half of the same bug.
+
+    `default` is not in strict mode's supported keyword set, and an
+    unsupported keyword is an error rather than something ignored — so fixing
+    `required` alone would still have failed the request. Pydantic writes one
+    for each of the four defaulted fields.
+    """
+    assert '"default"' not in json.dumps(_strict())
+
+
+def test_strict_schema_forbids_additional_properties_everywhere() -> None:
+    for path, node in _objects(_strict()):
+        assert node.get("additionalProperties") is False, path
+
+
+def test_strict_schema_keeps_an_optional_field_nullable() -> None:
+    """Required and optional are different questions.
+
+    `suggestion` has to be *listed* in `required` for strict mode, but a
+    review with no code to suggest still has to be expressible — which strict
+    mode spells as null being in the type, not as the key being absent.
+    """
+    suggestion = _strict()["$defs"]["LLMReviewComment"]["properties"]["suggestion"]
+    assert {"type": "null"} in suggestion["anyOf"]
+    assert {"type": "string"} in suggestion["anyOf"]
+
+
+# OpenAI's structured-output dialect. Not "JSON Schema minus a few things" —
+# a keyword outside this set is an error, not something quietly ignored.
+_STRICT_KEYWORDS = {
+    "type", "properties", "required", "additionalProperties", "items",
+    "anyOf", "enum", "$ref", "$defs", "description", "title", "const", "format",
+}
+
+
+def test_strict_schema_uses_no_unsupported_keyword() -> None:
+    """The guard for the defect nobody has written yet.
+
+    `default` was the one Pydantic emitted here, and stripping it is enough
+    today. But a `Field(max_length=...)` on any of these models would emit
+    `maxLength`, a `Field(gt=0)` would emit `exclusiveMinimum`, and either
+    would break this transport at the endpoint with nothing in the suite
+    noticing. Cheaper to assert the whole dialect than to remember the rule.
+    """
+    offenders = {}
+
+    def walk(node, path="$", in_map=False):
+        if isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{path}[{i}]")
+            return
+        if not isinstance(node, dict):
+            return
+        for k, v in node.items():
+            # Inside `properties` / `$defs` the keys are *names*, not keywords.
+            if not in_map and k not in _STRICT_KEYWORDS:
+                offenders.setdefault(k, []).append(path)
+            walk(v, f"{path}.{k}", in_map=k in ("properties", "$defs"))
+
+    walk(_strict())
+    assert offenders == {}, offenders
+
+
+def test_the_ordinary_schema_is_untouched() -> None:
+    """The transform is for one opt-in transport and must not leak.
+
+    `_OUTPUT_SCHEMA` in the prompt renders from `model_json_schema()`, and the
+    other three providers validate against the model itself. If the defaults
+    were dropped to satisfy strict mode, every one of them would start
+    demanding fields whose whole purpose is to be optional.
+    """
+    from app.schemas.review import LLMReviewOutput
+
+    plain = LLMReviewOutput.model_json_schema()
+    assert set(plain["required"]) == {"summary", "verdict", "comments"}
+    comment = plain["$defs"]["LLMReviewComment"]
+    assert "suggestion" not in comment["required"]
+    assert "confidence" not in comment["required"]
+
+
+def test_the_defaults_still_work_on_the_model() -> None:
+    """The point of not touching the models."""
+    from app.schemas.review import LLMReviewOutput
+
+    parsed = LLMReviewOutput.model_validate({
+        "summary": "s",
+        "verdict": "comment",
+        "comments": [{
+            "file": "a.py", "line_start": 1, "line_end": 1,
+            "category": "logic_error", "severity": "warning", "comment": "c",
+            "failure_scenario": "With n=0 the loop never runs.",
+        }],
+    })
+    assert parsed.changes == [] and parsed.files == []
+    assert parsed.comments[0].suggestion is None
+    assert parsed.comments[0].confidence.value == "confirmed"
+
+
+def test_the_strict_variant_is_what_reaches_the_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wiring, not just the transform.
+
+    A correct `strict_schema` that nothing calls fixes nothing.
+    """
+    from app.llm import chain
+
+    captured = {}
+
+    class _FakeChat:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(settings, "openai_use_json_schema", True)
+    monkeypatch.setitem(__import__("sys").modules, "langchain_openai",
+                        type("m", (), {"ChatOpenAI": _FakeChat}))
+    chain.OpenAIReviewLLM()
+
+    sent = captured["model_kwargs"]["response_format"]["json_schema"]["schema"]
+    assert set(sent["properties"]) == set(sent["required"])
+    assert '"default"' not in json.dumps(sent)
+
+
 # ── What a failed run is allowed to report ───────────────────────────────────
 #
 # A real failure surfaced as `Claude Code exited 1: {"type":"system",

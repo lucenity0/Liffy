@@ -111,6 +111,57 @@ class ReviewLLM(Protocol):
     def complete(self, system: str, user: str) -> LLMResponse: ...
 
 
+def strict_schema(schema: dict) -> dict:
+    """The same schema, shaped for OpenAI's strict structured-output mode.
+
+    Strict mode is not "the schema, validated harder" — it is a narrower
+    dialect, and a schema Pydantic emits happily is rejected by it on two
+    counts:
+
+    **Every property must appear in ``required``.** Pydantic omits any field
+    with a default, so ``changes``, ``files``, ``suggestion`` and ``confidence``
+    all sat outside it. Optionality is expressed by allowing ``null`` in the
+    *type*, not by leaving a key out of the list.
+
+    **``default`` is not a supported keyword.** Pydantic writes one for each of
+    those same four fields. An unsupported keyword is an error rather than
+    something ignored, so this half would have failed the request even after
+    the first was fixed.
+
+    **This transforms the wire format and never the models.** The defaults are
+    load-bearing everywhere else: a response in an older output shape still
+    validates, which is what keeps the retry budget for ``failure_scenario`` —
+    the field that genuinely must be there — rather than spending it on
+    presentation. Dropping them to satisfy one opt-in transport would break the
+    other three providers to fix the one nobody has enabled.
+
+    The prompt is unaffected: ``_OUTPUT_SCHEMA`` renders from
+    ``model_json_schema()``, so the model still reads a schema whose
+    ``required`` tells it the truth about what Liffy will accept.
+    """
+
+    def walk(node):
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        if not isinstance(node, dict):
+            return node
+
+        out = {k: walk(v) for k, v in node.items() if k != "default"}
+
+        if out.get("type") == "object" and "properties" in out:
+            # The schema's own order, not sorted: it is what the model reads
+            # top to bottom, and `file` before `line_start` before `comment` is
+            # the order those fields were written in for a reason.
+            out["required"] = list(out["properties"])
+            # Already true of every model here (`extra="forbid"`), and strict
+            # mode requires it — set rather than assumed, so a model added later
+            # without it fails at this boundary instead of at the endpoint.
+            out["additionalProperties"] = False
+        return out
+
+    return walk(schema)
+
+
 class OpenAIReviewLLM:
     """LangChain ChatOpenAI transport. Constructed lazily so tests never need a key."""
 
@@ -137,7 +188,7 @@ class OpenAIReviewLLM:
                 "json_schema": {
                     "name": "review",
                     "strict": True,
-                    "schema": LLMReviewOutput.model_json_schema(),
+                    "schema": strict_schema(LLMReviewOutput.model_json_schema()),
                 },
             }
         else:

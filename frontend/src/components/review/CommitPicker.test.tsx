@@ -10,7 +10,7 @@ const PR_ID = "cccccccc-0000-0000-0000-000000000001";
 
 async function openPicker() {
   renderWithProviders(<CommitPicker prId={PR_ID} />);
-  await userEvent.click(screen.getByRole("button", { name: "Fetch new commits" }));
+  await userEvent.click(screen.getByRole("button", { name: "Review new commits" }));
   return screen.findByRole("list", { name: "Commits" });
 }
 
@@ -29,14 +29,17 @@ describe("CommitPicker", () => {
     // A GitHub call per review page opened, for a feature most visits do not
     // use — the button is the request.
     expect(called).toBe(false);
-    expect(screen.getByRole("button", { name: "Fetch new commits" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review new commits" })).toBeInTheDocument();
   });
 
-  it("keeps already-reviewed commits visible rather than hiding them", async () => {
+  it("lists only unreviewed commits", async () => {
+    // The fixture has 4 commits, 2 of them already reviewed. Showing all four
+    // under a header reading COMMITS (2) invited ticking rows that were not
+    // actionable — and the control that ignores those ticks ("Re-review all")
+    // sits directly above the panel.
     const list = await openPicker();
-
-    expect(within(list).getAllByRole("listitem")).toHaveLength(4);
-    expect(within(list).getAllByText("reviewed")).toHaveLength(2);
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).queryByText("reviewed")).toBeNull();
   });
 
   it("counts only the new commits in the header", async () => {
@@ -91,7 +94,7 @@ describe("CommitPicker", () => {
     );
 
     renderWithProviders(<CommitPicker prId={PR_ID} />);
-    await userEvent.click(screen.getByRole("button", { name: "Fetch new commits" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review new commits" }));
 
     // Not the shared 502 copy, which says "couldn't find that repository" —
     // nonsense here, and it drops what the server actually said.
@@ -108,7 +111,7 @@ describe("CommitPicker — layout", () => {
 
     // The review page wraps this in a `flex flex-col`, whose default
     // `align-items: stretch` pulled the collapsed button the full width.
-    expect(screen.getByRole("button", { name: "Fetch new commits" })).toHaveClass(
+    expect(screen.getByRole("button", { name: "Review new commits" })).toHaveClass(
       "w-fit",
     );
   });

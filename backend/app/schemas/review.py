@@ -3,7 +3,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+import logging
+
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 # The four strings ``reviews.status`` actually holds, spelled once.
@@ -13,6 +15,57 @@ from pydantic import BaseModel, ConfigDict
 # Named here rather than retyped at each filter so a UI label can never quietly
 # become a fifth status that matches no row.
 ReviewStatus = Literal["pending", "processing", "completed", "failed"]
+
+
+logger = logging.getLogger(__name__)
+
+
+class _LLMOutput(BaseModel):
+    """Base for every shape the model is asked to return.
+
+    **Unknown keys are dropped, not refused.** This was ``extra="forbid"`` on
+    each subclass, and the cost showed up as a review that burned its whole
+    retry budget and produced nothing: the model emitted
+    ``failure_scenario_confidence_note: null`` — a field that does not exist,
+    plainly a mashup of two that do — and ``forbid`` threw away the entire
+    response over it. Three attempts, three inventions, one failed review, and
+    on a metered provider that is real money spent for nothing.
+
+    The rule this file already states, on ``LLMReviewComment.confidence``, is
+    that the retry budget is not spent arguing about a field that degrades
+    presentation rather than the review. ``forbid`` spent all of it on a null
+    key nobody needed. ``ignore`` keeps the budget for ``failure_scenario``,
+    the field that genuinely has to be there.
+
+    Not ``allow``: that renders ``additionalProperties: true``, which
+    ``llm.chain.strict_schema`` refuses because OpenAI's strict mode cannot
+    express it. ``ignore`` emits no ``additionalProperties`` at all, so the
+    strict transport still pins it to ``false`` — the model is still *told* not
+    to invent fields. This only decides what happens when it does anyway.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _name_what_is_dropped(cls, data):
+        """Log any invented key on the way to discarding it.
+
+        Silence is the price of ``ignore`` if nothing watches, and this is the
+        watch: a genuine drift — the model starting to send a field we ought to
+        be reading — becomes a log line rather than nothing at all.
+
+        Never raises. It runs during validation of output that has already cost
+        a model call, so a logging helper able to fail the parse would
+        reintroduce the exact failure this change exists to remove.
+        """
+        if isinstance(data, dict):
+            unknown = set(data) - set(cls.model_fields)
+            if unknown:
+                logger.warning(
+                    "llm.unknown_fields model=%s keys=%s", cls.__name__, sorted(unknown)
+                )
+        return data
 
 
 class ReviewVerdict(str, Enum):
@@ -58,9 +111,7 @@ class ReviewConfidence(str, Enum):
     plausible = "plausible"
 
 
-class LLMReviewComment(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class LLMReviewComment(_LLMOutput):
     file: str
     line_start: int
     line_end: int
@@ -110,17 +161,16 @@ class LLMReviewComment(BaseModel):
     """
 
 
-class LLMFileNote(BaseModel):
+class LLMFileNote(_LLMOutput):
     """One changed file, and what the change does to it."""
 
-    model_config = ConfigDict(extra="forbid")
 
     path: str
     description: str
 
 
-class LLMReviewOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class LLMReviewOutput(_LLMOutput):
+
 
     summary: str
     """Prose. Two or three sentences, and the *only* part shown in the list.

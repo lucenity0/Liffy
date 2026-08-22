@@ -224,6 +224,12 @@ def run_review(
     # table is worse than no duration at all.
     started = time.monotonic()
 
+    # Set once the diff has been narrowed; None until then, so a failure that
+    # happens earlier records no scope rather than a misleading zero.
+    scoped_files: int | None = None
+    redacted_files: list[str] = []
+    file_diffs: list = []
+
     def elapsed_ms() -> int:
         return int((time.monotonic() - started) * 1000)
 
@@ -309,6 +315,17 @@ def run_review(
         # than a filter at each `parse_diff` — there are two, and the second is
         # buried inside `_diffs_to_review`.
         review_diffs, redacted_files = redact_secret_files(review_diffs)
+
+        # Recorded here rather than only on the success path.
+        #
+        # `scope` used to be built inside the completion block, so a review that
+        # narrowed to eight files and then failed wrote no scope at all — and
+        # both the UI and the database then fell back to counting `raw_diff`,
+        # which is deliberately always the *whole* pull request. A correctly
+        # narrowed 8-file review reported itself as 46 files, which reads as
+        # "your commit selection was ignored" about a selection that worked.
+        # Failures are exactly when knowing what was covered matters most.
+        scoped_files = len(review_diffs)
         if redacted_files:
             logger.warning(
                 "review.redacted_secret_files pr=%s/%s#%s files=%s",
@@ -505,6 +522,18 @@ def run_review(
         attempted = getattr(sys.exc_info()[1], "raw_attempts", None)
         review.raw_attempts = attempted if attempted is not None else result_attempts
         review.dropped_comments = result_dropped
+        # What it was looking at when it died. Same shape as the success path's
+        # `scope`, so the UI needs no second branch to read it.
+        if scoped_files is not None:
+            failed_scope: dict = {
+                "files_reviewed": scoped_files,
+                "files_in_diff": len(file_diffs),
+            }
+            if commit_shas:
+                failed_scope["commits"] = list(commit_shas)
+            if redacted_files:
+                failed_scope["redacted_files"] = redacted_files
+            review.summary_detail = {"scope": failed_scope}
         # Why it failed, where somebody will actually see it.
         #
         # There is no dedicated column and adding one is a migration; `summary`

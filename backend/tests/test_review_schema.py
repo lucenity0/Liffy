@@ -1,7 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.review import LLMReviewOutput, ReviewCommentOut, ReviewConfidence
+from app.schemas.review import (
+    LLMReviewComment,
+    LLMReviewOutput,
+    ReviewCommentOut,
+    ReviewConfidence,
+)
 
 
 def test_review_schema_accepts_valid_payload() -> None:
@@ -191,3 +196,57 @@ def test_comment_out_carries_both_columns_when_set() -> None:
     )
     assert parsed.confidence == "plausible"
     assert parsed.failure_scenario == "With an empty list, the loop reads index -1."
+
+
+# ── an invented field must not discard the review ─────────────────────────────
+
+
+def test_a_hallucinated_field_is_dropped_not_fatal(caplog) -> None:
+    """The failure that cost a real review its entire retry budget.
+
+    The model emitted `failure_scenario_confidence_note: null` — a field that
+    does not exist, plainly a mashup of two that do — and `extra="forbid"` threw
+    away the whole response. Three attempts, three inventions, nothing produced,
+    and on a metered provider that is money spent for nothing.
+    """
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        comment = LLMReviewComment.model_validate({
+            "file": "a.py", "line_start": 1, "line_end": 1,
+            "category": "logic_error", "severity": "warning", "comment": "c",
+            "failure_scenario": "With n=0 the loop never runs.",
+            "failure_scenario_confidence_note": None,
+        })
+
+    assert comment.file == "a.py"
+    assert comment.failure_scenario.startswith("With n=0")
+    # Dropped, and *named* — silence is the price of `ignore` if nothing
+    # watches, so drift has to reach a log rather than nothing at all.
+    assert "failure_scenario_confidence_note" in caplog.text
+
+
+def test_a_missing_required_field_still_fails() -> None:
+    """`ignore` widens what is tolerated, not what is optional.
+
+    `failure_scenario` is the field the retry budget exists to protect, and
+    dropping unknown keys must not soften that.
+    """
+    with pytest.raises(ValidationError):
+        LLMReviewComment.model_validate({
+            "file": "a.py", "line_start": 1, "line_end": 1,
+            "category": "logic_error", "severity": "warning", "comment": "c",
+        })
+
+
+def test_strict_mode_still_forbids_extras_on_the_wire() -> None:
+    """`ignore` decides what happens when the model invents a field anyway.
+
+    It must not relax what the model is *told*: `strict_schema` still pins
+    `additionalProperties: false`, so the constrained transport is unchanged.
+    """
+    from app.llm.chain import strict_schema
+
+    schema = strict_schema(LLMReviewOutput.model_json_schema())
+    assert schema["additionalProperties"] is False
+    assert schema["$defs"]["LLMReviewComment"]["additionalProperties"] is False

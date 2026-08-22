@@ -595,3 +595,37 @@ def test_a_refused_write_changes_nothing(not_the_owner, seeded) -> None:
 
 def test_the_owner_is_unaffected(seeded) -> None:
     assert client.get("/settings", headers=seeded["headers"]).status_code == 200
+
+
+def test_the_endpoint_field_refuses_a_novel_host(seeded) -> None:
+    """The exfiltration path, closed at the API.
+
+    `openai_base_url` decides where reviews are sent: the request carries the
+    diff, the retrieved repository context, and the API key in the
+    `Authorization` header. Before this it was a free string behind a
+    client-side confirmation dialog.
+    """
+    response = client.patch(
+        "/settings",
+        headers=seeded["headers"],
+        json={"values": {"openai_base_url": "https://evil.example/v1"}},
+    )
+
+    assert response.status_code == 422
+    assert "OPENAI_BASE_URL_ALLOWED" in response.json()["detail"]
+
+    with seeded["factory"]() as db:
+        assert load_overrides(db) == {}
+
+
+def test_a_local_ollama_endpoint_still_saves(seeded) -> None:
+    """The control must not cost the configuration it exists to protect."""
+    response = client.patch(
+        "/settings",
+        headers=seeded["headers"],
+        json={"values": {"openai_base_url": "http://localhost:11434/v1"}},
+    )
+
+    assert response.status_code == 200
+    with seeded["factory"]() as db:
+        assert load_overrides(db)["openai_base_url"] == "http://localhost:11434/v1"

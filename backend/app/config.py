@@ -11,6 +11,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 48 bytes clears the 32-byte RFC 7518 minimum for HS256.
 DEV_JWT_SECRET = "dev-only-insecure-secret-change-me-before-deploy"
 
+# Hosts an OpenAI-compatible endpoint may live on.
+#
+# Exactly the destinations `.env.example` and the field's own `suggestions`
+# already document — a local Ollama, OpenAI itself, and Gemini's compatibility
+# endpoint. The point is not that these three are trustworthy in the abstract;
+# it is that a *novel* host is a decision somebody should have to make on the
+# box rather than through a form, because the request carries the diff, the
+# retrieved repository context and the API key in one envelope.
+_BUILTIN_LLM_HOSTS: frozenset[str] = frozenset(
+    {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        # Compose's route from a container back to the host's Ollama.
+        "host.docker.internal",
+        "api.openai.com",
+        "generativelanguage.googleapis.com",
+    }
+)
+
+
 class Settings(BaseSettings):
     # Database
     database_url: str = Field(default="postgresql://localhost/liffy")
@@ -73,6 +94,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(default="")
     openai_api_key: str = Field(default="")
     openai_base_url: str = Field(default="")
+    # Extra hosts the endpoint field will accept, comma-separated.
+    #
+    # **Deliberately not in `EDITABLE_SETTINGS`.** An allowlist the settings
+    # page can widen is not an allowlist — the write that wants to reach a new
+    # host would simply permit it first. This one is `.env`-only, so widening
+    # it takes filesystem access to the box.
+    openai_base_url_allowed: str = Field(default="")
     # Per-provider, deliberately: the two namespaces share no model names, so a
     # single LLM_MODEL would silently send e.g. "gemini-2.5-flash" to Anthropic
     # after a provider switch and fail as an unhelpful 404 with a valid key.
@@ -176,6 +204,15 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
+    def llm_host_allowlist(self) -> frozenset[str]:
+        """Hosts `openai_base_url` may point at: the built-ins plus `.env`'s."""
+        return _BUILTIN_LLM_HOSTS | {
+            host.strip().lower()
+            for host in self.openai_base_url_allowed.split(",")
+            if host.strip()
+        }
+
+    @property
     def allowed_github_login_list(self) -> list[str]:
         """The allowlist, lowercased.
 
@@ -241,6 +278,33 @@ class SettingError(ValueError):
     would have been acceptable rather than only that something was wrong."""
 
 
+def _check_host_allowed(value: str) -> None:
+    """Raise unless ``value`` is a URL pointing at an allowlisted host.
+
+    Called from ``SettingSpec.parse`` and nowhere else, which is what makes it
+    total: ``parse`` is the only path from stored text to a live value, so a
+    row hand-written into the ``settings`` table with psql is re-checked on the
+    next ``load_overrides`` and dropped. A validator living in the API layer
+    would have covered the ``PATCH`` and missed the row.
+
+    The host is taken from a parsed URL rather than matched as a substring.
+    ``https://api.openai.com.evil.example/v1`` contains an allowlisted name and
+    is not an allowlisted host, and ``https://evil.example/?x=localhost``
+    contains one too — only the parser tells them apart.
+    """
+    parsed = urlsplit(value)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise SettingError(
+            f"Expected a URL like https://api.openai.com/v1, got {value!r}."
+        )
+    if parsed.hostname.lower() not in settings.llm_host_allowlist:
+        raise SettingError(
+            f"{parsed.hostname} is not an allowed endpoint. Reviews send your "
+            f"code to whatever this points at, so a new host has to be added "
+            f"to OPENAI_BASE_URL_ALLOWED in backend/.env."
+        )
+
+
 @dataclass(frozen=True)
 class SettingSpec:
     """How one editable setting is described, parsed and validated.
@@ -272,6 +336,13 @@ class SettingSpec:
     allow_empty: bool = False
     minimum: int | None = None
     maximum: int | None = None
+    # Restrict a string setting to an allowlist of hosts. Empty (the default)
+    # means unrestricted, so no other setting changes behaviour.
+    #
+    # A flag rather than the host set itself: the set is read from `settings`
+    # at parse time so `.env` can extend it, and freezing it into this spec at
+    # import would make `OPENAI_BASE_URL_ALLOWED` silently do nothing.
+    host_allowlisted: bool = False
 
     def parse(self, raw: str) -> Any:
         if self.kind == "bool":
@@ -301,6 +372,8 @@ class SettingSpec:
         text = raw.strip()
         if not text and not self.allow_empty:
             raise SettingError("Cannot be empty.")
+        if text and self.host_allowlisted:
+            _check_host_allowed(text)
         return text
 
     def serialize(self, value: Any) -> str:
@@ -371,6 +444,10 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
         kind="str",
         applies_to=("openai",),
         allow_empty=True,
+        # The one field on this page that decides where your source code goes.
+        # `CONFIRM_ON_ENABLE` used to be the only thing standing in front of it,
+        # and a confirmation dialog is a client-side courtesy, not a control.
+        host_allowlisted=True,
         suggestions=(
             "http://localhost:11434/v1",
             "https://generativelanguage.googleapis.com/v1beta/openai/",

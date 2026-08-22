@@ -515,9 +515,6 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
     ),
 }
 
-# Confirmed in the UI before they take a non-default value, because each reaches
-# outside Liffy: one writes to somebody's pull request, one can block their
-# merge, and one decides which company receives the code being reviewed.
 # Values of `github_webhook_secret` that mean "nobody set this".
 #
 # `"change-me"` was the field's default until #298 and is published in this
@@ -526,6 +523,9 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
 UNSET_WEBHOOK_SECRETS: frozenset[str] = frozenset({"", "change-me"})
 
 
+# Confirmed in the UI before they take a non-default value, because each reaches
+# outside Liffy: one writes to somebody's pull request, one can block their
+# merge, and one decides which company receives the code being reviewed.
 CONFIRM_ON_ENABLE: frozenset[str] = frozenset(
     {"post_reviews_to_github", "github_review_event_mode", "openai_base_url"}
 )
@@ -776,6 +776,62 @@ def apply_overrides(values: dict[str, Any]) -> None:
     """
     global _overrides
     _overrides = dict(values)
+
+
+# Stored overrides that were *refused* on load, and why.
+#
+# Dropping an invalid row is right — one bad row must not stop the API booting
+# — but for `openai_base_url` "dropped" is not a safe resting state. The field
+# falls back to `.env`, which is usually empty, and both consumers spell that
+# `base_url=settings.openai_base_url or None`, which is the OpenAI SDK's cue to
+# use `api.openai.com`. So an install whose self-hosted endpoint stopped being
+# allowlisted would have silently started sending diffs, retrieved source and
+# its API key to OpenAI — a *more* external destination than the one it was
+# refused for. A refusal must never degrade toward the thing it is refusing.
+#
+# Recorded here so `get_llm` and `get_embedding_provider` can fail loudly
+# instead, naming the row and what to do about it.
+_rejected: dict[str, str] = {}
+
+
+def record_rejected(key: str, reason: str) -> None:
+    _rejected[key] = reason
+
+
+def clear_rejected() -> None:
+    _rejected.clear()
+
+
+def rejected_override(key: str) -> str | None:
+    """Why a stored override for ``key`` was refused on the last load."""
+    return _rejected.get(key)
+
+
+def refuse_if_endpoint_rejected() -> None:
+    """Fail loudly when the stored review endpoint was refused on load.
+
+    Lives here rather than beside either caller because both the review
+    transport and the embedding provider need it, and `llm.embeddings` importing
+    `llm.chain` closes an import cycle through `rag_service`.
+
+    Without this the refusal degrades in the worst possible direction. A
+    rejected ``openai_base_url`` row is dropped, the field falls back to
+    ``.env`` (usually empty), and ``base_url=settings.openai_base_url or None``
+    is the OpenAI SDK's cue to use ``api.openai.com`` — so an install whose
+    self-hosted endpoint stopped being allowlisted would quietly begin sending
+    its diffs, its retrieved private source and its API key to OpenAI instead.
+    That is a *more* external destination than the one it was refused for,
+    reached without anyone choosing it.
+    """
+    reason = rejected_override("openai_base_url")
+    if reason is None:
+        return
+    raise RuntimeError(
+        f"The saved review endpoint is no longer permitted: {reason} "
+        f"Reviews are stopped rather than silently sent to OpenAI instead. "
+        f"Set OPENAI_BASE_URL_ALLOWED in backend/.env, or choose a different "
+        f"endpoint in Settings."
+    )
 
 
 def active_overrides() -> dict[str, Any]:

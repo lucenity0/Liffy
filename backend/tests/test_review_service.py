@@ -1559,3 +1559,35 @@ def test_an_ordinary_review_records_no_redaction(db: Session) -> None:
 
     scope = (review.summary_detail or {}).get("scope") or {}
     assert "redacted_files" not in scope
+
+
+def test_a_diff_of_nothing_but_secrets_does_not_call_the_model(db: Session) -> None:
+    """`redact_secret_files` can empty the list entirely.
+
+    Calling the model with it spends a review's worth of tokens asking about no
+    code, and produces a body reading "Liffy read 0 changed files" beside the
+    redaction notice — which looks like a bug rather than the correct outcome.
+
+    `FakeLLM([])` is the assertion: it raises IndexError on any call, so this
+    passes only if nothing reached the model.
+    """
+    only_secrets = """\
+diff --git a/.env b/.env
+--- a/.env
++++ b/.env
+@@ -1,2 +1,3 @@
+ DEBUG=True
++AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY
+"""
+    review = _run_diff(db, FakeLLM([]), only_secrets)
+
+    assert review.status == "completed"
+    assert "holds credentials" in review.summary or "credentials" in review.summary
+    # Not called, so not recorded. NULL rather than 0: "no model ran" and "a
+    # model ran and cost nothing" are different claims, and the analytics
+    # tables average this column.
+    assert review.tokens_used is None
+    assert review.model_used is None
+    scope = (review.summary_detail or {}).get("scope") or {}
+    assert scope["files_reviewed"] == 0
+    assert scope["redacted_files"] == [".env"]

@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -126,11 +127,26 @@ def github_callback(
         return _hand_back_to_frontend(error="not_authorised")
 
     user = auth_service.upsert_user(db, gh_user, access_token=github_token)
-    # After the upsert, because an unclaimed instance has nobody to make owner
-    # until the row exists. Idempotent, so returning logins pay one query.
-    auth_service.claim_ownership(db, user)
-    pair = _issue_pair(db, user)
-    db.commit()
+    try:
+        # After the upsert, because an unclaimed instance has nobody to make
+        # owner until the row exists. Idempotent, so returning logins pay one
+        # query.
+        auth_service.claim_ownership(db, user)
+        pair = _issue_pair(db, user)
+        db.commit()
+    except IntegrityError:
+        # The race `claim_ownership` documents, arriving. Two simultaneous first
+        # logins both see an unowned instance and both try to claim it; the
+        # partial unique index fails the loser, which is the point — but an
+        # uncaught IntegrityError is a raw 500 in a handler reached by a
+        # top-level browser navigation, so the loser would get a stack trace
+        # rendered in their address bar instead of a page.
+        #
+        # Handed back as `not_authorised` because that is what it now is: the
+        # instance has an owner and it is not them. Trying again is the correct
+        # next step if they were meant to be allowlisted.
+        db.rollback()
+        return _hand_back_to_frontend(error="not_authorised")
 
     return _hand_back_to_frontend(
         access_token=pair.access_token,

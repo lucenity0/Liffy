@@ -80,10 +80,11 @@ def require_owner(user: User = Depends(get_current_user)) -> User:
     if not user.is_owner:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Only the account that set up this Liffy instance can read or "
-                "change its settings."
-            ),
+            # Generic, because this guards `help/report` as well as the four
+            # settings routes — and `ReportProblem.tsx` renders the detail
+            # inline, so a settings-specific sentence appeared under a bug
+            # report form on a page the reader was never on.
+            detail="Only the account that set up this Liffy instance can do that.",
         )
     return user
 

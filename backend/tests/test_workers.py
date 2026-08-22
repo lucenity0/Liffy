@@ -446,3 +446,44 @@ def test_a_review_for_an_owner_with_no_token_is_named_not_vanished(monkeypatch) 
     result = review_worker.review_pr_task("octo", "demo", 7)
 
     assert result == {"status": "ignored", "reason": "owner has no GitHub token"}
+
+
+def test_an_index_for_an_owner_with_no_token_is_named_not_a_traceback(monkeypatch) -> None:
+    """The call site parallel to the one in `review_worker`.
+
+    `GitHubClient` no longer falls back to the instance PAT, so an owner row
+    with a null token raises here. Without a named guard the outer
+    `except Exception` clears `indexing_started_at` and re-raises, leaving a
+    traceback in the worker log and a repository that just looks un-indexed.
+    """
+    import uuid as _uuid
+
+    from app.workers import index_worker
+
+    repo_id = _uuid.uuid4()
+
+    class _Repo:
+        id = repo_id
+        user_id = _uuid.uuid4()
+        full_name = "octo/demo"
+        indexing_started_at = "in-flight"
+
+    class _Owner:
+        github_access_token = None
+
+    class _DB:
+        def get(self, model, _id):
+            return _Owner() if model.__name__ == "User" else _Repo()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(index_worker, "SessionLocal", lambda: _DB())
+
+    result = index_worker.index_repo_task(str(repo_id))
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "owner has no GitHub token"

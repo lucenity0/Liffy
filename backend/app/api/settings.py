@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_owner
 from app.config import (
     CONFIRM_ON_ENABLE,
+    UNSET_WEBHOOK_SECRETS,
     EDITABLE_SETTINGS,
     READ_ONLY_SETTINGS,
     SECRET_SETTINGS,
@@ -46,6 +47,21 @@ def _suggestions_for(key: str, spec) -> tuple[str, ...]:
     if key != "codex_model":
         return spec.suggestions
     return discover_codex_models(settings.codex_home)
+
+
+def _secret_is_set(key: str) -> bool:
+    """Whether a credential is actually usable, not merely non-empty.
+
+    `bool(value)` was the whole test, and it reported `github_webhook_secret`
+    as "Configured" for the literal string `"change-me"` — the published former
+    default, which `api/webhook.py` refuses to serve on. The page saying
+    Configured while every delivery 503s is the same "looks set but isn't"
+    failure that changing the default was meant to end, left half-closed.
+    """
+    value = getattr(settings, key)
+    if key == "github_webhook_secret":
+        return value not in UNSET_WEBHOOK_SECRETS
+    return bool(value)
 
 
 def _describe(db: Session) -> SettingsOut:
@@ -112,7 +128,7 @@ def _describe(db: Session) -> SettingsOut:
             applies_to=list(spec.applies_to),
             connectable=spec.connectable,
             connect_command=spec.connect_command,
-            is_set=bool(getattr(settings, key)),
+            is_set=_secret_is_set(key),
             # Same three states as the editable settings, and the same rule:
             # a stored row is "override", anything else that is set came from
             # the environment. Only "override" is ours to delete.
@@ -120,7 +136,7 @@ def _describe(db: Session) -> SettingsOut:
                 "override"
                 if key in stored
                 else "env"
-                if getattr(settings, key)
+                if _secret_is_set(key)
                 else "default"
             ),
         )

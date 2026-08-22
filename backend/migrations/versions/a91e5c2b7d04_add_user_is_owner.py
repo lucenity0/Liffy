@@ -15,6 +15,12 @@ column with a `false` default leaves nobody as owner, and the next login by
 single-user install that is the person who set it up, and on any other it is
 the closest thing to a defensible answer without asking a question a migration
 cannot ask.
+
+**Existing multi-user installs lose sign-in on upgrade.** Every account other
+than the promoted one is refused at the OAuth callback from here on, unless it
+is listed in `ALLOWED_GITHUB_LOGINS`. That is the intent (ADR 007) rather than
+a side effect, but it happens silently at the next login rather than here — so
+if more than one person uses this instance, set that variable before upgrading.
 """
 from typing import Sequence, Union
 

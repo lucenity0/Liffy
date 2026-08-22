@@ -4,7 +4,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.config import EDITABLE_SETTINGS, SettingError, apply_overrides, settings
+from app.config import (
+    EDITABLE_SETTINGS,
+    SettingError,
+    apply_overrides,
+    refuse_if_endpoint_rejected,
+    rejected_override,
+    settings,
+)
 from app.database import Base
 from app.models.setting import Setting
 from app.services.settings_service import (
@@ -245,3 +252,61 @@ def test_subscription_token_is_secret_not_editable(db) -> None:
         update_settings(db, {"codex_home": "/tmp/evil"}, None)
 
     assert db.query(Setting).count() == 0
+
+
+# ── #298 review: a refusal must not degrade toward OpenAI ─────────────────────
+
+
+def test_a_rejected_endpoint_row_stops_reviews_rather_than_retargeting_them(
+    db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The upgrade path nobody would have noticed.
+
+    An install that connected a self-hosted endpoint through the settings page
+    has a stored row. When the host allowlist landed, `load_overrides` dropped
+    that row as invalid — and `openai_base_url` then falls back to `.env`,
+    which is empty, and both consumers spell that
+    `base_url=settings.openai_base_url or None`, which is the OpenAI SDK's cue
+    to use `api.openai.com`.
+
+    So refusing the endpoint would have *sent the diffs to OpenAI instead* —
+    a more external destination than the one that was refused, reached without
+    anyone choosing it. A refusal has to fail, not fall back.
+    """
+    db.add(Setting(key="openai_base_url", value="https://llm.internal.example/v1"))
+    db.commit()
+
+    resolved = refresh_overrides(db)
+
+    # Dropped, correctly — one bad row must not stop the API booting. What the
+    # field then reads is whatever `.env` says, which is not asserted here
+    # because it differs per machine; the point is that the *stored* endpoint
+    # is no longer in effect, and something else silently is.
+    assert "openai_base_url" not in resolved
+
+    # But recorded, so the transports refuse instead of silently using OpenAI.
+    assert rejected_override("openai_base_url") is not None
+    with pytest.raises(RuntimeError, match="no longer permitted"):
+        refuse_if_endpoint_rejected()
+
+
+def test_correcting_the_row_clears_the_refusal(
+    db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The registry is rebuilt per load, not accumulated.
+
+    A stale entry would keep the transports refusing after the operator fixed
+    the very thing being complained about — a security control that cannot be
+    satisfied is one people work around.
+    """
+    db.add(Setting(key="openai_base_url", value="https://llm.internal.example/v1"))
+    db.commit()
+    refresh_overrides(db)
+    assert rejected_override("openai_base_url") is not None
+
+    monkeypatch.setattr(settings, "openai_base_url_allowed", "llm.internal.example")
+    refresh_overrides(db)
+
+    assert rejected_override("openai_base_url") is None
+    refuse_if_endpoint_rejected()  # does not raise
+    assert settings.openai_base_url == "https://llm.internal.example/v1"

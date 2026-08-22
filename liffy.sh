@@ -202,12 +202,23 @@ ensure_env_file() {
         sed -i '' "s/GITHUB_WEBHOOK_SECRET=.*/GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET/" backend/.env 2>/dev/null || \
             sed -i "s/GITHUB_WEBHOOK_SECRET=.*/GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET/" backend/.env
 
-        success "Created backend/.env with generated JWT and webhook secrets"
-        # Printed, unlike the JWT secret, because this one has a second home:
-        # GitHub's webhook form needs the identical value or every delivery
-        # fails the signature check.
-        echo "    Webhook secret (paste into GitHub → Settings → Webhooks):"
-        echo "      $WEBHOOK_SECRET"
+        # Guarded, because the `|| echo ""` fallback above is silent: without
+        # python3 the secret is empty, and reporting "generated" while writing
+        # nothing would leave an install that 503s every webhook delivery with
+        # the setup script having said it worked.
+        if [ -n "$WEBHOOK_SECRET" ]; then
+            success "Created backend/.env with generated JWT and webhook secrets"
+            # Printed, unlike the JWT secret, because this one has a second
+            # home: GitHub's webhook form needs the identical value or every
+            # delivery fails the signature check. It does mean a live secret
+            # lands in terminal scrollback — acceptable for a value you are
+            # about to paste elsewhere, and it is rotatable by rerunning.
+            echo "    Webhook secret (paste into GitHub → Settings → Webhooks):"
+            echo "      $WEBHOOK_SECRET"
+        else
+            success "Created backend/.env with a generated JWT secret"
+            warn "Could not generate GITHUB_WEBHOOK_SECRET (no python3). Webhooks will 503 until you set one by hand."
+        fi
         warn "Open backend/.env and fill in GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET / an LLM key when you're ready for real runs"
     else
         success "backend/.env already exists — skipping"

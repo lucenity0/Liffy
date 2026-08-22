@@ -471,3 +471,39 @@ def test_the_owner_survives_a_github_rename(
         owner = db.scalar(select(User).where(User.is_owner.is_(True)))
         assert owner.username == "octocat-new"
         assert db.scalar(select(User).where(User.github_id == 4242)) is owner
+
+
+def test_the_ownership_race_hands_back_a_page_not_a_stack_trace(
+    factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`claim_ownership` documents the index settling two simultaneous first
+    logins. It does — with an `IntegrityError`.
+
+    Uncaught, that is a raw 500 in a handler only ever reached by a top-level
+    browser navigation, so the loser of the race would get a stack trace
+    rendered in their address bar. Simulated by claiming ownership behind the
+    handler's back, between its check and its write.
+    """
+    from sqlalchemy import update
+
+    _login_as(GH_USER, monkeypatch)
+
+    # A second account arrives while the instance still looks unowned to it.
+    monkeypatch.setattr(auth_service, "login_permitted", lambda db, gh: True)
+
+    real_claim = auth_service.claim_ownership
+
+    def racing_claim(db, user):
+        # Somebody else won between `login_permitted` and here.
+        db.execute(update(User).where(User.github_id == 4242).values(is_owner=True))
+        user.is_owner = True
+        return real_claim(db, user)
+
+    monkeypatch.setattr(auth_service, "claim_ownership", racing_claim)
+
+    fragment = _login_as(SECOND_GH_USER, monkeypatch)
+
+    assert fragment == {"error": "not_authorised"}
+    with factory() as db:
+        owners = db.scalars(select(User).where(User.is_owner.is_(True))).all()
+    assert len(owners) == 1

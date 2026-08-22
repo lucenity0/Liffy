@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from app.config import settings
+from app.config import refuse_if_endpoint_rejected, settings
 from app.llm.output_parser import LLMOutputError, parse_llm_output
 from app.llm.prompts import SYSTEM_PROMPT, build_review_prompt
 from app.schemas.review import LLMReviewOutput
@@ -196,6 +196,8 @@ class OpenAIReviewLLM:
     """LangChain ChatOpenAI transport. Constructed lazily so tests never need a key."""
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
+        refuse_if_endpoint_rejected()
+
         from langchain_openai import ChatOpenAI
 
         from app.schemas.review import LLMReviewOutput

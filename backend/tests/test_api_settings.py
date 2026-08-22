@@ -629,3 +629,26 @@ def test_a_local_ollama_endpoint_still_saves(seeded) -> None:
     assert response.status_code == 200
     with seeded["factory"]() as db:
         assert load_overrides(db)["openai_base_url"] == "http://localhost:11434/v1"
+
+
+def test_an_unset_webhook_secret_does_not_report_as_configured(
+    seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """"Configured" has to mean the webhook route will actually answer.
+
+    `bool(value)` was the whole test, so the published former default
+    `"change-me"` rendered as Configured while `api/webhook.py` 503s every
+    delivery — the same "looks set but isn't" failure that changing the default
+    was meant to end.
+    """
+    for value in ("", "change-me"):
+        monkeypatch.setattr(settings, "github_webhook_secret", value)
+        body = client.get("/settings", headers=seeded["headers"]).json()
+        row = next(s for s in body["secrets"] if s["key"] == "github_webhook_secret")
+        assert row["is_set"] is False, value
+        assert row["source"] == "default", value
+
+    monkeypatch.setattr(settings, "github_webhook_secret", "a-real-secret")
+    body = client.get("/settings", headers=seeded["headers"]).json()
+    row = next(s for s in body["secrets"] if s["key"] == "github_webhook_secret")
+    assert row["is_set"] is True

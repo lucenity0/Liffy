@@ -154,9 +154,17 @@ def _code_span(text: str) -> str:
     The delimiter is variable-length for the same reason `_fence` below is, and
     by the same CommonMark rule: a span opened with N backticks closes on the
     next run of exactly N, so N = longest_run + 1 cannot be closed from inside.
-    Backslash escaping is *not* an option here — CommonMark does not honour
-    backslash escapes within a code span, which is the trap this docstring
-    exists to keep the next reader out of.
+    Backslash escaping is *not* an option for the backticks — CommonMark does
+    not honour backslash escapes within a code span, which is the trap this
+    docstring exists to keep the next reader out of.
+
+    **The defang call is still load-bearing, and not for the reason it looks
+    like.** Inside an intact span nothing renders, so `![` would be inert and
+    the defanging only makes it *display* as `!\[`. What it covers is the one
+    way out that a longer delimiter cannot close: a code span may not contain a
+    blank line, so a path carrying one ends the span whatever it is delimited
+    with, and everything after that is ordinary markdown. Defanging is what
+    makes that escape hatch harmless. Do not delete it as redundant.
 
     A pad space when the content starts or ends with a backtick, because the
     renderer strips one leading and one trailing space from a span and would

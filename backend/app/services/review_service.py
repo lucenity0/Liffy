@@ -315,6 +315,44 @@ def run_review(
                 owner, repo_name, pr_number, redacted_files,
             )
 
+        # A pull request that touches nothing *but* credentials leaves an empty
+        # list here. Calling the model with it spends a review's worth of
+        # tokens asking about no code, and produces a body that says "Liffy
+        # read 0 changed files" next to the redaction notice — which reads as a
+        # bug rather than as the correct outcome. Short-circuited instead.
+        if redacted_files and not review_diffs:
+            review.summary = (
+                "Nothing to review: every changed file in this pull request "
+                "looks like it holds credentials, so none of it was sent to "
+                "the model."
+            )
+            review.verdict = "comment"
+            review.status = "completed"
+            # No model was called, so there is no model and no token spend to
+            # record. Left NULL rather than written as zero: "not called" and
+            # "called and cost nothing" are different claims, and the analytics
+            # tables average this column.
+            review.summary_detail = {
+                "scope": {
+                    "files_reviewed": 0,
+                    "files_in_diff": len(file_diffs),
+                    "redacted_files": redacted_files,
+                }
+            }
+            review.duration_ms = elapsed_ms()
+            completed = datetime.now(timezone.utc)
+            review.completed_at = completed
+            review.total_ms = _wall_clock_ms(received_at, completed)
+            db.commit()
+            # Still published, if posting is on. A pull request that got no
+            # review deserves to be told why — a silent non-review is the one
+            # outcome nobody can act on.
+            publish_review(
+                db, review, owner, repo_name, meta, file_diffs,
+                gh=gh, actor=owner_user,
+            )
+            return review
+
         # Retrieval follows what is being reviewed, not the whole pull request.
         # Embedding twenty unchanged files to review one changed line is the
         # same waste in a different currency.

@@ -73,6 +73,12 @@ holding.
 
 ## Consequences
 
+- **Everyone signs in again once, on upgrade.** The lockdown lands at the OAuth
+  callback, and refresh tokens rotate for 30 days without ever returning to it —
+  so "refused at the next login" was not a guarantee when there might never be a
+  next login. Migration `a91e5c2b7d04` revokes every live session, and
+  `session_permitted` re-asks the question on each rotation so the answer cannot
+  go stale mid-session.
 - A fresh clone still runs with no configuration. Whoever sets it up becomes
   the owner by using it, which is the property the old open behaviour was
   really protecting.

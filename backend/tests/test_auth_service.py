@@ -502,3 +502,69 @@ def test_user_out_does_not_expose_github_token() -> None:
     from app.schemas.auth import UserOut
 
     assert "github_access_token" not in UserOut.model_fields
+
+
+# ── #298 review: the door the lockdown did not cover ──────────────────────────
+
+
+def test_a_refused_account_cannot_refresh_its_way_around_the_lockdown(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`login_permitted` guards the callback, and that is not the only door.
+
+    Refresh tokens last 30 days and rotate on every use, so a session
+    established before the lockdown never returns to the handshake — it just
+    trades one token for the next. On an instance upgraded from open sign-up
+    that meant every stranger kept their repositories, their reviews and their
+    stored GitHub token indefinitely, while ADR 007 said they were refused.
+    """
+    from app.models.user import User
+
+    owner = User(github_id=1, username="owner", is_owner=True)
+    stranger = User(github_id=2, username="stranger")
+    db.add_all([owner, stranger])
+    db.flush()
+
+    raw = auth_service.issue_refresh_token(db, stranger)
+
+    with pytest.raises(AuthError, match="no longer permitted"):
+        auth_service.rotate_refresh_token(db, raw)
+
+    # The token is spent, not merely refused. Leaving it live would let the
+    # holder retry forever, and this is not a transient failure.
+    with pytest.raises(AuthError, match="already been used"):
+        auth_service.rotate_refresh_token(db, raw)
+
+
+def test_an_allowlisted_account_may_still_refresh(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate has to admit exactly who the callback would admit."""
+    from app.models.user import User
+
+    db.add_all([
+        User(github_id=1, username="owner", is_owner=True),
+        User(github_id=2, username="Collaborator"),
+    ])
+    db.flush()
+    guest = db.scalar(select(User).where(User.github_id == 2))
+    raw = auth_service.issue_refresh_token(db, guest)
+
+    # Case-insensitively, like every other allowlist comparison.
+    monkeypatch.setattr(settings, "allowed_github_logins", "collaborator")
+    user, replacement = auth_service.rotate_refresh_token(db, raw)
+
+    assert user.id == guest.id
+    assert replacement
+
+
+def test_the_owner_always_refreshes(db: Session) -> None:
+    from app.models.user import User
+
+    owner = User(github_id=1, username="owner", is_owner=True)
+    db.add(owner)
+    db.flush()
+    raw = auth_service.issue_refresh_token(db, owner)
+
+    user, replacement = auth_service.rotate_refresh_token(db, raw)
+    assert user.id == owner.id and replacement

@@ -176,6 +176,30 @@ def login_permitted(db: Session, gh_user: GitHubUser) -> bool:
     return gh_user.login.lower() in settings.allowed_github_login_list
 
 
+def session_permitted(db: Session, user: User) -> bool:
+    """Whether an *existing* account may still hold a session.
+
+    ``login_permitted`` guards the OAuth callback, and that is not the only
+    door. Refresh tokens live for 30 days and rotate on every use, so a session
+    established before the lockdown never has to complete another handshake —
+    it just keeps trading one token for the next. On an instance upgraded from
+    open sign-up, every stranger who had ever signed in would have kept full
+    access to their repositories, their reviews and their stored GitHub token
+    indefinitely, while ADR 007 claimed they were refused.
+
+    Takes a ``User`` row rather than a ``GitHubUser`` because the refresh path
+    has no handshake to read from, and matches the owner on the primary key for
+    the same reason ``login_permitted`` matches on ``github_id``: it is the
+    identifier that cannot drift.
+    """
+    current = owner(db)
+    if current is None:
+        return True
+    if current.id == user.id:
+        return True
+    return user.username.lower() in settings.allowed_github_login_list
+
+
 def claim_ownership(db: Session, user: User) -> None:
     """Make ``user`` the owner if nobody is. Idempotent, and safe to call always.
 
@@ -380,6 +404,15 @@ def rotate_refresh_token(db: Session, raw_token: str) -> tuple[User, str]:
     user = db.get(User, row.user_id)
     if user is None:
         raise AuthError("Refresh token belongs to a deleted user")
+
+    # Checked here rather than in the API layer because rotation is the only
+    # way a session outlives its access token, so this is the one place that
+    # has to ask. The token is spent either way: leaving it live would let the
+    # holder retry forever, and a refused refresh is not a transient failure.
+    if not session_permitted(db, user):
+        row.revoked_at = datetime.now(timezone.utc)
+        db.flush()
+        raise AuthError("This account is no longer permitted to sign in here")
 
     row.revoked_at = datetime.now(timezone.utc)
     replacement = issue_refresh_token(db, user)

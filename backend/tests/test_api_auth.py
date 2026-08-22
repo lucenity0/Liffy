@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -481,29 +482,50 @@ def test_the_ownership_race_hands_back_a_page_not_a_stack_trace(
 
     Uncaught, that is a raw 500 in a handler only ever reached by a top-level
     browser navigation, so the loser of the race would get a stack trace
-    rendered in their address bar. Simulated by claiming ownership behind the
-    handler's back, between its check and its write.
-    """
-    from sqlalchemy import update
+    rendered in their address bar.
 
+    The race is *inside* `claim_ownership`: its `owner(db)` check says nobody
+    owns the instance, somebody claims it before the `flush()` lands, and the
+    flush violates the partial unique index. Simulated by making that check
+    disagree with the database — which is precisely what a race is — rather
+    than by forcing an error at commit time, which is a different failure with
+    a different correct answer (`session_failed`, below).
+    """
     _login_as(GH_USER, monkeypatch)
 
     # A second account arrives while the instance still looks unowned to it.
     monkeypatch.setattr(auth_service, "login_permitted", lambda db, gh: True)
-
-    real_claim = auth_service.claim_ownership
-
-    def racing_claim(db, user):
-        # Somebody else won between `login_permitted` and here.
-        db.execute(update(User).where(User.github_id == 4242).values(is_owner=True))
-        user.is_owner = True
-        return real_claim(db, user)
-
-    monkeypatch.setattr(auth_service, "claim_ownership", racing_claim)
+    # ...and `claim_ownership`'s own check agrees, wrongly: the owner row from
+    # the first login is right there in the table.
+    monkeypatch.setattr(auth_service, "owner", lambda db: None)
 
     fragment = _login_as(SECOND_GH_USER, monkeypatch)
 
     assert fragment == {"error": "not_authorised"}
+    assert "access_token" not in fragment
     with factory() as db:
         owners = db.scalars(select(User).where(User.is_owner.is_(True))).all()
     assert len(owners) == 1
+    assert owners[0].github_id == 4242
+
+
+def test_a_write_conflict_is_not_reported_as_a_permission_refusal(
+    factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`not_authorised` renders as "your account isn't on the allowlist".
+
+    That is a permanent-sounding refusal, and it used to be what a *transient*
+    write conflict produced — the `try` wrapped `_issue_pair` and the commit as
+    well as the claim, so a duplicate `github_id` from two concurrent callbacks
+    for the same account told a legitimate user to give up. `session_failed`
+    says try again, which is both true and actionable.
+    """
+    _login_as(GH_USER, monkeypatch)
+
+    def boom(db, user):
+        raise IntegrityError("duplicate key", None, Exception())
+
+    monkeypatch.setattr(auth_service, "issue_refresh_token", boom)
+
+    fragment = _login_as(GH_USER, monkeypatch)
+    assert fragment == {"error": "session_failed"}

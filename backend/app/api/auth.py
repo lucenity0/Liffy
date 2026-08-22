@@ -131,9 +131,15 @@ def github_callback(
         # After the upsert, because an unclaimed instance has nobody to make
         # owner until the row exists. Idempotent, so returning logins pay one
         # query.
+        #
+        # **Only this call is inside the try.** It used to wrap `_issue_pair`
+        # and the commit as well, which meant any integrity violation while
+        # persisting the pair — or a duplicate `github_id` from two concurrent
+        # callbacks for the same account — was reported as `not_authorised`.
+        # That message reads as a permanent refusal ("your account isn't on the
+        # allowlist"), so a user hitting a transient write conflict had no
+        # reason to retry the one thing that would have worked.
         auth_service.claim_ownership(db, user)
-        pair = _issue_pair(db, user)
-        db.commit()
     except IntegrityError:
         # The race `claim_ownership` documents, arriving. Two simultaneous first
         # logins both see an unowned instance and both try to claim it; the
@@ -147,6 +153,17 @@ def github_callback(
         # next step if they were meant to be allowlisted.
         db.rollback()
         return _hand_back_to_frontend(error="not_authorised")
+
+    try:
+        pair = _issue_pair(db, user)
+        db.commit()
+    except IntegrityError:
+        # A genuine write conflict rather than a permission decision: two
+        # callbacks for the same brand-new account racing on `users.github_id`.
+        # `session_failed` already means "signed in, but something went wrong —
+        # try again", which is both true and actionable.
+        db.rollback()
+        return _hand_back_to_frontend(error="session_failed")
 
     return _hand_back_to_frontend(
         access_token=pair.access_token,

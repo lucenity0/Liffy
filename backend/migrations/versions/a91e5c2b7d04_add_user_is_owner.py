@@ -60,6 +60,24 @@ def upgrade() -> None:
         """
     )
 
+    # Every live session ends here, the owner's included.
+    #
+    # The lockdown lands at the OAuth callback, and a session that already
+    # exists never returns to it: refresh tokens last 30 days and rotate on
+    # every use, so a stranger who signed in under the old open sign-up would
+    # have kept trading one token for the next indefinitely. "Refused at the
+    # next login" is not a guarantee when there may never be a next login.
+    #
+    # All of them rather than a selective sweep, because this migration cannot
+    # read `ALLOWED_GITHUB_LOGINS` — it is application config, not schema — so
+    # it cannot tell who would still be permitted. Everyone signs in once more;
+    # the owner and the allowlisted succeed, and nobody else does. That is the
+    # intended end state, reached without the migration having to guess.
+    op.execute(
+        "UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP "
+        "WHERE revoked_at IS NULL"
+    )
+
     # Partial, so it constrains only the owner row. A plain unique index would
     # allow exactly one *non*-owner, which is the opposite of the intent.
     op.create_index(

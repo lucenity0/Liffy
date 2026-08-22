@@ -116,14 +116,65 @@ def test_short_signing_key_refuses_to_mint(user: User, monkeypatch: pytest.Monke
         auth_service.create_access_token(user)
 
 
-def test_default_secret_refused_outside_debug(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The development default is a public constant in this repository. Signing
-    # real tokens with it would let any reader of the source forge a session.
+def test_default_secret_refused_on_a_reachable_instance(
+    user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The development default is a public constant in this repository.
+
+    Reachability is read off `github_redirect_uri`, not off `DEBUG`. GitHub
+    sends the browser to that URI after the consent screen, so an instance
+    anybody else can sign in to has necessarily changed it away from localhost
+    — which makes it a fact rather than a self-declaration.
+    """
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
-    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(
+        settings,
+        "github_redirect_uri",
+        "https://liffy.example.com/auth/github/callback",
+    )
 
     with pytest.raises(AuthError, match="development default"):
         auth_service.create_access_token(user)
+
+
+def test_debug_no_longer_licenses_the_public_default(
+    user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression this whole commit exists for.
+
+    The condition used to be `and not settings.debug`, and `DEBUG` defaults to
+    True in `config.py` *and* in `.env.example`, and `docs/SETUP.md` says to
+    copy that file — so the documented deployment ran with the guard switched
+    off. `DEBUG=True` must no longer be enough to license the published key on
+    an instance that is actually reachable.
+    """
+    monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
+    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(
+        settings,
+        "github_redirect_uri",
+        "https://liffy.example.com/auth/github/callback",
+    )
+
+    with pytest.raises(AuthError, match="development default"):
+        auth_service.create_access_token(user)
+
+
+def test_debug_false_on_localhost_still_signs(
+    user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """And the mirror image, which is why `DEBUG` could not simply be flipped.
+
+    `DEBUG` also controls the `Secure` flag on the OAuth state cookie, so
+    `False` over plain HTTP breaks local sign-in — meaning "set DEBUG=False" was
+    never available as advice to a local user. The two questions are now
+    genuinely separate.
+    """
+    monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
+    monkeypatch.setattr(settings, "debug", False)
+
+    token, _ = auth_service.create_access_token(user)
+    assert auth_service.decode_access_token(token) == user.id
 
 
 def test_blank_secret_env_falls_back_to_dev_default() -> None:
@@ -135,8 +186,9 @@ def test_blank_secret_env_falls_back_to_dev_default() -> None:
     assert Settings(jwt_secret_key="").jwt_secret_key == DEV_JWT_SECRET
 
 
-def test_default_secret_allowed_in_debug(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A fresh clone must still run without any setup.
+def test_default_secret_allowed_on_localhost(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A fresh clone must still run without any setup — the whole reason the
+    # published constant exists. `github_redirect_uri` defaults to localhost.
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
     monkeypatch.setattr(settings, "debug", True)
 
@@ -155,7 +207,11 @@ def test_default_secret_refused_when_verifying(user: User, monkeypatch: pytest.M
     refuse the key too, or the broken-login state is also a bypass.
     """
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
-    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(
+        settings,
+        "github_redirect_uri",
+        "https://liffy.example.com/auth/github/callback",
+    )
 
     forged = jwt.encode(
         {
@@ -189,12 +245,18 @@ def test_check_signing_key_is_the_startup_gate(monkeypatch: pytest.MonkeyPatch) 
     """`main.lifespan` calls this so the instance refuses to boot, rather than
     answering a uniform 401 that reads like ordinary bad-token noise."""
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
-    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(
+        settings,
+        "github_redirect_uri",
+        "https://liffy.example.com/auth/github/callback",
+    )
 
     with pytest.raises(AuthError, match="development default"):
         auth_service.check_signing_key()
 
-    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(
+        settings, "github_redirect_uri", "http://localhost:8000/auth/github/callback"
+    )
     auth_service.check_signing_key()  # a fresh clone still boots
 
 

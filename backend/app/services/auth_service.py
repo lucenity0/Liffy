@@ -18,6 +18,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 import httpx
 import jwt
@@ -210,6 +211,32 @@ def upsert_user(db: Session, gh_user: GitHubUser, access_token: str | None = Non
 # ── Access tokens (JWT) ───────────────────────────────────────────────────────
 
 
+# Hostnames that mean "this instance is not reachable from anywhere else".
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _is_local_instance() -> bool:
+    """Whether this install is a developer's laptop rather than a deployment.
+
+    Decided on ``github_redirect_uri``, which is the one setting that *cannot*
+    be wrong on a real deployment: GitHub redirects the browser to it after the
+    consent screen, so an instance anybody else can sign in to has necessarily
+    changed it away from localhost. That makes it a fact about reachability
+    rather than a self-declaration.
+
+    Deliberately **not** ``settings.debug``, which is what this used to be and
+    is the reason the check below never fired. `DEBUG` also decides whether the
+    OAuth state cookie is marked `Secure`, so it has to stay `True` for local
+    HTTP sign-in to work at all — and `.env.example` therefore ships `True`,
+    and the documented setup is to copy that file. One flag serving as both
+    "cookies may be insecure" and "an insecure signing key is acceptable" meant
+    the safe value of the second was unreachable from the working value of the
+    first.
+    """
+    host = (urlsplit(settings.github_redirect_uri).hostname or "").lower()
+    return host in _LOOPBACK_HOSTS
+
+
 def _signing_key() -> str:
     """Return the HMAC key, refusing to use one that cannot be trusted.
 
@@ -221,11 +248,20 @@ def _signing_key() -> str:
     reject everything: it accepts anything an attacker signs with the value they
     just read in `config.py`.
 
-    Minting failing does not cover that. An instance that ran in debug long
-    enough to create users and was then switched to `DEBUG=False` without a real
-    key has both a populated `users` table and a published signing key, and a
-    forged token needs nothing else. Raising here fails every request closed
-    instead, which is the correct answer to a key nobody should trust.
+    Minting failing does not cover that. An instance that ran locally long
+    enough to create users and was then deployed without a real key has both a
+    populated `users` table and a published signing key, and a forged token
+    needs nothing else. Raising here fails every request closed instead, which
+    is the correct answer to a key nobody should trust.
+
+    **The condition took a second correction.** It was `and not settings.debug`,
+    which never fired in the one configuration that mattered: `DEBUG` defaults
+    to `True` in this file *and* in `.env.example`, and `docs/SETUP.md` tells
+    you to copy that file, so the documented deployment ran with the guard
+    switched off. Worse, `DEBUG` cannot simply be flipped — it also controls
+    the `Secure` flag on the OAuth state cookie, so `False` over plain HTTP
+    breaks local sign-in. `_is_local_instance` asks a question that has a
+    correct answer instead of one that has a convenient one.
     """
     key = settings.jwt_secret_key
     if len(key.encode()) < _MIN_SIGNING_KEY_BYTES:
@@ -233,13 +269,16 @@ def _signing_key() -> str:
             f"JWT_SECRET_KEY must be at least {_MIN_SIGNING_KEY_BYTES} bytes "
             f"(RFC 7518 §3.2); got {len(key.encode())}."
         )
-    if key == DEV_JWT_SECRET and not settings.debug:
-        # The default is published in this repository. Signing production
-        # tokens with it lets anyone who has read the source mint a token for
-        # any user, so this must be a hard failure rather than a warning.
+    if key == DEV_JWT_SECRET and not _is_local_instance():
+        # The default is published in this repository. Signing tokens with it
+        # lets anyone who has read the source mint a token for any user, so
+        # this must be a hard failure rather than a warning.
         raise AuthError(
-            "JWT_SECRET_KEY is still the public development default. "
-            "Set a real secret before running with DEBUG=False."
+            "JWT_SECRET_KEY is still the public development default, and "
+            f"GITHUB_REDIRECT_URI points at {settings.github_redirect_uri!r} "
+            "rather than localhost — so this instance is reachable and its "
+            "signing key is published in Liffy's source. Set a real secret:\n"
+            '  python -c "import secrets; print(secrets.token_urlsafe(48))"'
         )
     return key
 

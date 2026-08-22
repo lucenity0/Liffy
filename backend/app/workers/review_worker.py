@@ -10,12 +10,13 @@ No Celery-level autoretry: LLM validation retries happen inside the chain
 failures.
 """
 
+import logging
 from datetime import datetime, timezone
 
 from app.database import SessionLocal
 from app.llm.chain import get_llm
 from app.llm.embeddings import get_embedding_provider
-from app.services.github_service import GitHubClient
+from app.services.github_service import GitHubAuthError, GitHubClient
 from app.services.rag_service import get_chroma_client
 from app.services.review_service import (
     RepositoryNotConnected,
@@ -24,6 +25,8 @@ from app.services.review_service import (
 )
 from app.services.settings_service import refresh_overrides
 from app.workers.celery_app import celery
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_received_at(value: str | None) -> datetime | None:
@@ -91,7 +94,20 @@ def review_pr_task(
             return {"status": "ignored", "repo": f"{owner}/{repo_name}"}
 
         # inside try so db.close() runs even if this raises
-        gh = GitHubClient(token=owner_user.github_access_token)
+        #
+        # `GitHubClient` no longer falls back to the instance PAT when the
+        # owner's token is null, which is right — but it means construction can
+        # now fail here, *before* `run_review` has created a row. That is the
+        # same shape as the LLM problem noted below: a task that dies before
+        # anything is written looks like the review simply vanished. Caught and
+        # named instead, so the log says which repository and why.
+        try:
+            gh = GitHubClient(token=owner_user.github_access_token)
+        except GitHubAuthError as exc:
+            logger.warning(
+                "review skipped for %s/%s#%s: %s", owner, repo_name, pr_number, exc
+            )
+            return {"status": "ignored", "reason": "owner has no GitHub token"}
         try:
             review = run_review(
                 db,

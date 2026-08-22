@@ -173,7 +173,12 @@ def submit_report(
     )
 
     try:
-        with GitHubClient(get_github_token()) as client:
+        # The one caller that is genuinely instance-level rather than
+        # user-level: the issue is filed against Liffy's own repository, which
+        # is nobody's connected repo, so there is no per-user token that would
+        # be the right credential. `require_owner` above is what keeps the
+        # person filing it and the account it is filed as the same person.
+        with GitHubClient(get_github_token(allow_server_pat=True)) as client:
             issue = client.create_issue(owner, repo, payload.title.strip(), body, [label])
     except GitHubError as exc:
         # 502, not 500: Liffy is fine, GitHub refused. The message carries

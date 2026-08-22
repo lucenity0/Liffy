@@ -180,7 +180,7 @@ def seeded():
 def fake_github(monkeypatch):
     _FakeClient.calls = []
     monkeypatch.setattr(help_api, "GitHubClient", _FakeClient)
-    monkeypatch.setattr(help_api, "get_github_token", lambda: "token")
+    monkeypatch.setattr(help_api, "get_github_token", lambda **_kwargs: "token")
     return _FakeClient
 
 
@@ -283,7 +283,7 @@ def test_github_refusing_reads_as_github_not_as_liffy(seeded, monkeypatch) -> No
             raise GitHubError("Resource not accessible by personal access token")
 
     monkeypatch.setattr(help_api, "GitHubClient", _Refusing)
-    monkeypatch.setattr(help_api, "get_github_token", lambda: "token")
+    monkeypatch.setattr(help_api, "get_github_token", lambda **_kwargs: "token")
 
     response = client.post(
         "/help/report",

@@ -33,14 +33,47 @@ def test_get_github_token_prefers_argument() -> None:
 
 
 def test_get_github_token_falls_back_to_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """And only when the caller asked for it — see the test below."""
     monkeypatch.setattr(settings, "github_token", "env-pat")
-    assert get_github_token() == "env-pat"
+    assert get_github_token(allow_server_pat=True) == "env-pat"
 
 
 def test_get_github_token_raises_without_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "github_token", "")
     with pytest.raises(GitHubAuthError):
-        get_github_token()
+        get_github_token(allow_server_pat=True)
+
+
+# ── #298: no silent escalation to the instance PAT ────────────────────────────
+
+
+def test_a_missing_user_token_does_not_become_the_instance_pat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback was a seam for per-user OAuth. Once that landed it became
+    an escalation.
+
+    Every call site passes `user.github_access_token`, which is nullable, so a
+    null quietly resolved to the instance owner's PAT. That is worst inside
+    `repos.connect_repo`, where the GitHub call *is* the access check: "can you
+    see this repository?" answered with somebody else's credential returns yes
+    for repositories the caller cannot see, and the indexer then embeds them
+    into a collection the caller can retrieve from.
+    """
+    monkeypatch.setattr(settings, "github_token", "env-pat")
+
+    with pytest.raises(GitHubAuthError, match="sign in again"):
+        get_github_token(None)
+
+    # And the client that every user-facing route builds refuses the same way.
+    with pytest.raises(GitHubAuthError, match="sign in again"):
+        GitHubClient(None)
+
+
+def test_a_user_token_is_always_preferred(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Even where the fallback is permitted, it is a fallback and not a choice."""
+    monkeypatch.setattr(settings, "github_token", "env-pat")
+    assert get_github_token("gho_user", allow_server_pat=True) == "gho_user"
 
 
 def test_get_pull_request_parses_metadata() -> None:

@@ -425,3 +425,24 @@ def test_review_task_picks_up_a_settings_override(session_factory, monkeypatch) 
         # Process-global store; leaving it set would turn posting on for every
         # test that runs after this one.
         apply_overrides({})
+
+
+def test_a_review_for_an_owner_with_no_token_is_named_not_vanished(monkeypatch) -> None:
+    """`GitHubClient` is built before `run_review` creates a row.
+
+    Now that a null user token raises instead of silently resolving to the
+    instance PAT, that construction can fail with nothing written — the exact
+    "the review simply vanished" shape the comment above `llm=get_llm` in this
+    worker exists to prevent. So it is caught and named.
+    """
+    from app.workers import review_worker
+
+    class _Owner:
+        github_access_token = None
+
+    monkeypatch.setattr(review_worker, "resolve_repo_owner", lambda db, name: _Owner())
+    monkeypatch.setattr(review_worker, "refresh_overrides", lambda db: {})
+
+    result = review_worker.review_pr_task("octo", "demo", 7)
+
+    assert result == {"status": "ignored", "reason": "owner has no GitHub token"}

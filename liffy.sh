@@ -189,9 +189,15 @@ ensure_env_file() {
     if [ ! -f backend/.env ]; then
         [ -f backend/.env.example ] || error "backend/.env.example not found. Are you in the Liffy root directory?"
         cp backend/.env.example backend/.env
+        # Anchored to the line start, and `|` rather than `/` as the delimiter.
+        # `.env.example` carries these names in its prose as well as in its
+        # assignments, so an unanchored expression can rewrite a comment — and
+        # writing a live credential into a line nobody reads as configuration
+        # is a quiet way to leak one. The Windows path anchors for the same
+        # reason; the two should not disagree about it.
         JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "dev-only-insecure-secret-change-me-before-deploy")
-        sed -i '' "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$JWT_SECRET/" backend/.env 2>/dev/null || \
-            sed -i "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$JWT_SECRET/" backend/.env
+        sed -i '' "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=$JWT_SECRET|" backend/.env 2>/dev/null || \
+            sed -i "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=$JWT_SECRET|" backend/.env
 
         # Generated here for the same reason as the JWT secret: `.env.example`
         # ships it empty, and an empty webhook secret does not fail — it
@@ -199,8 +205,8 @@ ensure_env_file() {
         # compute. The webhook route now refuses to answer until this is set,
         # so generating it is what keeps that from reading as a broken feature.
         WEBHOOK_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "")
-        sed -i '' "s/GITHUB_WEBHOOK_SECRET=.*/GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET/" backend/.env 2>/dev/null || \
-            sed -i "s/GITHUB_WEBHOOK_SECRET=.*/GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET/" backend/.env
+        sed -i '' "s|^GITHUB_WEBHOOK_SECRET=.*|GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET|" backend/.env 2>/dev/null || \
+            sed -i "s|^GITHUB_WEBHOOK_SECRET=.*|GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET|" backend/.env
 
         # Guarded, because the `|| echo ""` fallback above is silent: without
         # python3 the secret is empty, and reporting "generated" while writing

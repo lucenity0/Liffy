@@ -124,13 +124,13 @@ if [ ! -f backend/.env ]; then
         cp backend/.env.example backend/.env
         # Generate a random JWT secret
         JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-        sed -i '' "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$JWT_SECRET/" backend/.env
+        sed -i '' "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=$JWT_SECRET|" backend/.env
         # Generated for the same reason as the JWT secret: `.env.example` ships
         # this empty, and an empty webhook secret does not fail — it verifies
         # deliveries with an empty HMAC key, which anybody can also compute.
         # The webhook route refuses to answer until it is set.
         WEBHOOK_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-        sed -i '' "s/GITHUB_WEBHOOK_SECRET=.*/GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET/" backend/.env
+        sed -i '' "s|^GITHUB_WEBHOOK_SECRET=.*|GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET|" backend/.env
         success "Created backend/.env with generated JWT and webhook secrets"
         # Printed, unlike the JWT secret, because GitHub's webhook form needs
         # the identical value or every delivery fails the signature check.

@@ -695,3 +695,29 @@ def test_a_span_is_never_closable_from_inside(raw, reason) -> None:
 
     assert delimiter not in inner, reason
     assert raw in inner, "the path itself must survive, escaping is not redaction"
+
+
+def test_the_body_names_what_was_not_sent() -> None:
+    """A silent omission reads as "reviewed, nothing to say"."""
+    body = build_review_body(
+        "summary",
+        event=resolve_event("comment", is_own_pr=False, mode=EVENT_MODE_COMMENT_ONLY),
+        unanchorable=[],
+        redacted_files=[".env", "staging.env"],
+    )
+
+    assert "`.env`" in body and "`staging.env`" in body
+    assert "hold credentials" in body
+    # Plural agreement, because two files reading "this file appears" is the
+    # kind of thing that makes a security notice look machine-generated and
+    # therefore ignorable.
+    assert "these files appear" in body
+
+
+def test_an_ordinary_review_says_nothing_about_redaction() -> None:
+    body = build_review_body(
+        "summary",
+        event=resolve_event("comment", is_own_pr=False, mode=EVENT_MODE_COMMENT_ONLY),
+        unanchorable=[],
+    )
+    assert "Not sent to the model" not in body

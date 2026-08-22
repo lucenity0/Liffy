@@ -1460,3 +1460,102 @@ def test_a_late_failure_keeps_the_attempt_count(db: Session) -> None:
     review = db.scalars(select(Review)).one()
     assert review.status == "failed"
     assert review.raw_attempts == 2
+
+
+# ── #298: a committed dotenv must not reach the model ─────────────────────────
+#
+# `github_service._is_dotenv_with_secrets` already encoded this rule, and only
+# indexing consulted it. This path is the one that ships content to a third
+# party on *every* review, and it sent the diff whole.
+
+SECRET_DIFF = """\
+diff --git a/app/util.py b/app/util.py
+--- a/app/util.py
++++ b/app/util.py
+@@ -10,4 +10,5 @@ def helper():
+ context
+-old
++new
++extra
+ context
+diff --git a/.env b/.env
+--- a/.env
++++ b/.env
+@@ -1,2 +1,3 @@
+ DEBUG=True
++AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY
+diff --git a/.env.example b/.env.example
+--- a/.env.example
++++ b/.env.example
+@@ -1,2 +1,3 @@
+ DEBUG=True
++AWS_SECRET_ACCESS_KEY=
+"""
+
+CANARY = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"
+
+
+def _run_diff(db: Session, llm: FakeLLM, diff: str) -> Review:
+    return run_review(
+        db, "octo", "demo", 7,
+        gh=FakeGitHub(pr_meta=META, pr_diff=diff),
+        chroma_client=shared_chroma_client(),
+        embedder=DeterministicEmbeddings(),
+        llm=llm,
+    )
+
+
+def test_a_committed_dotenv_never_reaches_the_prompt(db: Session) -> None:
+    """Asserted on the prompt, which is the thing that actually leaves.
+
+    Checking that the file was filtered out of a list would pass just as well
+    if something downstream put it back. `FakeLLM` records exactly what would
+    have gone over the wire, so this is the claim itself rather than a proxy
+    for it.
+    """
+    llm = FakeLLM([_payload([VALID_COMMENT])])
+    review = _run_diff(db, llm, SECRET_DIFF)
+
+    system, user = llm.prompts[0]
+    assert CANARY not in user and CANARY not in system
+    assert "app/util.py" in user, "the rest of the review must be unaffected"
+
+    # `raw_diff` is unchanged: it is Liffy's own record of what the pull request
+    # contained, stored in the operator's database, and rewriting history to
+    # hide a mistake somebody made in their repository is not this function's
+    # job. The redaction is about what gets *transmitted*.
+    assert CANARY in review.raw_diff
+
+
+def test_a_template_is_still_reviewed(db: Session) -> None:
+    """`.env.example` carries no values and is useful configuration context.
+
+    The predicate has always drawn this line; this pins that the review path
+    inherited the whole rule rather than the crude half of it.
+    """
+    llm = FakeLLM([_payload([VALID_COMMENT])])
+    _run_diff(db, llm, SECRET_DIFF)
+
+    _system, user = llm.prompts[0]
+    assert ".env.example" in user
+
+
+def test_the_redaction_is_recorded_and_named(db: Session) -> None:
+    """Visible, not silent.
+
+    A file quietly dropped is indistinguishable from one Liffy read and had
+    nothing to say about — and these are exactly the files where "Liffy looked
+    at this" is the wrong thing for a reader to believe.
+    """
+    review = _run_diff(db, FakeLLM([_payload([VALID_COMMENT])]), SECRET_DIFF)
+
+    scope = (review.summary_detail or {}).get("scope") or {}
+    assert scope["redacted_files"] == [".env"]
+
+
+def test_an_ordinary_review_records_no_redaction(db: Session) -> None:
+    """The key is absent rather than empty when nothing was dropped."""
+    review = _run(db, FakeLLM([_payload([VALID_COMMENT])]))
+
+    scope = (review.summary_detail or {}).get("scope") or {}
+    assert "redacted_files" not in scope

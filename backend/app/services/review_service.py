@@ -29,6 +29,7 @@ from app.services.diff_parser import FileStatus, parse_diff
 from app.services.github_service import (
     GitHubClient,
     PullRequestMeta,
+    holds_secrets,
     parse_github_timestamp,
 )
 from app.services.rag_service import RetrievedChunk, retrieve_for_file_diff
@@ -138,6 +139,32 @@ def ensure_repo_and_pr(
         pr.merged_at = parse_github_timestamp(pr_meta.merged_at)
     db.flush()
     return repo, pr
+
+
+def redact_secret_files(file_diffs: list) -> tuple[list, list[str]]:
+    """Drop the diffs of files that carry credentials, naming what was dropped.
+
+    ``github_service._is_dotenv_with_secrets`` already encodes this rule and the
+    reasoning behind it — a dotenv holds database passwords and API keys, and a
+    hosted provider receives whatever we send it. That rule had only ever been
+    applied to *indexing*. This path is the one that actually ships content to a
+    third party on every review, and it sent the diff whole.
+
+    So a pull request that adds or edits a committed `.env` transmitted its
+    plaintext to the configured LLM endpoint. That is a routine mistake for a
+    contributor to make — it is the exact case the index filter was written for,
+    which is why the fix is to reuse the predicate rather than invent a second
+    one that can drift from it.
+
+    **Applied to ``review_diffs``, not ``file_diffs``.** ``review_diffs`` is
+    what the model is shown; ``file_diffs`` is what comments are anchored
+    against, and a redacted file will never be the subject of a comment. One
+    choke point here also covers both ``parse_diff`` call sites, including the
+    incremental one inside ``_diffs_to_review``.
+    """
+    kept = [fd for fd in file_diffs if not holds_secrets(fd.path)]
+    redacted = [fd.path for fd in file_diffs if holds_secrets(fd.path)]
+    return kept, redacted
 
 
 def _gather_context(
@@ -273,6 +300,21 @@ def run_review(
             commit_shas=commit_shas,
         )
 
+        # The last point before anything leaves this process.
+        #
+        # Everything below sends content outward: `_gather_context` embeds it
+        # (which reaches a hosted provider when `EMBEDDING_PROVIDER` is not
+        # local) and `generate_review` puts it in a prompt. A committed dotenv
+        # in the diff would have gone to both in plaintext. One call here rather
+        # than a filter at each `parse_diff` — there are two, and the second is
+        # buried inside `_diffs_to_review`.
+        review_diffs, redacted_files = redact_secret_files(review_diffs)
+        if redacted_files:
+            logger.warning(
+                "review.redacted_secret_files pr=%s/%s#%s files=%s",
+                owner, repo_name, pr_number, redacted_files,
+            )
+
         # Retrieval follows what is being reviewed, not the whole pull request.
         # Embedding twenty unchanged files to review one changed line is the
         # same waste in a different currency.
@@ -333,6 +375,10 @@ def run_review(
             {
                 "files_reviewed": len(review_diffs),
                 "files_in_diff": len(file_diffs),
+                # Named, not just counted. "1 file omitted" sends the reader
+                # looking for which; the whole point of a visible redaction is
+                # that it is answerable without reading the logs.
+                **({"redacted_files": redacted_files} if redacted_files else {}),
                 # Which commits this review actually covered, when it was
                 # narrowed by a selection.
                 #
@@ -357,7 +403,11 @@ def run_review(
             # one and took its `head_sha` as the boundary — marking every
             # skipped commit reviewed. The guard worked in every case except the
             # one where the numbers coincided.
-            if narrowed or len(review_diffs) < len(file_diffs)
+            # `redacted_files or`, for the same reason `narrowed or` is here:
+            # a review whose only difference from a full one is a redacted file
+            # still has something to say about itself, and dropping `scope`
+            # would take the redaction notice with it.
+            if narrowed or redacted_files or len(review_diffs) < len(file_diffs)
             else None
         )
 
@@ -781,6 +831,11 @@ def publish_review(
                 if f.get("path")
             ],
             comment_count=len(comments),
+            # Read off the row rather than threaded through as a parameter:
+            # `run_review` already recorded it in `summary_detail.scope`, and
+            # `publish_review` is also reached on the re-publish path where
+            # there is no live `run_review` frame to take it from.
+            redacted_files=list((detail.get("scope") or {}).get("redacted_files") or []),
         )
 
         posted = gh.create_pull_request_review(

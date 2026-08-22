@@ -342,6 +342,7 @@ def build_review_body(
     event: ReviewEvent,
     unanchorable: list[ReviewComment],
     supersedes_url: str | None = None,
+    redacted_files: list[str] | None = None,
     changes: list[str] | None = None,
     files: list[tuple[str, str]] | None = None,
     comment_count: int = 0,
@@ -393,6 +394,20 @@ def build_review_body(
             "GitHub only accepts inline comments on lines that appear in the "
             "diff, so these are reproduced here rather than dropped.\n\n"
             f"{lines}\n</details>"
+        )
+
+    if redacted_files:
+        # Said out loud, because a silent omission is indistinguishable from a
+        # review that read the file and had nothing to say about it — and these
+        # are exactly the files where "Liffy looked at this" would be the wrong
+        # thing to believe. Paths through `_code_span` like every other one on
+        # this path, even though these come from the diff rather than from the
+        # model: one rule, applied everywhere, is the rule that survives.
+        listed = ", ".join(_code_span(path) for path in redacted_files)
+        parts.append(
+            f"_Not sent to the model: {listed} — "
+            f"{'these files appear' if len(redacted_files) > 1 else 'this file appears'} "
+            f"to hold credentials, and a review would transmit them._"
         )
 
     if supersedes_url:

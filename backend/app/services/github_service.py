@@ -94,6 +94,22 @@ def _is_dotenv_with_secrets(filename: str) -> bool:
     return not lowered.endswith(_ENV_TEMPLATE_SUFFIXES)
 
 
+def holds_secrets(path: str) -> bool:
+    """Whether a *path* names a file that carries credentials.
+
+    The same predicate as ``_is_dotenv_with_secrets`` above, taking a full path
+    rather than a basename, so the two callers that need it can share one
+    definition of the rule.
+
+    It exists because the rule had only ever been applied to indexing. The
+    review path sends the diff to the configured LLM endpoint whole, so a pull
+    request that adds or edits a committed dotenv shipped its contents to a
+    third party — the same leak the index filter was written to prevent, one
+    code path over. See ``review_service.redact_secret_files``.
+    """
+    return _is_dotenv_with_secrets(path.split("/")[-1])
+
+
 class GitHubError(RuntimeError):
     """Base error for GitHub service failures."""
 
@@ -435,6 +451,8 @@ def _is_indexable(path: str) -> bool:
         return False
     if _is_dotenv_with_secrets(parts[-1]):
         return False
+    # NOTE: kept as the basename call rather than `holds_secrets(path)` only
+    # because `parts` is already split here. Both reach the same predicate.
     # Ambient type declarations: signatures with no implementation behind
     # them. They chunk cleanly now that TypeScript is indexed (LANG-1), which
     # is the problem — they would crowd retrieval results with declarations

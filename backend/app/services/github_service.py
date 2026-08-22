@@ -94,6 +94,22 @@ def _is_dotenv_with_secrets(filename: str) -> bool:
     return not lowered.endswith(_ENV_TEMPLATE_SUFFIXES)
 
 
+def holds_secrets(path: str) -> bool:
+    """Whether a *path* names a file that carries credentials.
+
+    The same predicate as ``_is_dotenv_with_secrets`` above, taking a full path
+    rather than a basename, so the two callers that need it can share one
+    definition of the rule.
+
+    It exists because the rule had only ever been applied to indexing. The
+    review path sends the diff to the configured LLM endpoint whole, so a pull
+    request that adds or edits a committed dotenv shipped its contents to a
+    third party — the same leak the index filter was written to prevent, one
+    code path over. See ``review_service.redact_secret_files``.
+    """
+    return _is_dotenv_with_secrets(path.split("/")[-1])
+
+
 class GitHubError(RuntimeError):
     """Base error for GitHub service failures."""
 
@@ -230,16 +246,35 @@ def verify_webhook_signature(secret: str, payload: bytes, signature_header: str 
     return hmac.compare_digest(signature, digest)
 
 
-def get_github_token(token: str | None = None) -> str:
-    """Resolve a GitHub token.
+def get_github_token(token: str | None = None, *, allow_server_pat: bool = False) -> str:
+    """Resolve a GitHub token, refusing to silently upgrade the caller.
 
-    This is the seam for future OAuth: callers may pass a per-user token, and
-    when absent we fall back to the server-side PAT in ``settings.github_token``.
+    This was the seam left open for per-user OAuth, and once that landed the
+    fallback stopped being a seam and became an escalation: every call site
+    passes ``user.github_access_token``, which is nullable, and a ``None``
+    quietly resolved to the instance owner's PAT.
+
+    That is worst inside ``repos.connect_repo``, where the GitHub call *is* the
+    access check — "can you see this repository?" answered with somebody else's
+    credential returns yes for repositories the caller cannot see, and the
+    indexer then embeds them into a collection the caller can retrieve from.
+
+    So the default is strict, and the fallback is something a call site has to
+    ask for. ``allow_server_pat=True`` belongs only to genuinely instance-level
+    work: filing a report against Liffy's own repository is the one such caller
+    today. A user-initiated request that has no user token is an error with an
+    action attached — reconnect — not an invitation to act as somebody else.
     """
-    resolved = token or settings.github_token
-    if not resolved:
+    if token:
+        return token
+    if allow_server_pat and settings.github_token:
+        return settings.github_token
+    if allow_server_pat:
         raise GitHubAuthError("No GitHub token configured; set GITHUB_TOKEN or pass a token.")
-    return resolved
+    raise GitHubAuthError(
+        "No GitHub token for this account. Sign out and sign in again to "
+        "reconnect it."
+    )
 
 
 @dataclass(frozen=True)
@@ -435,6 +470,8 @@ def _is_indexable(path: str) -> bool:
         return False
     if _is_dotenv_with_secrets(parts[-1]):
         return False
+    # NOTE: kept as the basename call rather than `holds_secrets(path)` only
+    # because `parts` is already split here. Both reach the same predicate.
     # Ambient type declarations: signatures with no implementation behind
     # them. They chunk cleanly now that TypeScript is indexed (LANG-1), which
     # is the problem — they would crowd retrieval results with declarations
@@ -451,8 +488,17 @@ class GitHubClient:
     to inject a stubbed transport in tests.
     """
 
-    def __init__(self, token: str | None = None, *, client: httpx.Client | None = None) -> None:
-        self.token = get_github_token(token)
+    def __init__(
+        self,
+        token: str | None = None,
+        *,
+        client: httpx.Client | None = None,
+        allow_server_pat: bool = False,
+    ) -> None:
+        # Strict by default: see `get_github_token`. Every caller acting on
+        # behalf of a user passes that user's token and nothing else, so a null
+        # one fails here rather than reaching GitHub as the instance owner.
+        self.token = get_github_token(token, allow_server_pat=allow_server_pat)
         self._client = client or httpx.Client(base_url=GITHUB_API_BASE, timeout=_DEFAULT_TIMEOUT)
 
     def __enter__(self) -> "GitHubClient":

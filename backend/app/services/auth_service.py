@@ -18,6 +18,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 import httpx
 import jwt
@@ -132,6 +133,86 @@ def fetch_github_user(access_token: str, *, client: httpx.Client | None = None) 
     )
 
 
+# ── Who may sign in ───────────────────────────────────────────────────────────
+#
+# Liffy is single-tenant (ADR 007). Before this existed, `upsert_user` created a
+# row for whoever finished the OAuth handshake, so any GitHub account on earth
+# could sign in to an instance reachable from the internet — which every
+# instance using webhooks must be — and reach the settings page, which decides
+# things like where the code being reviewed is sent.
+
+
+def owner(db: Session) -> User | None:
+    """The account this instance belongs to, or ``None`` before anyone claims it."""
+    return db.scalar(select(User).where(User.is_owner.is_(True)))
+
+
+def login_permitted(db: Session, gh_user: GitHubUser) -> bool:
+    """Whether this GitHub account may hold a session on this instance.
+
+    Three ways to be allowed, in the order they are cheapest to check:
+
+    - **Nobody owns the instance yet.** The first person through claims it,
+      which is what keeps a fresh clone usable with no configuration. There is
+      a race here in theory — two simultaneous first logins — and the partial
+      unique index on ``users.is_owner`` is what settles it: the loser's
+      ``claim_ownership`` fails on the constraint rather than producing a
+      second owner.
+    - **It is the owner**, matched on ``github_id`` and deliberately not on the
+      login. A GitHub username is renameable and ``upsert_user`` only re-syncs
+      it *on a successful login* — so matching by name would lock the owner out
+      of their own instance the first time they renamed, with the one path that
+      could repair the stored name sitting behind the check that was failing.
+      The numeric id never changes.
+    - **It is on the allowlist**, which is by login because that is what an
+      operator knows how to type. They get a session; they do not get the
+      settings page.
+    """
+    current = owner(db)
+    if current is None:
+        return True
+    if current.github_id == gh_user.id:
+        return True
+    return gh_user.login.lower() in settings.allowed_github_login_list
+
+
+def session_permitted(db: Session, user: User) -> bool:
+    """Whether an *existing* account may still hold a session.
+
+    ``login_permitted`` guards the OAuth callback, and that is not the only
+    door. Refresh tokens live for 30 days and rotate on every use, so a session
+    established before the lockdown never has to complete another handshake —
+    it just keeps trading one token for the next. On an instance upgraded from
+    open sign-up, every stranger who had ever signed in would have kept full
+    access to their repositories, their reviews and their stored GitHub token
+    indefinitely, while ADR 007 claimed they were refused.
+
+    Takes a ``User`` row rather than a ``GitHubUser`` because the refresh path
+    has no handshake to read from, and matches the owner on the primary key for
+    the same reason ``login_permitted`` matches on ``github_id``: it is the
+    identifier that cannot drift.
+    """
+    current = owner(db)
+    if current is None:
+        return True
+    if current.id == user.id:
+        return True
+    return user.username.lower() in settings.allowed_github_login_list
+
+
+def claim_ownership(db: Session, user: User) -> None:
+    """Make ``user`` the owner if nobody is. Idempotent, and safe to call always.
+
+    Deliberately re-reads rather than trusting the ``login_permitted`` call that
+    preceded it: between the two sits a GitHub round trip and an upsert, and a
+    check whose answer is assumed to still hold is not a check.
+    """
+    if owner(db) is not None:
+        return
+    user.is_owner = True
+    db.flush()
+
+
 def upsert_user(db: Session, gh_user: GitHubUser, access_token: str | None = None) -> User:
     """Create the user, or refresh a returning user's profile. Idempotent."""
     user = db.scalar(select(User).where(User.github_id == gh_user.id))
@@ -154,6 +235,32 @@ def upsert_user(db: Session, gh_user: GitHubUser, access_token: str | None = Non
 # ── Access tokens (JWT) ───────────────────────────────────────────────────────
 
 
+# Hostnames that mean "this instance is not reachable from anywhere else".
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _is_local_instance() -> bool:
+    """Whether this install is a developer's laptop rather than a deployment.
+
+    Decided on ``github_redirect_uri``, which is the one setting that *cannot*
+    be wrong on a real deployment: GitHub redirects the browser to it after the
+    consent screen, so an instance anybody else can sign in to has necessarily
+    changed it away from localhost. That makes it a fact about reachability
+    rather than a self-declaration.
+
+    Deliberately **not** ``settings.debug``, which is what this used to be and
+    is the reason the check below never fired. `DEBUG` also decides whether the
+    OAuth state cookie is marked `Secure`, so it has to stay `True` for local
+    HTTP sign-in to work at all — and `.env.example` therefore ships `True`,
+    and the documented setup is to copy that file. One flag serving as both
+    "cookies may be insecure" and "an insecure signing key is acceptable" meant
+    the safe value of the second was unreachable from the working value of the
+    first.
+    """
+    host = (urlsplit(settings.github_redirect_uri).hostname or "").lower()
+    return host in _LOOPBACK_HOSTS
+
+
 def _signing_key() -> str:
     """Return the HMAC key, refusing to use one that cannot be trusted.
 
@@ -165,11 +272,20 @@ def _signing_key() -> str:
     reject everything: it accepts anything an attacker signs with the value they
     just read in `config.py`.
 
-    Minting failing does not cover that. An instance that ran in debug long
-    enough to create users and was then switched to `DEBUG=False` without a real
-    key has both a populated `users` table and a published signing key, and a
-    forged token needs nothing else. Raising here fails every request closed
-    instead, which is the correct answer to a key nobody should trust.
+    Minting failing does not cover that. An instance that ran locally long
+    enough to create users and was then deployed without a real key has both a
+    populated `users` table and a published signing key, and a forged token
+    needs nothing else. Raising here fails every request closed instead, which
+    is the correct answer to a key nobody should trust.
+
+    **The condition took a second correction.** It was `and not settings.debug`,
+    which never fired in the one configuration that mattered: `DEBUG` defaults
+    to `True` in this file *and* in `.env.example`, and `docs/SETUP.md` tells
+    you to copy that file, so the documented deployment ran with the guard
+    switched off. Worse, `DEBUG` cannot simply be flipped — it also controls
+    the `Secure` flag on the OAuth state cookie, so `False` over plain HTTP
+    breaks local sign-in. `_is_local_instance` asks a question that has a
+    correct answer instead of one that has a convenient one.
     """
     key = settings.jwt_secret_key
     if len(key.encode()) < _MIN_SIGNING_KEY_BYTES:
@@ -177,13 +293,16 @@ def _signing_key() -> str:
             f"JWT_SECRET_KEY must be at least {_MIN_SIGNING_KEY_BYTES} bytes "
             f"(RFC 7518 §3.2); got {len(key.encode())}."
         )
-    if key == DEV_JWT_SECRET and not settings.debug:
-        # The default is published in this repository. Signing production
-        # tokens with it lets anyone who has read the source mint a token for
-        # any user, so this must be a hard failure rather than a warning.
+    if key == DEV_JWT_SECRET and not _is_local_instance():
+        # The default is published in this repository. Signing tokens with it
+        # lets anyone who has read the source mint a token for any user, so
+        # this must be a hard failure rather than a warning.
         raise AuthError(
-            "JWT_SECRET_KEY is still the public development default. "
-            "Set a real secret before running with DEBUG=False."
+            "JWT_SECRET_KEY is still the public development default, and "
+            f"GITHUB_REDIRECT_URI points at {settings.github_redirect_uri!r} "
+            "rather than localhost — so this instance is reachable and its "
+            "signing key is published in Liffy's source. Set a real secret:\n"
+            '  python -c "import secrets; print(secrets.token_urlsafe(48))"'
         )
     return key
 
@@ -285,6 +404,15 @@ def rotate_refresh_token(db: Session, raw_token: str) -> tuple[User, str]:
     user = db.get(User, row.user_id)
     if user is None:
         raise AuthError("Refresh token belongs to a deleted user")
+
+    # Checked here rather than in the API layer because rotation is the only
+    # way a session outlives its access token, so this is the one place that
+    # has to ask. The token is spent either way: leaving it live would let the
+    # holder retry forever, and a refused refresh is not a transient failure.
+    if not session_permitted(db, user):
+        row.revoked_at = datetime.now(timezone.utc)
+        db.flush()
+        raise AuthError("This account is no longer permitted to sign in here")
 
     row.revoked_at = datetime.now(timezone.utc)
     replacement = issue_refresh_token(db, user)

@@ -116,14 +116,65 @@ def test_short_signing_key_refuses_to_mint(user: User, monkeypatch: pytest.Monke
         auth_service.create_access_token(user)
 
 
-def test_default_secret_refused_outside_debug(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The development default is a public constant in this repository. Signing
-    # real tokens with it would let any reader of the source forge a session.
+def test_default_secret_refused_on_a_reachable_instance(
+    user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The development default is a public constant in this repository.
+
+    Reachability is read off `github_redirect_uri`, not off `DEBUG`. GitHub
+    sends the browser to that URI after the consent screen, so an instance
+    anybody else can sign in to has necessarily changed it away from localhost
+    — which makes it a fact rather than a self-declaration.
+    """
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
-    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(
+        settings,
+        "github_redirect_uri",
+        "https://liffy.example.com/auth/github/callback",
+    )
 
     with pytest.raises(AuthError, match="development default"):
         auth_service.create_access_token(user)
+
+
+def test_debug_no_longer_licenses_the_public_default(
+    user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression this whole commit exists for.
+
+    The condition used to be `and not settings.debug`, and `DEBUG` defaults to
+    True in `config.py` *and* in `.env.example`, and `docs/SETUP.md` says to
+    copy that file — so the documented deployment ran with the guard switched
+    off. `DEBUG=True` must no longer be enough to license the published key on
+    an instance that is actually reachable.
+    """
+    monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
+    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(
+        settings,
+        "github_redirect_uri",
+        "https://liffy.example.com/auth/github/callback",
+    )
+
+    with pytest.raises(AuthError, match="development default"):
+        auth_service.create_access_token(user)
+
+
+def test_debug_false_on_localhost_still_signs(
+    user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """And the mirror image, which is why `DEBUG` could not simply be flipped.
+
+    `DEBUG` also controls the `Secure` flag on the OAuth state cookie, so
+    `False` over plain HTTP breaks local sign-in — meaning "set DEBUG=False" was
+    never available as advice to a local user. The two questions are now
+    genuinely separate.
+    """
+    monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
+    monkeypatch.setattr(settings, "debug", False)
+
+    token, _ = auth_service.create_access_token(user)
+    assert auth_service.decode_access_token(token) == user.id
 
 
 def test_blank_secret_env_falls_back_to_dev_default() -> None:
@@ -135,8 +186,9 @@ def test_blank_secret_env_falls_back_to_dev_default() -> None:
     assert Settings(jwt_secret_key="").jwt_secret_key == DEV_JWT_SECRET
 
 
-def test_default_secret_allowed_in_debug(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A fresh clone must still run without any setup.
+def test_default_secret_allowed_on_localhost(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A fresh clone must still run without any setup — the whole reason the
+    # published constant exists. `github_redirect_uri` defaults to localhost.
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
     monkeypatch.setattr(settings, "debug", True)
 
@@ -155,7 +207,11 @@ def test_default_secret_refused_when_verifying(user: User, monkeypatch: pytest.M
     refuse the key too, or the broken-login state is also a bypass.
     """
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
-    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(
+        settings,
+        "github_redirect_uri",
+        "https://liffy.example.com/auth/github/callback",
+    )
 
     forged = jwt.encode(
         {
@@ -189,12 +245,18 @@ def test_check_signing_key_is_the_startup_gate(monkeypatch: pytest.MonkeyPatch) 
     """`main.lifespan` calls this so the instance refuses to boot, rather than
     answering a uniform 401 that reads like ordinary bad-token noise."""
     monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
-    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(
+        settings,
+        "github_redirect_uri",
+        "https://liffy.example.com/auth/github/callback",
+    )
 
     with pytest.raises(AuthError, match="development default"):
         auth_service.check_signing_key()
 
-    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(
+        settings, "github_redirect_uri", "http://localhost:8000/auth/github/callback"
+    )
     auth_service.check_signing_key()  # a fresh clone still boots
 
 
@@ -440,3 +502,69 @@ def test_user_out_does_not_expose_github_token() -> None:
     from app.schemas.auth import UserOut
 
     assert "github_access_token" not in UserOut.model_fields
+
+
+# ── #298 review: the door the lockdown did not cover ──────────────────────────
+
+
+def test_a_refused_account_cannot_refresh_its_way_around_the_lockdown(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`login_permitted` guards the callback, and that is not the only door.
+
+    Refresh tokens last 30 days and rotate on every use, so a session
+    established before the lockdown never returns to the handshake — it just
+    trades one token for the next. On an instance upgraded from open sign-up
+    that meant every stranger kept their repositories, their reviews and their
+    stored GitHub token indefinitely, while ADR 007 said they were refused.
+    """
+    from app.models.user import User
+
+    owner = User(github_id=1, username="owner", is_owner=True)
+    stranger = User(github_id=2, username="stranger")
+    db.add_all([owner, stranger])
+    db.flush()
+
+    raw = auth_service.issue_refresh_token(db, stranger)
+
+    with pytest.raises(AuthError, match="no longer permitted"):
+        auth_service.rotate_refresh_token(db, raw)
+
+    # The token is spent, not merely refused. Leaving it live would let the
+    # holder retry forever, and this is not a transient failure.
+    with pytest.raises(AuthError, match="already been used"):
+        auth_service.rotate_refresh_token(db, raw)
+
+
+def test_an_allowlisted_account_may_still_refresh(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate has to admit exactly who the callback would admit."""
+    from app.models.user import User
+
+    db.add_all([
+        User(github_id=1, username="owner", is_owner=True),
+        User(github_id=2, username="Collaborator"),
+    ])
+    db.flush()
+    guest = db.scalar(select(User).where(User.github_id == 2))
+    raw = auth_service.issue_refresh_token(db, guest)
+
+    # Case-insensitively, like every other allowlist comparison.
+    monkeypatch.setattr(settings, "allowed_github_logins", "collaborator")
+    user, replacement = auth_service.rotate_refresh_token(db, raw)
+
+    assert user.id == guest.id
+    assert replacement
+
+
+def test_the_owner_always_refreshes(db: Session) -> None:
+    from app.models.user import User
+
+    owner = User(github_id=1, username="owner", is_owner=True)
+    db.add(owner)
+    db.flush()
+    raw = auth_service.issue_refresh_token(db, owner)
+
+    user, replacement = auth_service.rotate_refresh_token(db, raw)
+    assert user.id == owner.id and replacement

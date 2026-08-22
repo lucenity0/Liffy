@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -324,7 +325,9 @@ def test_me_returns_current_user(factory, github_ok) -> None:
     assert body["github_id"] == 4242
     assert body["username"] == "octocat"
     # The wire shape must not grow fields the contract did not promise.
-    assert set(body) == {"id", "github_id", "username", "email", "avatar_url"}
+    assert set(body) == {
+        "id", "github_id", "username", "email", "avatar_url", "is_owner",
+    }
 
 
 def test_me_without_token_returns_401(factory) -> None:
@@ -378,3 +381,151 @@ def test_no_placeholder_response_values_remain() -> None:
     literal = re.compile(r"""['"]placeholder['"]""", re.IGNORECASE)
     hits = [str(p) for p in Path("app").rglob("*.py") if literal.search(p.read_text())]
     assert hits == []
+
+
+# ── #298: single-owner lockdown ───────────────────────────────────────────────
+#
+# Before this, `upsert_user` created a row for whoever completed the handshake.
+# An instance reachable from the internet — which anything using webhooks must
+# be — was therefore an open sign-up page onto the settings surface, and the
+# settings surface decides where the code being reviewed gets sent.
+
+
+SECOND_GH_USER = GitHubUser(
+    id=7777, login="stranger", email=None, avatar_url=None
+)
+
+
+def _login_as(gh_user: GitHubUser, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """One full handshake as ``gh_user``, returning the decoded fragment."""
+    monkeypatch.setattr(auth_service, "exchange_code_for_token", lambda code: "gho_real")
+    monkeypatch.setattr(auth_service, "fetch_github_user", lambda token: gh_user)
+    state = _begin_login()
+    return _callback(f"code=abc&state={state}")
+
+
+def test_the_first_login_claims_the_instance(factory, github_ok) -> None:
+    _login(factory)
+
+    with factory() as db:
+        users = db.scalars(select(User)).all()
+    assert len(users) == 1
+    assert users[0].is_owner is True
+
+
+def test_a_second_account_is_refused_and_leaves_no_row(
+    factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal has to happen *before* the upsert.
+
+    Checking afterwards would still write a `users` row for every stranger who
+    reached the callback — and with it their GitHub access token, which is the
+    part that makes a phantom row more than untidy.
+    """
+    _login_as(GH_USER, monkeypatch)
+    fragment = _login_as(SECOND_GH_USER, monkeypatch)
+
+    assert fragment == {"error": "not_authorised"}
+    assert "access_token" not in fragment
+
+    with factory() as db:
+        logins = db.scalars(select(User.username)).all()
+    assert logins == ["octocat"]
+
+
+def test_an_allowlisted_account_signs_in_without_owning(
+    factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login_as(GH_USER, monkeypatch)
+    monkeypatch.setattr(settings, "allowed_github_logins", "Stranger, someone-else")
+
+    fragment = _login_as(SECOND_GH_USER, monkeypatch)
+
+    # Case-insensitively: GitHub logins are, and an allowlist that refused the
+    # person the operator just allowed over capitalisation reads as broken.
+    assert fragment["access_token"]
+
+    with factory() as db:
+        second = db.scalar(select(User).where(User.github_id == 7777))
+        assert second is not None
+        assert second.is_owner is False
+        assert db.scalar(select(User).where(User.is_owner.is_(True))).github_id == 4242
+
+
+def test_the_owner_survives_a_github_rename(
+    factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ownership is matched on `github_id`, not on the login.
+
+    A username is renameable, and `upsert_user` only re-syncs it on a
+    *successful* login — so matching by name would lock the owner out the first
+    time they renamed, with the one path that could repair the stored name
+    sitting behind the check that was failing.
+    """
+    _login_as(GH_USER, monkeypatch)
+    renamed = GitHubUser(id=4242, login="octocat-new", email=None, avatar_url=None)
+
+    fragment = _login_as(renamed, monkeypatch)
+
+    assert fragment["access_token"]
+    with factory() as db:
+        owner = db.scalar(select(User).where(User.is_owner.is_(True)))
+        assert owner.username == "octocat-new"
+        assert db.scalar(select(User).where(User.github_id == 4242)) is owner
+
+
+def test_the_ownership_race_hands_back_a_page_not_a_stack_trace(
+    factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`claim_ownership` documents the index settling two simultaneous first
+    logins. It does — with an `IntegrityError`.
+
+    Uncaught, that is a raw 500 in a handler only ever reached by a top-level
+    browser navigation, so the loser of the race would get a stack trace
+    rendered in their address bar.
+
+    The race is *inside* `claim_ownership`: its `owner(db)` check says nobody
+    owns the instance, somebody claims it before the `flush()` lands, and the
+    flush violates the partial unique index. Simulated by making that check
+    disagree with the database — which is precisely what a race is — rather
+    than by forcing an error at commit time, which is a different failure with
+    a different correct answer (`session_failed`, below).
+    """
+    _login_as(GH_USER, monkeypatch)
+
+    # A second account arrives while the instance still looks unowned to it.
+    monkeypatch.setattr(auth_service, "login_permitted", lambda db, gh: True)
+    # ...and `claim_ownership`'s own check agrees, wrongly: the owner row from
+    # the first login is right there in the table.
+    monkeypatch.setattr(auth_service, "owner", lambda db: None)
+
+    fragment = _login_as(SECOND_GH_USER, monkeypatch)
+
+    assert fragment == {"error": "not_authorised"}
+    assert "access_token" not in fragment
+    with factory() as db:
+        owners = db.scalars(select(User).where(User.is_owner.is_(True))).all()
+    assert len(owners) == 1
+    assert owners[0].github_id == 4242
+
+
+def test_a_write_conflict_is_not_reported_as_a_permission_refusal(
+    factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`not_authorised` renders as "your account isn't on the allowlist".
+
+    That is a permanent-sounding refusal, and it used to be what a *transient*
+    write conflict produced — the `try` wrapped `_issue_pair` and the commit as
+    well as the claim, so a duplicate `github_id` from two concurrent callbacks
+    for the same account told a legitimate user to give up. `session_failed`
+    says try again, which is both true and actionable.
+    """
+    _login_as(GH_USER, monkeypatch)
+
+    def boom(db, user):
+        raise IntegrityError("duplicate key", None, Exception())
+
+    monkeypatch.setattr(auth_service, "issue_refresh_token", boom)
+
+    fragment = _login_as(GH_USER, monkeypatch)
+    assert fragment == {"error": "session_failed"}

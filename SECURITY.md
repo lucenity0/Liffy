@@ -83,11 +83,26 @@ runs it. That shapes what is in scope here.
 A few things are your responsibility rather than the project's, because they
 depend on your deployment:
 
-- **Set a real `JWT_SECRET_KEY`.** The setup scripts generate one. If yours
-  still reads `changeme`, anyone can forge a session.
+- **Liffy is single-tenant.** The first GitHub account to sign in claims the
+  instance; every other login is refused unless it is listed in
+  `ALLOWED_GITHUB_LOGINS`. Sign in yourself before exposing the instance, so
+  the person who claims it is you. Only the owner can read or change settings,
+  because those decide where the code being reviewed is sent. See
+  [ADR 007](docs/decisions/007-single-tenant-security-model.md).
+- **Set a real `JWT_SECRET_KEY`.** The setup scripts generate one. If yours is
+  still the published development default, Liffy refuses to start once
+  `GITHUB_REDIRECT_URI` points anywhere but localhost — because at that point
+  the key that signs your sessions is readable in this repository.
 - **Set a real `GITHUB_WEBHOOK_SECRET`,** and keep it matched to the one
   configured in GitHub. The webhook endpoint is public by necessity; the
-  signature is the only thing separating a real event from a forged one.
+  signature is the only thing separating a real event from a forged one. Liffy
+  answers 503 to every delivery until it is set: an empty secret is not "no
+  verification", it is HMAC with a key anyone else can also use. `liffy.sh`
+  generates one and prints it.
+- **Reviews only go to allowlisted endpoints.** `OPENAI_BASE_URL` accepts
+  loopback, `api.openai.com` and Gemini's compatibility endpoint. A
+  self-hosted endpoint has to be added to `OPENAI_BASE_URL_ALLOWED` in
+  `backend/.env`, which is deliberately not editable from the settings page.
 - **Keep `backend/.env` out of version control.** It is gitignored; keep it
   that way.
 - **Do not expose the API directly.** Put it behind a reverse proxy with TLS.

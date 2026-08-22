@@ -189,10 +189,42 @@ ensure_env_file() {
     if [ ! -f backend/.env ]; then
         [ -f backend/.env.example ] || error "backend/.env.example not found. Are you in the Liffy root directory?"
         cp backend/.env.example backend/.env
+        # Anchored to the line start, and `|` rather than `/` as the delimiter.
+        # `.env.example` carries these names in its prose as well as in its
+        # assignments, so an unanchored expression can rewrite a comment — and
+        # writing a live credential into a line nobody reads as configuration
+        # is a quiet way to leak one. The Windows path anchors for the same
+        # reason; the two should not disagree about it.
         JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "dev-only-insecure-secret-change-me-before-deploy")
-        sed -i '' "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$JWT_SECRET/" backend/.env 2>/dev/null || \
-            sed -i "s/JWT_SECRET_KEY=.*/JWT_SECRET_KEY=$JWT_SECRET/" backend/.env
-        success "Created backend/.env with a generated JWT secret"
+        sed -i '' "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=$JWT_SECRET|" backend/.env 2>/dev/null || \
+            sed -i "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=$JWT_SECRET|" backend/.env
+
+        # Generated here for the same reason as the JWT secret: `.env.example`
+        # ships it empty, and an empty webhook secret does not fail — it
+        # verifies deliveries with an empty HMAC key, which anybody can also
+        # compute. The webhook route now refuses to answer until this is set,
+        # so generating it is what keeps that from reading as a broken feature.
+        WEBHOOK_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "")
+        sed -i '' "s|^GITHUB_WEBHOOK_SECRET=.*|GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET|" backend/.env 2>/dev/null || \
+            sed -i "s|^GITHUB_WEBHOOK_SECRET=.*|GITHUB_WEBHOOK_SECRET=$WEBHOOK_SECRET|" backend/.env
+
+        # Guarded, because the `|| echo ""` fallback above is silent: without
+        # python3 the secret is empty, and reporting "generated" while writing
+        # nothing would leave an install that 503s every webhook delivery with
+        # the setup script having said it worked.
+        if [ -n "$WEBHOOK_SECRET" ]; then
+            success "Created backend/.env with generated JWT and webhook secrets"
+            # Printed, unlike the JWT secret, because this one has a second
+            # home: GitHub's webhook form needs the identical value or every
+            # delivery fails the signature check. It does mean a live secret
+            # lands in terminal scrollback — acceptable for a value you are
+            # about to paste elsewhere, and it is rotatable by rerunning.
+            echo "    Webhook secret (paste into GitHub → Settings → Webhooks):"
+            echo "      $WEBHOOK_SECRET"
+        else
+            success "Created backend/.env with a generated JWT secret"
+            warn "Could not generate GITHUB_WEBHOOK_SECRET (no python3). Webhooks will 503 until you set one by hand."
+        fi
         warn "Open backend/.env and fill in GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET / an LLM key when you're ready for real runs"
     else
         success "backend/.env already exists — skipping"

@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -115,9 +116,54 @@ def github_callback(
         # would be reflected into our own page unfiltered.
         return _hand_back_to_frontend(error="github_exchange_failed")
 
+    # Before `upsert_user`, and that ordering is the whole point.
+    #
+    # Checking afterwards would leave a `users` row behind for every refused
+    # login — the same phantom-row failure the `resolve_repo_owner` guard in
+    # `api/webhook.py` exists to prevent, and here it would additionally mean a
+    # refused stranger still had their GitHub access token written to our
+    # database. A signature-valid session is not the only thing worth denying.
+    if not auth_service.login_permitted(db, gh_user):
+        return _hand_back_to_frontend(error="not_authorised")
+
     user = auth_service.upsert_user(db, gh_user, access_token=github_token)
-    pair = _issue_pair(db, user)
-    db.commit()
+    try:
+        # After the upsert, because an unclaimed instance has nobody to make
+        # owner until the row exists. Idempotent, so returning logins pay one
+        # query.
+        #
+        # **Only this call is inside the try.** It used to wrap `_issue_pair`
+        # and the commit as well, which meant any integrity violation while
+        # persisting the pair — or a duplicate `github_id` from two concurrent
+        # callbacks for the same account — was reported as `not_authorised`.
+        # That message reads as a permanent refusal ("your account isn't on the
+        # allowlist"), so a user hitting a transient write conflict had no
+        # reason to retry the one thing that would have worked.
+        auth_service.claim_ownership(db, user)
+    except IntegrityError:
+        # The race `claim_ownership` documents, arriving. Two simultaneous first
+        # logins both see an unowned instance and both try to claim it; the
+        # partial unique index fails the loser, which is the point — but an
+        # uncaught IntegrityError is a raw 500 in a handler reached by a
+        # top-level browser navigation, so the loser would get a stack trace
+        # rendered in their address bar instead of a page.
+        #
+        # Handed back as `not_authorised` because that is what it now is: the
+        # instance has an owner and it is not them. Trying again is the correct
+        # next step if they were meant to be allowlisted.
+        db.rollback()
+        return _hand_back_to_frontend(error="not_authorised")
+
+    try:
+        pair = _issue_pair(db, user)
+        db.commit()
+    except IntegrityError:
+        # A genuine write conflict rather than a permission decision: two
+        # callbacks for the same brand-new account racing on `users.github_id`.
+        # `session_failed` already means "signed in, but something went wrong —
+        # try again", which is both true and actionable.
+        db.rollback()
+        return _hand_back_to_frontend(error="session_failed")
 
     return _hand_back_to_frontend(
         access_token=pair.access_token,

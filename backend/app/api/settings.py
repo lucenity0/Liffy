@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import require_owner
 from app.config import (
     CONFIRM_ON_ENABLE,
+    DEV_JWT_SECRET,
+    UNSET_WEBHOOK_SECRETS,
     EDITABLE_SETTINGS,
     READ_ONLY_SETTINGS,
     SECRET_SETTINGS,
@@ -46,6 +48,40 @@ def _suggestions_for(key: str, spec) -> tuple[str, ...]:
     if key != "codex_model":
         return spec.suggestions
     return discover_codex_models(settings.codex_home)
+
+
+# Secrets with a non-empty value that still means "nobody set this", and the
+# values in question.
+#
+# A table rather than a chain of `if key == ...`, because the first version was
+# exactly that chain and it covered one of the two. Both are the same failure:
+# a published constant that `bool()` reads as configured while the code that
+# consumes it refuses to run. Adding the next one is a line here.
+_PLACEHOLDER_SECRETS: dict[str, frozenset[str]] = {
+    # `"change-me"` was the field default until #298; `api/webhook.py` 503s on it.
+    "github_webhook_secret": UNSET_WEBHOOK_SECRETS,
+    # `_blank_means_unset` maps an empty JWT_SECRET_KEY back to the development
+    # default, so an operator who never set one still gets a truthy value here —
+    # and `auth_service._signing_key` refuses to sign with it the moment
+    # `GITHUB_REDIRECT_URI` stops pointing at localhost. The page said
+    # "Configured" and the instance then refused to boot.
+    "jwt_secret_key": frozenset({DEV_JWT_SECRET}),
+}
+
+
+def _secret_is_set(key: str) -> bool:
+    """Whether a credential is actually usable, not merely non-empty.
+
+    `bool(value)` was the whole test, so any secret whose "unset" state is a
+    published constant rather than an empty string reported as Configured while
+    the code consuming it refused to run. "Configured" has to mean "will work on
+    a real deployment", or the page is worse than not having the badge.
+    """
+    value = getattr(settings, key)
+    placeholders = _PLACEHOLDER_SECRETS.get(key)
+    if placeholders is not None:
+        return value not in placeholders
+    return bool(value)
 
 
 def _describe(db: Session) -> SettingsOut:
@@ -112,7 +148,7 @@ def _describe(db: Session) -> SettingsOut:
             applies_to=list(spec.applies_to),
             connectable=spec.connectable,
             connect_command=spec.connect_command,
-            is_set=bool(getattr(settings, key)),
+            is_set=_secret_is_set(key),
             # Same three states as the editable settings, and the same rule:
             # a stored row is "override", anything else that is set came from
             # the environment. Only "override" is ours to delete.
@@ -120,7 +156,7 @@ def _describe(db: Session) -> SettingsOut:
                 "override"
                 if key in stored
                 else "env"
-                if getattr(settings, key)
+                if _secret_is_set(key)
                 else "default"
             ),
         )
@@ -133,15 +169,16 @@ def _describe(db: Session) -> SettingsOut:
 @router.get("/settings", response_model=SettingsOut)
 def get_settings(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_owner),
 ) -> SettingsOut:
     """Every setting, in the three buckets the classification defines.
 
-    **Authenticated, but not authorized beyond that.** Liffy has no roles or
-    multi-tenancy yet, so any signed-in user can read and change these. That is
-    a real limitation rather than an oversight — inventing a role system here
-    would be a larger change than the feature — and it is worth knowing before
-    Liffy is deployed anywhere with more than one person on it.
+    **Owner only.** This used to be authenticated and nothing more, which was
+    recorded here as a known limitation — and it was worse than the note
+    admitted, because sign-up was open too, so "any signed-in user" meant
+    anyone with a GitHub account. `require_owner` is the fix, and it is not a
+    role system: there is one owner, claimed by the first login, and everybody
+    else is refused (ADR 007).
     """
     return _describe(db)
 
@@ -150,7 +187,7 @@ def get_settings(
 def patch_settings(
     payload: SettingsPatch,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_owner),
 ) -> SettingsOut:
     """Change one or more editable settings.
 
@@ -180,7 +217,7 @@ def connect_secret_endpoint(
     key: str,
     payload: SecretConnect,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_owner),
 ) -> SettingsOut:
     """Connect a credential from the page instead of from `backend/.env`.
 
@@ -206,7 +243,7 @@ def connect_secret_endpoint(
 def disconnect_secret_endpoint(
     key: str,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_owner),
 ) -> SettingsOut:
     """Forget a connected credential, falling back to whatever `.env` says.
 

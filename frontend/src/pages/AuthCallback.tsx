@@ -30,6 +30,9 @@ const ERROR_COPY: Record<string, string> = {
   missing_code_or_state: "GitHub's response was incomplete. Please try again.",
   missing_tokens: "The sign-in response was missing its tokens. Please try again.",
   github_exchange_failed: "GitHub wouldn't complete the sign-in. Please try again.",
+  not_authorised:
+    "This Liffy instance is private. It belongs to the account that set it up, " +
+    "and your GitHub account isn't on its allowlist.",
   session_failed: "Signed in, but your account couldn't be loaded. Please try again.",
 };
 

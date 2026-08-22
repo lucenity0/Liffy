@@ -133,6 +133,50 @@ def defang_model_markdown(text: str) -> str:
     return _HTML_FETCHING_TAG.sub("&lt;", defanged)
 
 
+def _code_span(text: str) -> str:
+    """One model-authored string, wrapped as an inline code span, delimiters included.
+
+    Two problems, and only the first was ever handled anywhere.
+
+    **A backtick closes the span.** `LLMReviewComment.file` is an unconstrained
+    string, so a path containing one ends the span and everything after it
+    renders as markdown. The unanchorable list below is where that bites: it
+    exists precisely for the comments whose path was *not* found in the diff,
+    which is to say the ones the model invented outright.
+
+    **The contents were never defanged.** Every neighbouring string on this path
+    goes through `defang_model_markdown` and this one did not — so a broken-out
+    span could carry an auto-fetching image, the exact thing that function
+    exists to prevent, reintroduced by the one field nobody thought of as model
+    output. GitHub proxies images through camo, which fetches them server-side,
+    so the attacker's callback fires with no click from the reader.
+
+    The delimiter is variable-length for the same reason `_fence` below is, and
+    by the same CommonMark rule: a span opened with N backticks closes on the
+    next run of exactly N, so N = longest_run + 1 cannot be closed from inside.
+    Backslash escaping is *not* an option for the backticks — CommonMark does
+    not honour backslash escapes within a code span, which is the trap this
+    docstring exists to keep the next reader out of.
+
+    **The defang call is still load-bearing, and not for the reason it looks
+    like.** Inside an intact span nothing renders, so `![` would be inert and
+    the defanging only makes it *display* as `!\[`. What it covers is the one
+    way out that a longer delimiter cannot close: a code span may not contain a
+    blank line, so a path carrying one ends the span whatever it is delimited
+    with, and everything after that is ordinary markdown. Defanging is what
+    makes that escape hatch harmless. Do not delete it as redundant.
+
+    A pad space when the content starts or ends with a backtick, because the
+    renderer strips one leading and one trailing space from a span and would
+    otherwise glue the content's own backtick to the delimiter.
+    """
+    defanged = defang_model_markdown(text)
+    longest = max((len(run) for run in re.findall(r"`+", defanged)), default=0)
+    ticks = "`" * (longest + 1)
+    pad = " " if defanged.startswith("`") or defanged.endswith("`") else ""
+    return f"{ticks}{pad}{defanged}{pad}{ticks}"
+
+
 def _fence(text: str) -> str:
     """A fence long enough to contain ``text``.
 
@@ -275,7 +319,17 @@ def _overview(
         def cell(text: str) -> str:
             return defang_model_markdown(text).replace("|", r"\|")
 
-        rows = "\n".join(f"| `{cell(path)}` | {cell(note)} |" for path, note in files)
+        def _pipe_safe(rendered: str) -> str:
+            """Escape pipes in an already-rendered span, without re-defanging it."""
+            return rendered.replace("|", r"\|")
+
+        # `_code_span` for the path and `cell` for the note: the path is inside a
+        # span and the note is not, so only one of them needs the delimiter
+        # widened. Both still get the pipe escaped — that is `cell`'s job here
+        # and `_pipe_safe`'s inside the span.
+        rows = "\n".join(
+            f"| {_pipe_safe(_code_span(path))} | {cell(note)} |" for path, note in files
+        )
         parts.append(
             "### Reviewed changes\n\n"
             f"Liffy read {len(files)} changed file{'' if len(files) == 1 else 's'} "
@@ -296,6 +350,7 @@ def build_review_body(
     event: ReviewEvent,
     unanchorable: list[ReviewComment],
     supersedes_url: str | None = None,
+    redacted_files: list[str] | None = None,
     changes: list[str] | None = None,
     files: list[tuple[str, str]] | None = None,
     comment_count: int = 0,
@@ -328,7 +383,8 @@ def build_review_body(
             # code around the comment: this text is all they get. Dropping it
             # here while requiring it everywhere else would take the one enforced
             # field away from precisely the findings that need it most.
-            f"- `{c.file_path}:{c.line_start}` — **{c.severity}** · `{c.category}`"
+            f"- {_code_span(f'{c.file_path}:{c.line_start}')} — "
+            f"**{c.severity}** · `{c.category}`"
             f"{_confidence_suffix(c.confidence)} — "
             f"{defang_model_markdown(c.comment_text)}"
             + (
@@ -346,6 +402,20 @@ def build_review_body(
             "GitHub only accepts inline comments on lines that appear in the "
             "diff, so these are reproduced here rather than dropped.\n\n"
             f"{lines}\n</details>"
+        )
+
+    if redacted_files:
+        # Said out loud, because a silent omission is indistinguishable from a
+        # review that read the file and had nothing to say about it — and these
+        # are exactly the files where "Liffy looked at this" would be the wrong
+        # thing to believe. Paths through `_code_span` like every other one on
+        # this path, even though these come from the diff rather than from the
+        # model: one rule, applied everywhere, is the rule that survives.
+        listed = ", ".join(_code_span(path) for path in redacted_files)
+        parts.append(
+            f"_Not sent to the model: {listed} — "
+            f"{'these files appear' if len(redacted_files) > 1 else 'this file appears'} "
+            f"to hold credentials, and a review would transmit them._"
         )
 
     if supersedes_url:

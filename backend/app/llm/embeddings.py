@@ -12,7 +12,7 @@ dropping the collection and re-indexing — there is no migration path.
 
 from typing import Protocol
 
-from app.config import settings
+from app.config import refuse_if_endpoint_rejected, settings
 
 _BATCH_SIZE = 100
 
@@ -26,6 +26,11 @@ class OpenAIEmbeddings:
     Gemini via its compat endpoint when ``settings.openai_base_url`` is set)."""
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        # Same reason as `OpenAIReviewLLM`: a rejected `openai_base_url` row
+        # falls back to the OpenAI default, so the text being embedded would go
+        # to a *more* external destination than the one that was refused.
+        refuse_if_endpoint_rejected()
+
         from openai import OpenAI  # deferred so tests never need the key
 
         self.model = model or settings.embedding_model

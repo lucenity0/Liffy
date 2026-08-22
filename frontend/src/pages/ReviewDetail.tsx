@@ -133,6 +133,11 @@ export function ReviewDetail() {
         ? `${scope.files_reviewed} of ${scope.files_in_diff} files reviewed`
         : `${stat.files} file${stat.files === 1 ? "" : "s"} · +${stat.additions} −${stat.deletions}`;
 
+  // Why the two counts differ, when the reason is a redaction rather than a
+  // narrowed commit selection. Named files, because "1 file omitted" sends the
+  // reader looking for which one — the same reasoning as the posted body.
+  const redacted = scope?.redacted_files ?? [];
+
   const headerMeta = [
     data.model_used,
     data.tokens_used !== null ? `${formatCount(data.tokens_used)} tokens` : null,
@@ -175,6 +180,23 @@ export function ReviewDetail() {
       )}
 
       {data.status === "failed" && <ReviewFailed review={data} />}
+
+      {/* A redaction is not a failure, so it is a note rather than an error
+          state — but it has to be visible, because the alternative is a file
+          count that does not add up and no way to find out why. */}
+      {redacted.length > 0 && (
+        <p className="rounded-sheet border-rule bg-neutral-tint text-ink-dim border px-4 py-3 text-sm">
+          Not sent to the model:{" "}
+          {redacted.map((path, i) => (
+            <span key={path}>
+              {i > 0 && ", "}
+              <code className="text-ink">{path}</code>
+            </span>
+          ))}{" "}
+          — {redacted.length === 1 ? "this file appears" : "these files appear"} to
+          hold credentials, and a review would transmit them.
+        </p>
+      )}
 
       {/* Tabs only once there is something in them. A failed review has no
           summary, no comments and no diff — offering four tabs over an empty

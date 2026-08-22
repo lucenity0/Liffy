@@ -116,7 +116,21 @@ export interface SummaryDetail {
    * who picked three commits sees "17 files" and concludes the picker did
    * not work.
    */
-  scope?: { files_reviewed: number; files_in_diff: number };
+  scope?: {
+    files_reviewed: number;
+    files_in_diff: number;
+    /**
+     * Files kept out of the prompt because they look like they hold
+     * credentials (a committed `.env`, `.envrc`, `staging.env`).
+     *
+     * Named rather than counted, and surfaced here rather than only in the
+     * posted GitHub body: the gap between `files_reviewed` and
+     * `files_in_diff` is otherwise unexplained on the page most owners
+     * actually read, and "2 of 3 files reviewed" with no reason reads as a
+     * bug. Absent when nothing was redacted.
+     */
+    redacted_files?: string[];
+  };
 }
 
 /**
@@ -574,6 +588,16 @@ export interface UserOut {
   username: string;
   email: string | null;
   avatar_url: string | null;
+  /**
+   * Whether this account owns the instance. Liffy is single-tenant: the first
+   * account to sign in claims it, and only that account may read or change
+   * instance settings.
+   *
+   * Used to hide the Settings entry, not to protect it — the gate is
+   * `require_owner` on the backend, and every settings route 403s regardless
+   * of what the nav chooses to render.
+   */
+  is_owner: boolean;
 }
 
 // ── Settings (backend/app/schemas/setting.py) ────────────────────────────────

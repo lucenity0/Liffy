@@ -1,6 +1,8 @@
 import uuid
 
+import pytest
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401  -- register all tables on Base.metadata
@@ -140,3 +142,40 @@ def test_review_comment_stores_confidence_and_scenario() -> None:
         assert fetched is not None
         assert fetched.confidence == "plausible"
         assert fetched.failure_scenario == "With an empty list, the loop reads index -1."
+
+
+
+def test_at_most_one_user_can_own_the_instance() -> None:
+    """The partial unique index, asserted as behaviour rather than as DDL.
+
+    `login_permitted` reads "is there an owner yet?" and `claim_ownership`
+    writes one, and between those two sits a GitHub round trip — so two
+    simultaneous first logins can both pass the read. This index is what makes
+    the loser fail instead of producing a second owner.
+
+    It has to be *partial*, which is the part worth pinning: a plain unique
+    index on the column would allow exactly one non-owner, the opposite of the
+    intent. The second half of this test is what would catch that.
+    """
+    engine = create_engine("sqlite://", future=True)
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add(User(github_id=1, username="first", is_owner=True))
+        session.commit()
+
+        session.add(User(github_id=2, username="second", is_owner=True))
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        # Any number of non-owners is fine.
+        session.add_all([
+            User(github_id=3, username="third", is_owner=False),
+            User(github_id=4, username="fourth", is_owner=False),
+        ])
+        session.commit()
+
+        assert len(session.scalars(select(User)).all()) == 3
+        owners = session.scalars(select(User).where(User.is_owner.is_(True))).all()
+        assert len(owners) == 1 and owners[0].username == "first"

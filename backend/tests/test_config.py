@@ -9,7 +9,15 @@ run under environment variables, so `.env` can stop being read entirely and
 every one of them still passes.
 """
 
-from app.config import Settings, redact_url_credentials
+import pytest
+
+from app.config import (
+    EDITABLE_SETTINGS,
+    SettingError,
+    Settings,
+    redact_url_credentials,
+    settings,
+)
 
 
 def test_dotenv_is_loaded(tmp_path, monkeypatch) -> None:
@@ -79,3 +87,74 @@ def test_redaction_leaves_credential_free_values_untouched() -> None:
         8000,
     ):
         assert redact_url_credentials(value) == value
+
+
+# ── #298: where the endpoint field is allowed to point ────────────────────────
+
+
+def _endpoint_spec():
+    return EDITABLE_SETTINGS["openai_base_url"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://localhost:11434/v1",
+        "http://127.0.0.1:11434/v1",
+        "http://host.docker.internal:11434/v1",
+        "https://api.openai.com/v1",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "",  # empty is a real value: "use the provider's own default"
+    ],
+)
+def test_the_documented_endpoints_still_save(value) -> None:
+    """The allowlist has to cover everything `.env.example` tells people to use.
+
+    An allowlist that refuses the configurations the docs recommend is not a
+    control, it is a bug report waiting to be filed.
+    """
+    assert _endpoint_spec().parse(value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://evil.example/v1",
+        # Contains an allowlisted name and is not an allowlisted host. This is
+        # why the check parses the URL instead of matching substrings.
+        "https://api.openai.com.evil.example/v1",
+        "https://evil.example/?x=localhost",
+        # No scheme, so nothing to reason about.
+        "not-a-url",
+        "file:///etc/passwd",
+    ],
+)
+def test_a_novel_endpoint_is_refused(value) -> None:
+    with pytest.raises(SettingError):
+        _endpoint_spec().parse(value)
+
+
+def test_dotenv_can_widen_the_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The escape hatch, and the reason it lives in `.env`.
+
+    Somebody running a self-hosted vLLM has a legitimate host nobody could have
+    predicted. Making that a settings-page field would mean a write that wanted
+    a new host could simply permit itself first; `.env` costs filesystem access
+    to the box.
+    """
+    with pytest.raises(SettingError):
+        _endpoint_spec().parse("https://llm.internal.example/v1")
+
+    monkeypatch.setattr(settings, "openai_base_url_allowed", "llm.internal.example")
+    assert _endpoint_spec().parse("https://llm.internal.example/v1")
+
+
+def test_the_check_reaches_a_hand_written_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`parse` is the only path from stored text to a live value.
+
+    That is what makes this total rather than a validator on one endpoint: a
+    row inserted straight into the `settings` table with psql goes through the
+    same check on the next `load_overrides`, so a direct INSERT is not a way
+    around the allowlist.
+    """
+    assert _endpoint_spec().host_allowlisted is True

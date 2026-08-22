@@ -121,9 +121,34 @@ echo [liffy] Setting up environment files...
 if not exist "backend\.env" (
     if exist "backend\.env.example" (
         copy backend\.env.example backend\.env >nul
-        REM Generate a simple random secret using Python
-        python -c "import secrets; s=open('backend\\.env').read(); open('backend\\.env','w').write(s.replace('JWT_SECRET_KEY=','JWT_SECRET_KEY='+secrets.token_hex(32)))"
-        echo [done]  Created backend\.env
+        REM Both secrets, and anchored to the start of a line rather than a bare
+        REM string replace: `.env.example` carries these names inside comments
+        REM too, and a substring replace would rewrite the prose as well as the
+        REM assignment. GITHUB_WEBHOOK_SECRET is generated for the same reason
+        REM as the JWT one - an empty value is not "no verification", it is HMAC
+        REM with an empty key, and the webhook route now refuses to answer until
+        REM it is set.
+        REM
+        REM newline='' and NOT '\n': cmd does not process backslashes, so the
+        REM two characters reach Python as the literal `\n`, which io.open
+        REM rejects with `illegal newline value` — *after* truncating the file
+        REM it just opened for writing. Batch does not check errorlevel, so the
+        REM script would then report success over an empty backend\.env.
+        REM The content read in text mode already carries LF endings, so ''
+        REM (no translation) writes exactly what Compose needs.
+        python -c "import re,secrets,io; p='backend\\.env'; s=io.open(p,encoding='utf-8').read(); s=re.sub(r'^JWT_SECRET_KEY=.*$','JWT_SECRET_KEY='+secrets.token_hex(32),s,flags=re.M); w=secrets.token_hex(32); s=re.sub(r'^GITHUB_WEBHOOK_SECRET=.*$','GITHUB_WEBHOOK_SECRET='+w,s,flags=re.M); io.open(p,'w',encoding='utf-8',newline='').write(s); print('    Webhook secret (paste into GitHub - Settings - Webhooks):'); print('      '+w)"
+        REM Checked, because batch does not do it for you. Any failure in the
+        REM line above - a missing python, a bad newline argument, a read-only
+        REM file - leaves a truncated or unmodified backend\.env, and without
+        REM this the script cheerfully reports success over it. That is what
+        REM turned one bad argument into "created successfully, then nothing
+        REM works" instead of an error naming the step that failed.
+        if errorlevel 1 (
+            echo [error] Failed to write secrets into backend\.env
+            echo [error] Set JWT_SECRET_KEY and GITHUB_WEBHOOK_SECRET by hand before starting Liffy.
+        ) else (
+            echo [done]  Created backend\.env with generated JWT and webhook secrets
+        )
         echo [warn]  Open backend\.env and fill in GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, and OPENAI_API_KEY
     ) else (
         echo [error] backend\.env.example not found. Are you in the Liffy root folder?

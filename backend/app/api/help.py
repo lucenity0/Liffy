@@ -12,7 +12,7 @@ documents, and returns their text.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_current_user
+from app.api.deps import require_owner
 from app.models.user import User
 from app.schemas.help import (
     HelpIndexOut,
@@ -138,14 +138,20 @@ somebody's unrelated codebase.
 @router.post("/help/report", response_model=ReportOut, status_code=201)
 def submit_report(
     payload: ReportIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_owner),
 ) -> ReportOut:
     """File a bug or a feature idea as a GitHub issue, and return where it went.
 
-    **Authenticated**, unlike the rest of this router. Reading the docs needs no
+    **Owner only**, unlike the rest of this router. Reading the docs needs no
     session; writing to a public issue tracker does. Without that gate a Liffy
     instance reachable from the internet is an anonymous issue-posting endpoint
     aimed at someone else's repository.
+
+    Authentication alone was not enough for that, and this is the sharper half:
+    the issue is filed with the *instance's* token, so before sign-up was
+    closed, any stranger with a GitHub account could post to `lucenity0/Liffy`
+    under the maintainer's name. `require_owner` means the account that files
+    the issue is the account the token belongs to.
 
     The issue is filed with the instance's own GitHub token, so it is attributed
     to whoever owns that token rather than to the person typing. On a self-hosted
@@ -167,7 +173,12 @@ def submit_report(
     )
 
     try:
-        with GitHubClient(get_github_token()) as client:
+        # The one caller that is genuinely instance-level rather than
+        # user-level: the issue is filed against Liffy's own repository, which
+        # is nobody's connected repo, so there is no per-user token that would
+        # be the right credential. `require_owner` above is what keeps the
+        # person filing it and the account it is filed as the same person.
+        with GitHubClient(get_github_token(allow_server_pat=True)) as client:
             issue = client.create_issue(owner, repo, payload.title.strip(), body, [label])
     except GitHubError as exc:
         # 502, not 500: Liffy is fine, GitHub refused. The message carries

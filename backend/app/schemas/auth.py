@@ -30,6 +30,11 @@ class UserOut(BaseModel):
     username: str
     email: str | None
     avatar_url: str | None
+    # Published so the UI can hide what it cannot use — the settings page 403s
+    # for everyone else. Not a security boundary: the gate is `require_owner`
+    # in `api/deps.py`, and this is only what stops the nav offering a door
+    # that does not open.
+    is_owner: bool
 
 
 class AuthCallbackQuery(BaseModel):

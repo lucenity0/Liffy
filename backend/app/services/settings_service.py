@@ -32,6 +32,8 @@ from app.config import (
     EDITABLE_SETTINGS,
     SettingError,
     apply_overrides,
+    clear_rejected,
+    record_rejected,
     settings,
 )
 from app.llm.claude_code_auth import verify_token
@@ -49,6 +51,10 @@ def load_overrides(db: Session) -> dict[str, Any]:
     not start.
     """
     resolved: dict[str, Any] = {}
+    # Rebuilt from scratch on every load: a row that has since been corrected
+    # must stop being reported as rejected, and a stale entry here would keep
+    # `get_llm` refusing after the operator fixed the thing it complained about.
+    clear_rejected()
     for row in db.scalars(select(Setting)):
         if row.key in CONNECTABLE_SECRETS:
             # A connected credential. No spec to parse it with and nothing to
@@ -64,7 +70,12 @@ def load_overrides(db: Session) -> dict[str, Any]:
         try:
             resolved[row.key] = spec.parse(row.value)
         except SettingError as exc:
+            # Logged *and* recorded. A dropped row silently falls back to `.env`,
+            # which for `openai_base_url` means the OpenAI default — a more
+            # external destination than the one the row was refused for. See
+            # `config.record_rejected`.
             log.warning("settings.row_invalid", key=row.key, error=str(exc))
+            record_rejected(row.key, str(exc))
     return resolved
 
 

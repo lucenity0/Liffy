@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { ThemePicker } from "./ThemeToggle";
 import { UserMenu } from "./UserMenu";
+import { useAuth } from "@/hooks/useAuth";
+import type { UserOut } from "@/types/api";
 import { cn } from "@/lib/utils";
 
 export interface NavChild {
@@ -58,6 +60,40 @@ const SYSTEM: NavItem[] = [
   { to: "/help", label: "Help" },
 ];
 
+/**
+ * Settings is instance-wide, and only the owner may read it — every route
+ * behind it answers 403 to anyone else (`api/deps.py::require_owner`). Offering
+ * the entry to a non-owner would be a door that opens onto an error page.
+ *
+ * Cosmetic only. Nothing here is a security boundary; a non-owner who types
+ * the URL still gets the 403 from the API, which is where the decision is
+ * actually made.
+ *
+ * The cost, stated plainly: Appearance lives under Settings and is purely
+ * local (`useAppearance` writes to localStorage, never to the API), so a
+ * non-owner loses the theme editor along with the settings they could not use.
+ * Non-owners only exist when an operator has explicitly allowlisted them, so
+ * this trades a rare inconvenience for one nav rule instead of a split page.
+ */
+function systemNavFor(user: UserOut | null): NavItem[] {
+  // Hidden only when we *know* they are not the owner. Three states, not two —
+  // the same distinction `AuthStatus` draws, and for the same reason.
+  //
+  // The first version was `user?.is_owner ?? false`, which read "unknown" as
+  // "not the owner" and failed in the harmful direction. Anything that stops
+  // the field arriving — a session still loading, a backend a version behind
+  // during a deploy — silently removed the settings page from the person who
+  // owns the instance, with no error and nothing to click. That happened: a
+  // container rebuilt from a checkout on another branch served a `UserOut`
+  // with no `is_owner`, and Settings simply vanished.
+  //
+  // Failing open is right *because this is decoration*. `require_owner` is the
+  // gate; showing a non-owner a door that 403s costs them one click, and
+  // hiding it from the owner costs them the page.
+  const knownNonOwner = user !== null && user.is_owner === false;
+  return knownNonOwner ? SYSTEM.filter((item) => item.to !== "/settings") : SYSTEM;
+}
+
 const EXPANDED_KEY = "liffy-nav-expanded";
 
 /**
@@ -110,6 +146,8 @@ function readExpanded(): NavState {
  */
 export function SideNav() {
   const { pathname } = useLocation();
+  const { user } = useAuth();
+  const system = systemNavFor(user);
   const [expanded, setExpanded] = useState<NavState>(readExpanded);
   const [open, setOpen] = useState(false);
 
@@ -273,7 +311,7 @@ export function SideNav() {
               one real division in the nav, and a hairline did not carry it. */}
           <hr className="my-2 h-0.5 border-0 bg-chrome-ink-dim opacity-60" />
 
-          {SYSTEM.map((item) => (
+          {system.map((item) => (
             <NavRow
               key={item.to}
               item={item}

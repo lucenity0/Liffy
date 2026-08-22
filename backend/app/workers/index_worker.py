@@ -1,16 +1,19 @@
 """Async codebase indexing task (report §7.1). Enqueued when a repository is
 connected or re-indexing is requested (BASE-10's POST /repos/{id}/index)."""
 
+import logging
 import uuid
 
 from app.database import SessionLocal
 from app.llm.embeddings import get_embedding_provider
 from app.models.repository import Repository
 from app.models.user import User
-from app.services.github_service import GitHubClient
+from app.services.github_service import GitHubAuthError, GitHubClient
 from app.services.indexer import index_repository
 from app.services.rag_service import get_chroma_client
 from app.workers.celery_app import celery
+
+logger = logging.getLogger(__name__)
 
 
 # `acks_late` here and deliberately *not* on the review task. Both settings
@@ -37,7 +40,20 @@ def index_repo_task(repo_id: str) -> dict:
         # No request context here: act as the repository's owner, whose token
         # is the one guaranteed to reach it.
         owner = db.get(User, repo.user_id)
-        gh = GitHubClient(token=owner.github_access_token if owner else None)
+        try:
+            gh = GitHubClient(token=owner.github_access_token if owner else None)
+        except GitHubAuthError as exc:
+            # `GitHubClient` no longer falls back to the instance PAT, so an
+            # owner with no stored token fails here. The `except Exception`
+            # below would clear `indexing_started_at` and re-raise, leaving a
+            # traceback in the worker log and a repository that just looks
+            # un-indexed. Named instead — same guard `review_worker` carries,
+            # for the same reason.
+            repo.indexing_started_at = None
+            db.commit()
+            logger.warning("index skipped for %s: %s", repo.full_name, exc)
+            return {"status": "skipped", "repo_id": repo_id,
+                    "reason": "owner has no GitHub token"}
         try:
             result = index_repository(
                 db,

@@ -31,11 +31,18 @@ def test_user_out_reads_from_orm_object() -> None:
         username="octo",
         email=None,
         avatar_url=None,
+        # Passed explicitly because this object is never flushed: the column
+        # default lands at INSERT, so an in-memory `User` carries `None` here
+        # and `UserOut` rightly refuses it. A row that has been through the
+        # database always has a real bool — `test_api_auth.py` asserts both
+        # values across a full handshake.
+        is_owner=False,
     )
     out = UserOut.model_validate(user)
     assert out.github_id == 42
     assert out.username == "octo"
     assert out.email is None
+    assert out.is_owner is False
 
 
 def test_refresh_request_requires_a_token() -> None:

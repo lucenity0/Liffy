@@ -6,12 +6,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.config import SECRET_SETTINGS, apply_overrides, settings
+from app.config import DEV_JWT_SECRET, SECRET_SETTINGS, apply_overrides, settings
 from app.database import Base, get_db
 from app.llm import claude_code_auth
+from app.api.settings import _secret_is_set
 from app.main import app
 from app.models.setting import Setting
-from app.services.settings_service import refresh_overrides
+from app.services.settings_service import load_overrides, refresh_overrides
 
 client = TestClient(app)
 
@@ -61,7 +62,7 @@ def seeded(monkeypatch):
         monkeypatch.setattr(settings, key, value)
 
     with factory() as db:
-        user = seed_user(db, github_id=1, username="octo")
+        user = seed_user(db, github_id=1, username="octo", is_owner=True)
         db.commit()
         headers = auth_headers(user)
         user_id = user.id
@@ -531,3 +532,158 @@ def test_connecting_requires_authentication() -> None:
     assert client.delete(
         "/settings/secrets/claude_code_oauth_token"
     ).status_code in (401, 403)
+
+
+# ── #298: the settings surface belongs to the instance owner ──────────────────
+
+
+@pytest.fixture()
+def not_the_owner(seeded):
+    """A second, allowlisted account. Signed in, and not the owner.
+
+    Built on top of `seeded` so the owner exists: `require_owner` refusing
+    somebody on an instance nobody owns would prove nothing, since the state
+    that matters is "there is an owner and it is not you".
+    """
+    with seeded["factory"]() as db:
+        other = seed_user(db, github_id=99, username="collaborator")
+        db.commit()
+        return auth_headers(other)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("get", "/settings", None),
+        ("patch", "/settings", {"values": {"llm_provider": "openai"}}),
+        ("post", "/settings/secrets/claude_code_oauth_token", {"value": "x" * 40}),
+        ("delete", "/settings/secrets/claude_code_oauth_token", None),
+    ],
+)
+def test_every_settings_route_refuses_a_non_owner(
+    not_the_owner, method, path, body
+) -> None:
+    """All four, parametrised, because one ungated route is the whole hole.
+
+    These decide which company receives the code being reviewed
+    (`openai_base_url`), whether Liffy writes to real pull requests, and which
+    credentials the instance holds. Read is gated as tightly as write: the GET
+    alone reports the database host and every configured secret by name.
+    """
+    call = getattr(client, method)
+    response = call(path, headers=not_the_owner, **({"json": body} if body else {}))
+
+    assert response.status_code == 403
+    assert "set up this Liffy instance" in response.json()["detail"]
+
+
+def test_a_refused_write_changes_nothing(not_the_owner, seeded) -> None:
+    """403 before the write, not after it.
+
+    A gate that rejects the response while the row has already been stored is
+    not a gate — and `update_settings` commits before `_describe` renders, so
+    the two are genuinely separable.
+    """
+    client.patch(
+        "/settings",
+        headers=not_the_owner,
+        json={"values": {"openai_base_url": "https://evil.example/v1"}},
+    )
+
+    with seeded["factory"]() as db:
+        assert load_overrides(db) == {}
+
+
+def test_the_owner_is_unaffected(seeded) -> None:
+    assert client.get("/settings", headers=seeded["headers"]).status_code == 200
+
+
+def test_the_endpoint_field_refuses_a_novel_host(seeded) -> None:
+    """The exfiltration path, closed at the API.
+
+    `openai_base_url` decides where reviews are sent: the request carries the
+    diff, the retrieved repository context, and the API key in the
+    `Authorization` header. Before this it was a free string behind a
+    client-side confirmation dialog.
+    """
+    response = client.patch(
+        "/settings",
+        headers=seeded["headers"],
+        json={"values": {"openai_base_url": "https://evil.example/v1"}},
+    )
+
+    assert response.status_code == 422
+    assert "OPENAI_BASE_URL_ALLOWED" in response.json()["detail"]
+
+    with seeded["factory"]() as db:
+        assert load_overrides(db) == {}
+
+
+def test_a_local_ollama_endpoint_still_saves(seeded) -> None:
+    """The control must not cost the configuration it exists to protect."""
+    response = client.patch(
+        "/settings",
+        headers=seeded["headers"],
+        json={"values": {"openai_base_url": "http://localhost:11434/v1"}},
+    )
+
+    assert response.status_code == 200
+    with seeded["factory"]() as db:
+        assert load_overrides(db)["openai_base_url"] == "http://localhost:11434/v1"
+
+
+def test_the_dev_jwt_secret_does_not_report_as_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sibling of the webhook case, found by Liffy reviewing this branch.
+
+    `_blank_means_unset` maps an empty `JWT_SECRET_KEY` back to the development
+    default, so an operator who never set one still gets a truthy value — and
+    `auth_service._signing_key` refuses it the moment `GITHUB_REDIRECT_URI`
+    stops pointing at localhost. The page said "Configured" and the instance
+    then refused to boot.
+
+    Tested against `_secret_is_set` rather than over HTTP, deliberately: the
+    `seeded` fixture mints its bearer token *with* `jwt_secret_key`, so
+    swapping that value mid-request invalidates the token and the whole
+    endpoint answers 401 — which is what the fixture's own docstring warns
+    about. The webhook case below covers the HTTP path; this covers the rule.
+    """
+    monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
+    assert _secret_is_set("jwt_secret_key") is False
+
+    monkeypatch.setattr(settings, "jwt_secret_key", "x" * 48)
+    assert _secret_is_set("jwt_secret_key") is True
+
+
+def test_every_placeholder_secret_is_covered() -> None:
+    """The first fix was `if key == "github_webhook_secret"`, and it missed the
+    other one. A table means the next addition is a line rather than a branch —
+    this asserts every key in it is a real secret the page renders."""
+    from app.api.settings import _PLACEHOLDER_SECRETS
+
+    assert set(_PLACEHOLDER_SECRETS) <= set(SECRET_SETTINGS)
+    assert {"github_webhook_secret", "jwt_secret_key"} <= set(_PLACEHOLDER_SECRETS)
+
+
+def test_an_unset_webhook_secret_does_not_report_as_configured(
+    seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """"Configured" has to mean the webhook route will actually answer.
+
+    `bool(value)` was the whole test, so the published former default
+    `"change-me"` rendered as Configured while `api/webhook.py` 503s every
+    delivery — the same "looks set but isn't" failure that changing the default
+    was meant to end.
+    """
+    for value in ("", "change-me"):
+        monkeypatch.setattr(settings, "github_webhook_secret", value)
+        body = client.get("/settings", headers=seeded["headers"]).json()
+        row = next(s for s in body["secrets"] if s["key"] == "github_webhook_secret")
+        assert row["is_set"] is False, value
+        assert row["source"] == "default", value
+
+    monkeypatch.setattr(settings, "github_webhook_secret", "a-real-secret")
+    body = client.get("/settings", headers=seeded["headers"]).json()
+    row = next(s for s in body["secrets"] if s["key"] == "github_webhook_secret")
+    assert row["is_set"] is True

@@ -91,7 +91,16 @@ cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 ```
 
-Open `backend/.env` and fill in your values — see the Environment Variables section below for what each one means. For local dev, the defaults work except for `JWT_SECRET_KEY` which you should set to any random string.
+Open `backend/.env` and fill in your values — see the Environment Variables section below for what each one means. For local dev the defaults work, except for two you have to generate:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # JWT_SECRET_KEY
+python -c "import secrets; print(secrets.token_hex(32))"       # GITHUB_WEBHOOK_SECRET
+```
+
+`./liffy.sh` generates both for you on a fresh clone, which is the reason to prefer it over this path.
+
+**The first account to sign in owns the instance.** Everyone else is refused unless listed in `ALLOWED_GITHUB_LOGINS`, so sign in yourself before letting anyone reach it — see [ADR 007](decisions/007-single-tenant-security-model.md).
 
 `frontend/.env` needs no editing: it holds no secrets, only `VITE_API_BASE_URL`. Do not skip it, though. Without that variable every request the UI makes becomes root-relative and hits the Vite dev server instead of the API — including the *Continue with GitHub* link, which Vite answers with the app's own `index.html`. The router matches its catch-all route, the auth guard sees an anonymous visitor, and you land back on the login page having never reached GitHub. It reads exactly like a broken OAuth setup.
 
@@ -505,15 +514,17 @@ All variables go in `backend/.env`. Never commit this file.
 | `REDIS_URL` | Yes | Redis connection string |
 | `GITHUB_CLIENT_ID` | For auth | From GitHub OAuth App settings |
 | `GITHUB_CLIENT_SECRET` | For auth | From GitHub OAuth App settings |
-| `GITHUB_WEBHOOK_SECRET` | For webhooks | Any random string, must match GitHub webhook config |
-| `JWT_SECRET_KEY` | Yes | Any random string, keep it secret |
+| `GITHUB_WEBHOOK_SECRET` | For webhooks | Random string, must match GitHub webhook config. Until set, `/webhook/github` answers 503 — an empty value is HMAC with an empty key, which anyone can forge |
+| `ALLOWED_GITHUB_LOGINS` | No | Comma-separated logins allowed to sign in besides the owner. Empty means owner only |
+| `JWT_SECRET_KEY` | Yes | Random string, keep it secret. Liffy refuses to start on the published default once `GITHUB_REDIRECT_URI` is not localhost |
+| `OPENAI_BASE_URL_ALLOWED` | No | Extra hosts `OPENAI_BASE_URL` may point at. Not editable from the settings page, on purpose |
 | `JWT_ALGORITHM` | Yes | Leave as `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Yes | Leave as `15` |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Yes | Leave as `30` |
 | `OPENAI_API_KEY` | For LLM features | From platform.openai.com |
 | `CLAUDE_CODE_OAUTH_TOKEN` | `claude_code` in Docker | From `claude setup-token` on the host |
 | `CODEX_HOME` | `codex` in Docker | Path the mounted `~/.codex` appears at, e.g. `/codex-auth` |
-| `DEBUG` | Yes | `True` for local dev |
+| `DEBUG` | Yes | `True` for local dev. Controls whether the OAuth state cookie is marked `Secure`, so it must stay `True` when serving over plain HTTP. It does **not** license the development JWT secret — `GITHUB_REDIRECT_URI` decides that |
 
 ### Getting GitHub OAuth credentials
 

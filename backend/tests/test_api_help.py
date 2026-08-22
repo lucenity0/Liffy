@@ -146,7 +146,12 @@ class _FakeClient:
 
 @pytest.fixture
 def seeded():
-    """A signed-in user, since filing a report needs a session."""
+    """The instance owner, since filing a report needs to be them.
+
+    An owner rather than any signed-in user: the report is filed with the
+    instance's own GitHub token, so `require_owner` is what keeps the account
+    that files the issue the same account the token belongs to.
+    """
     engine = create_engine(
         "sqlite://", future=True, connect_args={"check_same_thread": False},
         poolclass=StaticPool,
@@ -155,7 +160,7 @@ def seeded():
     factory = sessionmaker(bind=engine, autoflush=False)
 
     with factory() as db:
-        user = seed_user(db, github_id=1, username="octo")
+        user = seed_user(db, github_id=1, username="octo", is_owner=True)
         db.commit()
         headers = auth_headers(user)
 
@@ -167,7 +172,7 @@ def seeded():
             db.close()
 
     app.dependency_overrides[get_db] = override
-    yield {"headers": headers}
+    yield {"headers": headers, "factory": factory}
     app.dependency_overrides.clear()
 
 
@@ -288,3 +293,34 @@ def test_github_refusing_reads_as_github_not_as_liffy(seeded, monkeypatch) -> No
 
     assert response.status_code == 502
     assert "not accessible" in response.json()["detail"]
+
+
+def test_a_non_owner_cannot_file_a_report(seeded) -> None:
+    """The issue is filed with the *instance's* GitHub token.
+
+    So an ungated version does not merely let a stranger post — it posts under
+    the maintainer's name, to `lucenity0/Liffy`, with the maintainer's PAT.
+    Reading the docs stays open; writing to somebody's issue tracker does not.
+    """
+    with seeded["factory"]() as db:
+        other = seed_user(db, github_id=99, username="collaborator")
+        db.commit()
+        headers = auth_headers(other)
+
+    response = client.post(
+        "/help/report",
+        headers=headers,
+        json={"kind": "bug", "title": "spam", "body": "spam" * 10},
+    )
+
+    assert response.status_code == 403
+
+
+def test_reading_help_stays_open_to_everyone() -> None:
+    """The gate is on the write, and only on the write.
+
+    Someone who cannot sign in is exactly the person who needs "why can't I
+    sign in?", so gating the corpus would put the answer behind the problem.
+    """
+    assert client.get("/help/topics").status_code == 200
+    assert client.get("/help?q=signing+in").status_code == 200

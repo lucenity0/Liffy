@@ -11,7 +11,7 @@ from app.database import Base, get_db
 from app.llm import claude_code_auth
 from app.main import app
 from app.models.setting import Setting
-from app.services.settings_service import refresh_overrides
+from app.services.settings_service import load_overrides, refresh_overrides
 
 client = TestClient(app)
 
@@ -61,7 +61,7 @@ def seeded(monkeypatch):
         monkeypatch.setattr(settings, key, value)
 
     with factory() as db:
-        user = seed_user(db, github_id=1, username="octo")
+        user = seed_user(db, github_id=1, username="octo", is_owner=True)
         db.commit()
         headers = auth_headers(user)
         user_id = user.id
@@ -531,3 +531,67 @@ def test_connecting_requires_authentication() -> None:
     assert client.delete(
         "/settings/secrets/claude_code_oauth_token"
     ).status_code in (401, 403)
+
+
+# ── #298: the settings surface belongs to the instance owner ──────────────────
+
+
+@pytest.fixture()
+def not_the_owner(seeded):
+    """A second, allowlisted account. Signed in, and not the owner.
+
+    Built on top of `seeded` so the owner exists: `require_owner` refusing
+    somebody on an instance nobody owns would prove nothing, since the state
+    that matters is "there is an owner and it is not you".
+    """
+    with seeded["factory"]() as db:
+        other = seed_user(db, github_id=99, username="collaborator")
+        db.commit()
+        return auth_headers(other)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("get", "/settings", None),
+        ("patch", "/settings", {"values": {"llm_provider": "openai"}}),
+        ("post", "/settings/secrets/claude_code_oauth_token", {"value": "x" * 40}),
+        ("delete", "/settings/secrets/claude_code_oauth_token", None),
+    ],
+)
+def test_every_settings_route_refuses_a_non_owner(
+    not_the_owner, method, path, body
+) -> None:
+    """All four, parametrised, because one ungated route is the whole hole.
+
+    These decide which company receives the code being reviewed
+    (`openai_base_url`), whether Liffy writes to real pull requests, and which
+    credentials the instance holds. Read is gated as tightly as write: the GET
+    alone reports the database host and every configured secret by name.
+    """
+    call = getattr(client, method)
+    response = call(path, headers=not_the_owner, **({"json": body} if body else {}))
+
+    assert response.status_code == 403
+    assert "set up this Liffy instance" in response.json()["detail"]
+
+
+def test_a_refused_write_changes_nothing(not_the_owner, seeded) -> None:
+    """403 before the write, not after it.
+
+    A gate that rejects the response while the row has already been stored is
+    not a gate — and `update_settings` commits before `_describe` renders, so
+    the two are genuinely separable.
+    """
+    client.patch(
+        "/settings",
+        headers=not_the_owner,
+        json={"values": {"openai_base_url": "https://evil.example/v1"}},
+    )
+
+    with seeded["factory"]() as db:
+        assert load_overrides(db) == {}
+
+
+def test_the_owner_is_unaffected(seeded) -> None:
+    assert client.get("/settings", headers=seeded["headers"]).status_code == 200

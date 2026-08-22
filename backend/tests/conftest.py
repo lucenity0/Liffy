@@ -9,9 +9,23 @@ from app.services.auth_service import create_access_token
 from app.services.github_service import PullRequestMeta, RepositoryMeta
 
 
-def seed_user(db: Session, github_id: int = 1, username: str = "octo") -> User:
-    """Insert a user and flush so its id is available."""
-    user = User(github_id=github_id, username=username)
+def seed_user(
+    db: Session,
+    github_id: int = 1,
+    username: str = "octo",
+    *,
+    is_owner: bool = False,
+) -> User:
+    """Insert a user and flush so its id is available.
+
+    ``is_owner`` defaults to False rather than True, which is the opposite of
+    what most single-user tests want and is deliberate: ``users`` carries a
+    partial unique index over the owner flag, so a default of True would make
+    every test that seeds a second user fail on a constraint instead of on the
+    thing it was testing. The two suites that need an owner —
+    ``test_api_settings`` and ``test_api_help`` — ask for one.
+    """
+    user = User(github_id=github_id, username=username, is_owner=is_owner)
     db.add(user)
     db.flush()
     return user

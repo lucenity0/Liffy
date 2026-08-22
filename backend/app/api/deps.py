@@ -61,6 +61,33 @@ def get_current_user(
     return user
 
 
+def require_owner(user: User = Depends(get_current_user)) -> User:
+    """Resolve the caller and refuse anyone but the instance owner.
+
+    Liffy is single-tenant (ADR 007). A handful of routes are not about *your*
+    repositories but about *the install* — the settings page decides which
+    company receives the code being reviewed and whether Liffy writes to real
+    pull requests, and `help/report` files issues with the instance's own
+    GitHub token. Those belong to whoever set Liffy up.
+
+    **403, not the 404 the rest of this file insists on.** The 404 rule below
+    exists to stop an id guess becoming an oracle for whether somebody else's
+    row is real. Nothing here has an id and nothing here is secret: `/settings`
+    is one fixed endpoint whose existence is documented, so hiding it would
+    cost the caller an accurate error and buy nothing. Do not "fix" this to
+    match the helpers underneath it — they are answering a different question.
+    """
+    if not user.is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Only the account that set up this Liffy instance can read or "
+                "change its settings."
+            ),
+        )
+    return user
+
+
 # ── Ownership ─────────────────────────────────────────────────────────────────
 #
 # Everything a user owns hangs off ``repositories.user_id``; nothing below it

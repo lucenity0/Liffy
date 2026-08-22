@@ -563,3 +563,63 @@ def test_a_non_string_merge_timestamp_does_not_500_the_webhook(
     pr = _fetch_pr(connected_repo)
     assert pr.status == "closed"
     assert pr.merged_at is None
+
+
+# ── #298: a signature is only as good as the key behind it ────────────────────
+
+
+@pytest.mark.parametrize("secret", ["", "change-me"])
+def test_an_unconfigured_secret_refuses_the_delivery(
+    enqueued, monkeypatch: pytest.MonkeyPatch, secret
+) -> None:
+    """Both spellings of "nobody set this", and both used to verify.
+
+    An empty key is not a broken HMAC — it is a working HMAC with a key anyone
+    can also use. `"change-me"` was the field's default and is published in this
+    repository, so it is the same situation with extra steps. `.env.example`
+    shipped the empty one and the documented setup is to copy that file, which
+    is what made this the *common* deployment rather than a corner case.
+
+    Signed with the very key the instance is holding, so this fails for the
+    right reason: the request is not malformed, it is unauthenticatable.
+    """
+    monkeypatch.setattr(settings, "github_webhook_secret", secret)
+    body = json.dumps(
+        {
+            "action": "opened",
+            "repository": {"full_name": "octo/demo"},
+            "pull_request": {"number": 42},
+        }
+    ).encode()
+
+    response = client.post(
+        "/webhook/github",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": _signature(secret, body),
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "GITHUB_WEBHOOK_SECRET" in response.json()["detail"]
+    # The half that matters: no review was queued against somebody's pull
+    # request, and no state was written.
+    assert enqueued == []
+
+
+def test_a_configured_secret_still_queues(enqueued) -> None:
+    """The guard must not cost the feature it is guarding."""
+    response = _signed(
+        json.dumps(
+            {
+                "action": "opened",
+                "repository": {"full_name": "octo/demo"},
+                "pull_request": {"number": 42},
+            }
+        ).encode()
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert len(enqueued) == 1

@@ -42,7 +42,12 @@ class Settings(BaseSettings):
     # GitHub OAuth
     github_client_id: str = Field(default="")
     github_client_secret: str = Field(default="")
-    github_webhook_secret: str = Field(default="change-me")
+    # Empty, not `"change-me"`. A placeholder that *looks* configured is worse
+    # than an absent value: the settings page reports `is_set: bool(...)`, so a
+    # default string made an unconfigured instance render as "Configured" while
+    # verifying deliveries against a constant published in this repository.
+    # `api/webhook.py` refuses to serve the route until this holds something.
+    github_webhook_secret: str = Field(default="")
     # Must byte-match the callback URL registered on the GitHub OAuth App —
     # scheme, host, port and path, with no trailing slash. A mismatch fails at
     # GitHub's end with an unhelpful error rather than anywhere in this code.
@@ -513,6 +518,14 @@ EDITABLE_SETTINGS: dict[str, SettingSpec] = {
 # Confirmed in the UI before they take a non-default value, because each reaches
 # outside Liffy: one writes to somebody's pull request, one can block their
 # merge, and one decides which company receives the code being reviewed.
+# Values of `github_webhook_secret` that mean "nobody set this".
+#
+# `"change-me"` was the field's default until #298 and is published in this
+# file's history, so an instance still carrying it verifies signatures against
+# a key anybody can read. Treated as unset rather than as a secret.
+UNSET_WEBHOOK_SECRETS: frozenset[str] = frozenset({"", "change-me"})
+
+
 CONFIRM_ON_ENABLE: frozenset[str] = frozenset(
     {"post_reviews_to_github", "github_review_event_mode", "openai_base_url"}
 )

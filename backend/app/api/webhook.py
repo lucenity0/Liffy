@@ -1,11 +1,12 @@
 import json
 from datetime import datetime, timezone
 
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import UNSET_WEBHOOK_SECRETS, settings
 from app.database import get_db
 from app.models.pull_request import PullRequest
 from app.models.repository import Repository
@@ -15,6 +16,7 @@ from app.services.review_service import resolve_repo_owner
 from app.workers import review_worker
 
 router = APIRouter()
+log = structlog.get_logger(__name__)
 
 # PR events that warrant a (re-)review (report §3.1 step 02).
 _REVIEWABLE_ACTIONS = {"opened", "synchronize", "reopened"}
@@ -45,8 +47,34 @@ async def github_webhook(
     x_hub_signature_256: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> dict[str, str | int]:
+    # Before the signature check, because the signature check cannot catch this.
+    #
+    # `verify_webhook_signature` is correct — constant-time, no bypass on a
+    # missing header — and it is only ever as strong as the key it is handed.
+    # An empty secret still verifies: it computes HMAC-SHA256 with an empty
+    # key, which anyone can also compute. So did the old `"change-me"` default,
+    # which is published in this repository. `backend/.env.example` shipped the
+    # empty one, and the documented setup is to copy that file, so the common
+    # deployment authenticated GitHub against a key nobody chose.
+    #
+    # **503 here rather than a refusal to boot.** Webhooks are optional — plenty
+    # of installs only ever trigger reviews from the UI — and refusing to start
+    # over an unconfigured optional feature would be the wrong trade. Logged so
+    # the reason is findable when GitHub's delivery page shows the failure.
+    secret = settings.github_webhook_secret
+    if secret in UNSET_WEBHOOK_SECRETS:
+        log.warning("webhook.secret_not_configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "GITHUB_WEBHOOK_SECRET is not configured, so this delivery "
+                "cannot be authenticated. Set it in backend/.env and paste the "
+                "same value into the webhook's settings on GitHub."
+            ),
+        )
+
     body = await request.body()
-    if not verify_webhook_signature(settings.github_webhook_secret, body, x_hub_signature_256):
+    if not verify_webhook_signature(secret, body, x_hub_signature_256):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
 
     # Report §8.1's clock starts here — the "webhook received" its < 90s target

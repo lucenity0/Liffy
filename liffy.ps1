@@ -292,6 +292,14 @@ function Initialize-EnvFile {
     $lines = Get-Content $examplePath -Encoding UTF8
     $lines = $lines -replace '^JWT_SECRET_KEY=.*', ("JWT_SECRET_KEY=" + (New-JwtSecret))
 
+    # Generated for the same reason as the JWT secret: `.env.example` ships this
+    # empty, and an empty webhook secret does not fail - it verifies deliveries
+    # with an empty HMAC key, which anybody can also compute. The webhook route
+    # refuses to answer until it is set, so generating it here is what keeps
+    # that from reading as a broken feature. Same generator: 32 random bytes.
+    $webhookSecret = New-JwtSecret
+    $lines = $lines -replace '^GITHUB_WEBHOOK_SECRET=.*', ("GITHUB_WEBHOOK_SECRET=" + $webhookSecret)
+
     # Written through .NET rather than Set-Content for two properties Compose
     # cares about and Set-Content will not give you on 5.1:
     #
@@ -305,7 +313,12 @@ function Initialize-EnvFile {
     $text = ($lines -join "`n") + "`n"
     [System.IO.File]::WriteAllText($envPath, $text, (New-Object System.Text.UTF8Encoding($false)))
 
-    Write-Success "Created backend\.env with a generated JWT secret"
+    Write-Success "Created backend\.env with generated JWT and webhook secrets"
+    # Printed, unlike the JWT secret, because this one has a second home:
+    # GitHub's webhook form needs the identical value or every delivery fails
+    # the signature check.
+    Write-Host "    Webhook secret (paste into GitHub -> Settings -> Webhooks):"
+    Write-Host "      $webhookSecret"
     Write-Warn "Open backend\.env and fill in GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET / an LLM key when you're ready for real runs"
 }
 

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_owner
 from app.config import (
     CONFIRM_ON_ENABLE,
+    DEV_JWT_SECRET,
     UNSET_WEBHOOK_SECRETS,
     EDITABLE_SETTINGS,
     READ_ONLY_SETTINGS,
@@ -49,18 +50,37 @@ def _suggestions_for(key: str, spec) -> tuple[str, ...]:
     return discover_codex_models(settings.codex_home)
 
 
+# Secrets with a non-empty value that still means "nobody set this", and the
+# values in question.
+#
+# A table rather than a chain of `if key == ...`, because the first version was
+# exactly that chain and it covered one of the two. Both are the same failure:
+# a published constant that `bool()` reads as configured while the code that
+# consumes it refuses to run. Adding the next one is a line here.
+_PLACEHOLDER_SECRETS: dict[str, frozenset[str]] = {
+    # `"change-me"` was the field default until #298; `api/webhook.py` 503s on it.
+    "github_webhook_secret": UNSET_WEBHOOK_SECRETS,
+    # `_blank_means_unset` maps an empty JWT_SECRET_KEY back to the development
+    # default, so an operator who never set one still gets a truthy value here —
+    # and `auth_service._signing_key` refuses to sign with it the moment
+    # `GITHUB_REDIRECT_URI` stops pointing at localhost. The page said
+    # "Configured" and the instance then refused to boot.
+    "jwt_secret_key": frozenset({DEV_JWT_SECRET}),
+}
+
+
 def _secret_is_set(key: str) -> bool:
     """Whether a credential is actually usable, not merely non-empty.
 
-    `bool(value)` was the whole test, and it reported `github_webhook_secret`
-    as "Configured" for the literal string `"change-me"` — the published former
-    default, which `api/webhook.py` refuses to serve on. The page saying
-    Configured while every delivery 503s is the same "looks set but isn't"
-    failure that changing the default was meant to end, left half-closed.
+    `bool(value)` was the whole test, so any secret whose "unset" state is a
+    published constant rather than an empty string reported as Configured while
+    the code consuming it refused to run. "Configured" has to mean "will work on
+    a real deployment", or the page is worse than not having the badge.
     """
     value = getattr(settings, key)
-    if key == "github_webhook_secret":
-        return value not in UNSET_WEBHOOK_SECRETS
+    placeholders = _PLACEHOLDER_SECRETS.get(key)
+    if placeholders is not None:
+        return value not in placeholders
     return bool(value)
 
 

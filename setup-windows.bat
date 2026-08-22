@@ -121,9 +121,15 @@ echo [liffy] Setting up environment files...
 if not exist "backend\.env" (
     if exist "backend\.env.example" (
         copy backend\.env.example backend\.env >nul
-        REM Generate a simple random secret using Python
-        python -c "import secrets; s=open('backend\\.env').read(); open('backend\\.env','w').write(s.replace('JWT_SECRET_KEY=','JWT_SECRET_KEY='+secrets.token_hex(32)))"
-        echo [done]  Created backend\.env
+        REM Both secrets, and anchored to the start of a line rather than a bare
+        REM string replace: `.env.example` carries these names inside comments
+        REM too, and a substring replace would rewrite the prose as well as the
+        REM assignment. GITHUB_WEBHOOK_SECRET is generated for the same reason
+        REM as the JWT one - an empty value is not "no verification", it is HMAC
+        REM with an empty key, and the webhook route now refuses to answer until
+        REM it is set.
+        python -c "import re,secrets,io; p='backend\\.env'; s=io.open(p,encoding='utf-8').read(); s=re.sub(r'^JWT_SECRET_KEY=.*$','JWT_SECRET_KEY='+secrets.token_hex(32),s,flags=re.M); w=secrets.token_hex(32); s=re.sub(r'^GITHUB_WEBHOOK_SECRET=.*$','GITHUB_WEBHOOK_SECRET='+w,s,flags=re.M); io.open(p,'w',encoding='utf-8',newline='\\n').write(s); print('    Webhook secret (paste into GitHub - Settings - Webhooks):'); print('      '+w)"
+        echo [done]  Created backend\.env with generated JWT and webhook secrets
         echo [warn]  Open backend\.env and fill in GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, and OPENAI_API_KEY
     ) else (
         echo [error] backend\.env.example not found. Are you in the Liffy root folder?

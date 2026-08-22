@@ -6,9 +6,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.config import SECRET_SETTINGS, apply_overrides, settings
+from app.config import DEV_JWT_SECRET, SECRET_SETTINGS, apply_overrides, settings
 from app.database import Base, get_db
 from app.llm import claude_code_auth
+from app.api.settings import _secret_is_set
 from app.main import app
 from app.models.setting import Setting
 from app.services.settings_service import load_overrides, refresh_overrides
@@ -629,6 +630,40 @@ def test_a_local_ollama_endpoint_still_saves(seeded) -> None:
     assert response.status_code == 200
     with seeded["factory"]() as db:
         assert load_overrides(db)["openai_base_url"] == "http://localhost:11434/v1"
+
+
+def test_the_dev_jwt_secret_does_not_report_as_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sibling of the webhook case, found by Liffy reviewing this branch.
+
+    `_blank_means_unset` maps an empty `JWT_SECRET_KEY` back to the development
+    default, so an operator who never set one still gets a truthy value — and
+    `auth_service._signing_key` refuses it the moment `GITHUB_REDIRECT_URI`
+    stops pointing at localhost. The page said "Configured" and the instance
+    then refused to boot.
+
+    Tested against `_secret_is_set` rather than over HTTP, deliberately: the
+    `seeded` fixture mints its bearer token *with* `jwt_secret_key`, so
+    swapping that value mid-request invalidates the token and the whole
+    endpoint answers 401 — which is what the fixture's own docstring warns
+    about. The webhook case below covers the HTTP path; this covers the rule.
+    """
+    monkeypatch.setattr(settings, "jwt_secret_key", DEV_JWT_SECRET)
+    assert _secret_is_set("jwt_secret_key") is False
+
+    monkeypatch.setattr(settings, "jwt_secret_key", "x" * 48)
+    assert _secret_is_set("jwt_secret_key") is True
+
+
+def test_every_placeholder_secret_is_covered() -> None:
+    """The first fix was `if key == "github_webhook_secret"`, and it missed the
+    other one. A table means the next addition is a line rather than a branch —
+    this asserts every key in it is a real secret the page renders."""
+    from app.api.settings import _PLACEHOLDER_SECRETS
+
+    assert set(_PLACEHOLDER_SECRETS) <= set(SECRET_SETTINGS)
+    assert {"github_webhook_secret", "jwt_secret_key"} <= set(_PLACEHOLDER_SECRETS)
 
 
 def test_an_unset_webhook_secret_does_not_report_as_configured(

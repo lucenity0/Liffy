@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import help as help_api
+from app.config import settings
 from app.database import Base, get_db
 from app.main import app
 
@@ -324,3 +325,28 @@ def test_reading_help_stays_open_to_everyone() -> None:
     """
     assert client.get("/help/topics").status_code == 200
     assert client.get("/help?q=signing+in").status_code == 200
+
+
+def test_a_missing_instance_token_is_503_and_says_so(seeded, monkeypatch) -> None:
+    """The one feature that still needs a PAT, failing on installs without one.
+
+    Every other caller acts as the signed-in user, so `GITHUB_TOKEN` exists
+    solely for this route — and `.env.example` ships it empty. "Report a
+    problem" is therefore the single feature that breaks on a default install,
+    and it breaks at the moment somebody is trying to report a problem.
+
+    503, not 502: 502 means GitHub refused. This is Liffy having no credential
+    to ask with, which nobody at GitHub can help with. The detail names the
+    variable, and `normalizeApiError` now passes it through instead of guessing
+    at repository visibility.
+    """
+    monkeypatch.setattr(settings, "github_token", "")
+
+    response = client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={"title": "A title", "body": "A body long enough."},
+    )
+
+    assert response.status_code == 503
+    assert "GITHUB_TOKEN" in response.json()["detail"]

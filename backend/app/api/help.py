@@ -24,6 +24,7 @@ from app.schemas.help import (
     ReportOut,
 )
 from app.services.github_service import (
+    GitHubAuthError,
     GitHubClient,
     GitHubError,
     get_github_token,
@@ -180,6 +181,19 @@ def submit_report(
         # person filing it and the account it is filed as the same person.
         with GitHubClient(get_github_token(allow_server_pat=True)) as client:
             issue = client.create_issue(owner, repo, payload.title.strip(), body, [label])
+    except GitHubAuthError as exc:
+        # Before the broader clause, because `GitHubAuthError` is a subclass and
+        # an `except` chain in the other order would never reach it — the same
+        # ordering `api/repos.py` and `api/reviews.py` already spell out.
+        #
+        # 503 rather than 502, and the difference is the whole point here. 502
+        # means "GitHub refused"; this is Liffy having no credential to ask
+        # with, which is a local misconfiguration nobody at GitHub can help
+        # with. `GITHUB_TOKEN` is the only thing this route needs a PAT for —
+        # every other caller acts as the signed-in user — so on an install that
+        # never set one, "Report a problem" is the single feature that breaks,
+        # and it breaks silently until somebody tries to report a problem.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except GitHubError as exc:
         # 502, not 500: Liffy is fine, GitHub refused. The message carries
         # through so "your token cannot write to that repository" reaches the

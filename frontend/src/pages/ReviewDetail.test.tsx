@@ -207,7 +207,7 @@ describe("ReviewDetail — in flight", () => {
     renderDetail(fixtureReviewProcessing.id);
 
     expect(
-      await screen.findByRole("button", { name: "Re-review" }),
+      await screen.findByRole("button", { name: "Re-review all" }),
     ).toBeDisabled();
   });
 });
@@ -267,7 +267,7 @@ describe("ReviewDetail — failed", () => {
     renderDetail(fixtureReviewFailed.id);
 
     expect(await screen.findByText(/did not finish/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Re-review" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Re-review all" })).toBeEnabled();
     expect(screen.queryByText("Summary")).toBeNull();
     // Nothing stored: the older row shape, where pointing at the log is the
     // best available answer.
@@ -324,7 +324,7 @@ describe("ReviewDetail — re-review", () => {
     renderDetail(fixtureReviewCompleted.id);
     await screen.findByText(fixtureReviewCompleted.summary!);
 
-    await user.click(screen.getByRole("button", { name: "Re-review" }));
+    await user.click(screen.getByRole("button", { name: "Re-review all" }));
 
     expect(await screen.findByText(/re-review queued/i)).toBeInTheDocument();
     expect(posted).toBe(fixtureReviewCompleted.id);
@@ -348,7 +348,7 @@ describe("ReviewDetail — re-review", () => {
     renderDetail(fixtureReviewCompleted.id);
     await screen.findByText(fixtureReviewCompleted.summary!);
 
-    await user.click(screen.getByRole("button", { name: "Re-review" }));
+    await user.click(screen.getByRole("button", { name: "Re-review all" }));
 
     expect(await screen.findByText("nope")).toBeInTheDocument();
   });

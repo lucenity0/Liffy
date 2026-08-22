@@ -55,8 +55,13 @@ export function ReviewHeader({
             Review on every push
           </label>
 
+          {/* "Re-review all", not "Re-review". This button runs the whole
+              pull request and ignores any commit selection made in the picker
+              below it — which is a surprise worth spending three words on. The
+              two controls sit a few centimetres apart, look alike, and one
+              silently discards the work you just did in the other. */}
           <Button onClick={onRereview} loading={rereviewing} disabled={inFlight}>
-            Re-review
+            Re-review all
           </Button>
         </div>
       </div>

@@ -1591,3 +1591,24 @@ diff --git a/.env b/.env
     scope = (review.summary_detail or {}).get("scope") or {}
     assert scope["files_reviewed"] == 0
     assert scope["redacted_files"] == [".env"]
+
+
+def test_a_failed_review_records_what_it_was_looking_at(db: Session) -> None:
+    """A narrowed review that fails must not report the whole pull request.
+
+    `scope` was built inside the completion block, so a review narrowed to a
+    commit selection and then failed wrote none — and both the UI and the
+    database fell back to counting `raw_diff`, which is deliberately always the
+    *whole* pull request. An 8-of-46 review reported itself as 46 files, which
+    reads as "your selection was ignored" about a selection that worked
+    perfectly. Failures are when knowing the scope matters most.
+    """
+    with pytest.raises(LLMOutputError):
+        _run_diff(db, FakeLLM(["nonsense"] * 3), SECRET_DIFF)
+
+    review = db.scalars(select(Review)).one()
+    assert review.status == "failed"
+    scope = (review.summary_detail or {}).get("scope") or {}
+    assert scope["files_reviewed"] == 2, "the .env was redacted, so 2 of 3"
+    assert scope["files_in_diff"] == 3
+    assert scope["redacted_files"] == [".env"]

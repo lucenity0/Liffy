@@ -414,6 +414,19 @@ export const fixtureUser: UserOut = {
   username: "lucenity0",
   email: "dev@example.com",
   avatar_url: "https://avatars.githubusercontent.com/u/1837423?v=4",
+  // The default fixture owns the instance: it stands in for the person who
+  // installed Liffy, which is who almost every screen is rendered for.
+  is_owner: true,
+};
+
+/** An allowlisted second account. Signed in, and not the owner — so the
+ *  Settings entry is absent from its nav and every settings route 403s. */
+export const fixtureUserNotOwner: UserOut = {
+  ...fixtureUser,
+  id: "66666666-6666-6666-6666-666666666666",
+  github_id: 9900001,
+  username: "collaborator",
+  is_owner: false,
 };
 
 /** No avatar — the initials-fallback case AUTH-8 has to render. */

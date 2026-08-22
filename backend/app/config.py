@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     frontend_url: str = Field(default="http://localhost:5173")
     # Server-side PAT used until per-user OAuth lands (token seam in github_service).
     github_token: str = Field(default="")
+
+    # Who, besides the owner, may sign in. Comma-separated GitHub logins.
+    #
+    # Empty is the normal case and means "the owner only". Liffy is
+    # single-tenant (ADR 007): the first account to complete the handshake
+    # claims the instance and every other login is refused, so a Liffy exposed
+    # to the internet is not an open sign-up page.
+    #
+    # A string rather than `list[str]`, for the same reason as `cors_origins`
+    # below: pydantic-settings parses list fields from env as JSON, so
+    # "alice,bob" would raise at import time.
+    allowed_github_logins: str = Field(default="")
     
     # JWT
     jwt_secret_key: str = Field(default=DEV_JWT_SECRET)
@@ -162,6 +174,21 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def allowed_github_login_list(self) -> list[str]:
+        """The allowlist, lowercased.
+
+        GitHub logins are case-insensitive — `Octocat` and `octocat` are the
+        same account — so comparing them case-sensitively would refuse the
+        person the operator just allowed, in a way that reads as the allowlist
+        being broken rather than as a spelling difference.
+        """
+        return [
+            login.strip().lower()
+            for login in self.allowed_github_logins.split(",")
+            if login.strip()
+        ]
 
     # Runtime overrides are the *third* source, not the only one. This still
     # has to load `backend/.env` — it is where every key, secret and connection

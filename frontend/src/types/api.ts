@@ -574,6 +574,16 @@ export interface UserOut {
   username: string;
   email: string | null;
   avatar_url: string | null;
+  /**
+   * Whether this account owns the instance. Liffy is single-tenant: the first
+   * account to sign in claims it, and only that account may read or change
+   * instance settings.
+   *
+   * Used to hide the Settings entry, not to protect it — the gate is
+   * `require_owner` on the backend, and every settings route 403s regardless
+   * of what the nav chooses to render.
+   */
+  is_owner: boolean;
 }
 
 // ── Settings (backend/app/schemas/setting.py) ────────────────────────────────

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { ThemePicker } from "./ThemeToggle";
 import { UserMenu } from "./UserMenu";
+import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 
 export interface NavChild {
@@ -58,6 +59,25 @@ const SYSTEM: NavItem[] = [
   { to: "/help", label: "Help" },
 ];
 
+/**
+ * Settings is instance-wide, and only the owner may read it — every route
+ * behind it answers 403 to anyone else (`api/deps.py::require_owner`). Offering
+ * the entry to a non-owner would be a door that opens onto an error page.
+ *
+ * Cosmetic only. Nothing here is a security boundary; a non-owner who types
+ * the URL still gets the 403 from the API, which is where the decision is
+ * actually made.
+ *
+ * The cost, stated plainly: Appearance lives under Settings and is purely
+ * local (`useAppearance` writes to localStorage, never to the API), so a
+ * non-owner loses the theme editor along with the settings they could not use.
+ * Non-owners only exist when an operator has explicitly allowlisted them, so
+ * this trades a rare inconvenience for one nav rule instead of a split page.
+ */
+function systemNavFor(isOwner: boolean): NavItem[] {
+  return isOwner ? SYSTEM : SYSTEM.filter((item) => item.to !== "/settings");
+}
+
 const EXPANDED_KEY = "liffy-nav-expanded";
 
 /**
@@ -110,6 +130,11 @@ function readExpanded(): NavState {
  */
 export function SideNav() {
   const { pathname } = useLocation();
+  const { user } = useAuth();
+  // `user` is null while the session rehydrates. Defaulting to "not owner"
+  // means the entry appears once we know rather than flickering away once we
+  // learn otherwise.
+  const system = systemNavFor(user?.is_owner ?? false);
   const [expanded, setExpanded] = useState<NavState>(readExpanded);
   const [open, setOpen] = useState(false);
 
@@ -273,7 +298,7 @@ export function SideNav() {
               one real division in the nav, and a hairline did not carry it. */}
           <hr className="my-2 h-0.5 border-0 bg-chrome-ink-dim opacity-60" />
 
-          {SYSTEM.map((item) => (
+          {system.map((item) => (
             <NavRow
               key={item.to}
               item={item}

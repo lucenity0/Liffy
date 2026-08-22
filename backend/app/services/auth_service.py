@@ -132,6 +132,62 @@ def fetch_github_user(access_token: str, *, client: httpx.Client | None = None) 
     )
 
 
+# ── Who may sign in ───────────────────────────────────────────────────────────
+#
+# Liffy is single-tenant (ADR 007). Before this existed, `upsert_user` created a
+# row for whoever finished the OAuth handshake, so any GitHub account on earth
+# could sign in to an instance reachable from the internet — which every
+# instance using webhooks must be — and reach the settings page, which decides
+# things like where the code being reviewed is sent.
+
+
+def owner(db: Session) -> User | None:
+    """The account this instance belongs to, or ``None`` before anyone claims it."""
+    return db.scalar(select(User).where(User.is_owner.is_(True)))
+
+
+def login_permitted(db: Session, gh_user: GitHubUser) -> bool:
+    """Whether this GitHub account may hold a session on this instance.
+
+    Three ways to be allowed, in the order they are cheapest to check:
+
+    - **Nobody owns the instance yet.** The first person through claims it,
+      which is what keeps a fresh clone usable with no configuration. There is
+      a race here in theory — two simultaneous first logins — and the partial
+      unique index on ``users.is_owner`` is what settles it: the loser's
+      ``claim_ownership`` fails on the constraint rather than producing a
+      second owner.
+    - **It is the owner**, matched on ``github_id`` and deliberately not on the
+      login. A GitHub username is renameable and ``upsert_user`` only re-syncs
+      it *on a successful login* — so matching by name would lock the owner out
+      of their own instance the first time they renamed, with the one path that
+      could repair the stored name sitting behind the check that was failing.
+      The numeric id never changes.
+    - **It is on the allowlist**, which is by login because that is what an
+      operator knows how to type. They get a session; they do not get the
+      settings page.
+    """
+    current = owner(db)
+    if current is None:
+        return True
+    if current.github_id == gh_user.id:
+        return True
+    return gh_user.login.lower() in settings.allowed_github_login_list
+
+
+def claim_ownership(db: Session, user: User) -> None:
+    """Make ``user`` the owner if nobody is. Idempotent, and safe to call always.
+
+    Deliberately re-reads rather than trusting the ``login_permitted`` call that
+    preceded it: between the two sits a GitHub round trip and an upsert, and a
+    check whose answer is assumed to still hold is not a check.
+    """
+    if owner(db) is not None:
+        return
+    user.is_owner = True
+    db.flush()
+
+
 def upsert_user(db: Session, gh_user: GitHubUser, access_token: str | None = None) -> User:
     """Create the user, or refresh a returning user's profile. Idempotent."""
     user = db.scalar(select(User).where(User.github_id == gh_user.id))

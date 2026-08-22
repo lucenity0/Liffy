@@ -115,7 +115,20 @@ def github_callback(
         # would be reflected into our own page unfiltered.
         return _hand_back_to_frontend(error="github_exchange_failed")
 
+    # Before `upsert_user`, and that ordering is the whole point.
+    #
+    # Checking afterwards would leave a `users` row behind for every refused
+    # login — the same phantom-row failure the `resolve_repo_owner` guard in
+    # `api/webhook.py` exists to prevent, and here it would additionally mean a
+    # refused stranger still had their GitHub access token written to our
+    # database. A signature-valid session is not the only thing worth denying.
+    if not auth_service.login_permitted(db, gh_user):
+        return _hand_back_to_frontend(error="not_authorised")
+
     user = auth_service.upsert_user(db, gh_user, access_token=github_token)
+    # After the upsert, because an unclaimed instance has nobody to make owner
+    # until the row exists. Idempotent, so returning logins pay one query.
+    auth_service.claim_ownership(db, user)
     pair = _issue_pair(db, user)
     db.commit()
 

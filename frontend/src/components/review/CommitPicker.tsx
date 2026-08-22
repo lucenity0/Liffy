@@ -145,9 +145,9 @@ export function CommitPicker({ prId }: { prId: string }) {
               picker having failed to load. */}
           <p className="text-base text-ink-dim">
             {reviewedCount > 0
-              ? `Nothing new to review — all ${reviewedCount} commit${
-                  reviewedCount === 1 ? " has" : "s have"
-                } been reviewed. Re-review reads the whole pull request again.`
+              ? reviewedCount === 1
+                ? "Nothing new to review — the only commit has been reviewed. Re-review reads the whole pull request again."
+                : `Nothing new to review — all ${reviewedCount} commits have been reviewed. Re-review reads the whole pull request again.`
               : "No commits on this pull request."}
           </p>
         </Sheet.Body>

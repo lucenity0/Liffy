@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { ThemePicker } from "./ThemeToggle";
 import { UserMenu } from "./UserMenu";
 import { useAuth } from "@/hooks/useAuth";
+import type { UserOut } from "@/types/api";
 import { cn } from "@/lib/utils";
 
 export interface NavChild {
@@ -74,8 +75,23 @@ const SYSTEM: NavItem[] = [
  * Non-owners only exist when an operator has explicitly allowlisted them, so
  * this trades a rare inconvenience for one nav rule instead of a split page.
  */
-function systemNavFor(isOwner: boolean): NavItem[] {
-  return isOwner ? SYSTEM : SYSTEM.filter((item) => item.to !== "/settings");
+function systemNavFor(user: UserOut | null): NavItem[] {
+  // Hidden only when we *know* they are not the owner. Three states, not two —
+  // the same distinction `AuthStatus` draws, and for the same reason.
+  //
+  // The first version was `user?.is_owner ?? false`, which read "unknown" as
+  // "not the owner" and failed in the harmful direction. Anything that stops
+  // the field arriving — a session still loading, a backend a version behind
+  // during a deploy — silently removed the settings page from the person who
+  // owns the instance, with no error and nothing to click. That happened: a
+  // container rebuilt from a checkout on another branch served a `UserOut`
+  // with no `is_owner`, and Settings simply vanished.
+  //
+  // Failing open is right *because this is decoration*. `require_owner` is the
+  // gate; showing a non-owner a door that 403s costs them one click, and
+  // hiding it from the owner costs them the page.
+  const knownNonOwner = user !== null && user.is_owner === false;
+  return knownNonOwner ? SYSTEM.filter((item) => item.to !== "/settings") : SYSTEM;
 }
 
 const EXPANDED_KEY = "liffy-nav-expanded";
@@ -131,10 +147,7 @@ function readExpanded(): NavState {
 export function SideNav() {
   const { pathname } = useLocation();
   const { user } = useAuth();
-  // `user` is null while the session rehydrates. Defaulting to "not owner"
-  // means the entry appears once we know rather than flickering away once we
-  // learn otherwise.
-  const system = systemNavFor(user?.is_owner ?? false);
+  const system = systemNavFor(user);
   const [expanded, setExpanded] = useState<NavState>(readExpanded);
   const [open, setOpen] = useState(false);
 

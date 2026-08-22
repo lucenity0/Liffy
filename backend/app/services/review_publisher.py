@@ -133,6 +133,42 @@ def defang_model_markdown(text: str) -> str:
     return _HTML_FETCHING_TAG.sub("&lt;", defanged)
 
 
+def _code_span(text: str) -> str:
+    """One model-authored string, wrapped as an inline code span, delimiters included.
+
+    Two problems, and only the first was ever handled anywhere.
+
+    **A backtick closes the span.** `LLMReviewComment.file` is an unconstrained
+    string, so a path containing one ends the span and everything after it
+    renders as markdown. The unanchorable list below is where that bites: it
+    exists precisely for the comments whose path was *not* found in the diff,
+    which is to say the ones the model invented outright.
+
+    **The contents were never defanged.** Every neighbouring string on this path
+    goes through `defang_model_markdown` and this one did not — so a broken-out
+    span could carry an auto-fetching image, the exact thing that function
+    exists to prevent, reintroduced by the one field nobody thought of as model
+    output. GitHub proxies images through camo, which fetches them server-side,
+    so the attacker's callback fires with no click from the reader.
+
+    The delimiter is variable-length for the same reason `_fence` below is, and
+    by the same CommonMark rule: a span opened with N backticks closes on the
+    next run of exactly N, so N = longest_run + 1 cannot be closed from inside.
+    Backslash escaping is *not* an option here — CommonMark does not honour
+    backslash escapes within a code span, which is the trap this docstring
+    exists to keep the next reader out of.
+
+    A pad space when the content starts or ends with a backtick, because the
+    renderer strips one leading and one trailing space from a span and would
+    otherwise glue the content's own backtick to the delimiter.
+    """
+    defanged = defang_model_markdown(text)
+    longest = max((len(run) for run in re.findall(r"`+", defanged)), default=0)
+    ticks = "`" * (longest + 1)
+    pad = " " if defanged.startswith("`") or defanged.endswith("`") else ""
+    return f"{ticks}{pad}{defanged}{pad}{ticks}"
+
+
 def _fence(text: str) -> str:
     """A fence long enough to contain ``text``.
 
@@ -275,7 +311,17 @@ def _overview(
         def cell(text: str) -> str:
             return defang_model_markdown(text).replace("|", r"\|")
 
-        rows = "\n".join(f"| `{cell(path)}` | {cell(note)} |" for path, note in files)
+        def _pipe_safe(rendered: str) -> str:
+            """Escape pipes in an already-rendered span, without re-defanging it."""
+            return rendered.replace("|", r"\|")
+
+        # `_code_span` for the path and `cell` for the note: the path is inside a
+        # span and the note is not, so only one of them needs the delimiter
+        # widened. Both still get the pipe escaped — that is `cell`'s job here
+        # and `_pipe_safe`'s inside the span.
+        rows = "\n".join(
+            f"| {_pipe_safe(_code_span(path))} | {cell(note)} |" for path, note in files
+        )
         parts.append(
             "### Reviewed changes\n\n"
             f"Liffy read {len(files)} changed file{'' if len(files) == 1 else 's'} "
@@ -328,7 +374,8 @@ def build_review_body(
             # code around the comment: this text is all they get. Dropping it
             # here while requiring it everywhere else would take the one enforced
             # field away from precisely the findings that need it most.
-            f"- `{c.file_path}:{c.line_start}` — **{c.severity}** · `{c.category}`"
+            f"- {_code_span(f'{c.file_path}:{c.line_start}')} — "
+            f"**{c.severity}** · `{c.category}`"
             f"{_confidence_suffix(c.confidence)} — "
             f"{defang_model_markdown(c.comment_text)}"
             + (

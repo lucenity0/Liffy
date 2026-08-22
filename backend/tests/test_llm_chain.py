@@ -1451,14 +1451,22 @@ def test_openai_json_schema_constrains_to_the_review_schema(
 
 
 def _objects(node, path="$"):
-    """Every object node in a schema, with a readable path to it."""
+    """Every object node in a schema, with a readable path to it.
+
+    Predicate is `type == "object"` alone, deliberately — **not** `and
+    "properties" in node`. Filtering on properties here would make these guards
+    blind to exactly the node the transform used to let through: a free-form
+    map, which has no properties and so would simply never be checked. A test
+    that shares the implementation's blind spot cannot see the implementation's
+    bug.
+    """
     if isinstance(node, list):
         for i, v in enumerate(node):
             yield from _objects(v, f"{path}[{i}]")
         return
     if not isinstance(node, dict):
         return
-    if node.get("type") == "object" and "properties" in node:
+    if node.get("type") == "object":
         yield path, node
     for k, v in node.items():
         yield from _objects(v, f"{path}.{k}")
@@ -1469,6 +1477,36 @@ def _strict():
     from app.schemas.review import LLMReviewOutput
 
     return strict_schema(LLMReviewOutput.model_json_schema())
+
+
+def test_strict_schema_rejects_what_it_cannot_express() -> None:
+    """Fail at the seam, not at the endpoint.
+
+    A `dict[str, str]` field renders as an object with no properties and a
+    *schema* for `additionalProperties` — strict mode has no way to say that,
+    and the transform used to pass it straight through, so every review would
+    have 400'd on a field nobody thought of as a schema change.
+
+    `extra="allow"` is the mirror image: it renders `additionalProperties:
+    true`, and quietly rewriting that to `false` would forbid on the wire the
+    very keys the Python type exists to accept.
+    """
+    from pydantic import BaseModel, ConfigDict
+
+    from app.llm.chain import strict_schema
+
+    class FreeForm(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        meta: dict[str, str] = {}
+
+    class Allowing(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        name: str
+
+    with pytest.raises(ValueError, match="free-form object"):
+        strict_schema(FreeForm.model_json_schema())
+    with pytest.raises(ValueError, match="additionalProperties"):
+        strict_schema(Allowing.model_json_schema())
 
 
 def test_strict_schema_requires_every_property() -> None:
@@ -1530,6 +1568,13 @@ def test_strict_schema_uses_no_unsupported_keyword() -> None:
     noticing. Cheaper to assert the whole dialect than to remember the rule.
     """
     offenders = {}
+
+    # `additionalProperties` is a legal keyword only as `false` here. Checked
+    # by *value* as well as by name, because a schema-valued one — what a
+    # `dict` field renders — is exactly the thing strict mode rejects, and a
+    # name-only allowlist waves it through.
+    for path, node in _objects(_strict()):
+        assert node.get("additionalProperties") is False, path
 
     def walk(node, path="$", in_map=False):
         if isinstance(node, list):

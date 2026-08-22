@@ -120,8 +120,21 @@ def strict_schema(schema: dict) -> dict:
 
     **Every property must appear in ``required``.** Pydantic omits any field
     with a default, so ``changes``, ``files``, ``suggestion`` and ``confidence``
-    all sat outside it. Optionality is expressed by allowing ``null`` in the
-    *type*, not by leaving a key out of the list.
+    all sat outside it.
+
+    Note what that costs, because it is not free and nothing else records it:
+    on this transport a defaulted field becomes **mandatory in generation**.
+    ``suggestion`` is unaffected — it is already ``str | None``, so the model
+    can answer ``null`` — but ``changes``, ``files`` and ``confidence`` are not
+    nullable, so under this flag the model always picks a ``confidence`` rather
+    than falling through to ``confirmed``. A confidence distribution gathered
+    here is therefore not comparable with one from the other three providers,
+    which matters to #273 and to nothing else today.
+
+    **Do not "fix" that by adding ``null`` to their wire types.** Pydantic
+    rejects a null for a non-``Optional`` field, so the model would answer
+    legally and fail validation — burning the retry budget this whole design
+    exists to protect.
 
     **``default`` is not a supported keyword.** Pydantic writes one for each of
     those same four fields. An unsupported keyword is an error rather than
@@ -140,22 +153,39 @@ def strict_schema(schema: dict) -> dict:
     ``required`` tells it the truth about what Liffy will accept.
     """
 
-    def walk(node):
+    def walk(node, path="$"):
         if isinstance(node, list):
-            return [walk(v) for v in node]
+            return [walk(v, f"{path}[{i}]") for i, v in enumerate(node)]
         if not isinstance(node, dict):
             return node
 
-        out = {k: walk(v) for k, v in node.items() if k != "default"}
+        out = {k: walk(v, f"{path}.{k}") for k, v in node.items() if k != "default"}
 
-        if out.get("type") == "object" and "properties" in out:
+        if out.get("type") == "object":
+            if "properties" not in out:
+                # A free-form map — `dict[str, str]` on a model renders as an
+                # object with no properties and a *schema* for
+                # `additionalProperties`. Strict mode cannot express that at
+                # all, and passing it through means every review 400s: the
+                # exact failure #280 was filed for, reintroduced by a field
+                # nobody thought of as a schema change.
+                raise ValueError(
+                    f"strict mode cannot express a free-form object at {path}; "
+                    "give the field an explicit model instead of a bare dict"
+                )
+            extras = out.get("additionalProperties")
+            if extras not in (None, False):
+                # `extra="allow"` renders as `true`. Rewriting it to `false`
+                # would be silent and wrong in the other direction — the model
+                # could never emit the keys the Python type exists to accept.
+                raise ValueError(
+                    f"strict mode requires additionalProperties=false at {path}, "
+                    f"but the model renders {extras!r}; it needs extra='forbid'"
+                )
             # The schema's own order, not sorted: it is what the model reads
             # top to bottom, and `file` before `line_start` before `comment` is
             # the order those fields were written in for a reason.
             out["required"] = list(out["properties"])
-            # Already true of every model here (`extra="forbid"`), and strict
-            # mode requires it — set rather than assumed, so a model added later
-            # without it fails at this boundary instead of at the endpoint.
             out["additionalProperties"] = False
         return out
 

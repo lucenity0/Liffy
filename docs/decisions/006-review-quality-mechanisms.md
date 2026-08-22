@@ -126,13 +126,25 @@ Two things blocking it that are worth fixing regardless:
    The figures above were obtained by wrapping `generate_review` in a
    throwaway script. Recording it is a small change and the only way this ever
    becomes a distribution rather than three anecdotes.
-2. **`openai_use_json_schema=true` sends a schema strict mode rejects** —
-   filed as #280. Four properties sit outside `required` (`changes`, `files`,
-   `suggestion`, `confidence`). **Pre-existing:** the first three predate this
-   milestone and would break that path alone; `confidence` joined the fault
-   line without creating it. Confirmed by inspection against OpenAI's
-   documented rule, *not* against a live endpoint — the configured key is not
-   an OpenAI key and no local Ollama was running.
+2. ~~**`openai_use_json_schema=true` sends a schema strict mode rejects**~~ —
+   filed as #280, **fixed**. Four properties sat outside `required` (`changes`,
+   `files`, `suggestion`, `confidence`); fixing it turned up a second defect
+   the issue had not named, since Pydantic also emits `default` keys and
+   `default` is not in strict mode's keyword set. `strict_schema` in `chain.py`
+   now transforms the wire format, leaving the models — and therefore the other
+   three providers — untouched. **Pre-existing:** the first three properties
+   predate this milestone and would have broken that path alone; `confidence`
+   joined the fault line without creating it.
+
+   **Still unverified against a live endpoint**, and worth saying twice: the
+   configured key is not an OpenAI key and the local Ollama has no model
+   pulled, so this is checked against OpenAI's documented rules rather than
+   against OpenAI.
+
+   One consequence for the numbers above: on that transport a defaulted field
+   becomes mandatory in generation, so the model always chooses a `confidence`
+   rather than falling through to `confirmed`. A distribution gathered under
+   this flag is not comparable with one from the other three providers.
 
 ## Recommendation per mechanism
 

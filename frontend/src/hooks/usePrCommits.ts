@@ -20,12 +20,22 @@ export function usePrCommits(prId: string | undefined, enabled: boolean) {
   });
 }
 
-export function useReviewCommits() {
+export function useReviewCommits({ onQueued }: { onQueued?: () => void } = {}) {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({ prId, shas }: { prId: string; shas: string[] }) =>
       reviewCommits(prId, shas),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.reviews.all }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.reviews.all });
+      // Deliberately *not* invalidating `keys.reviews.commits`: it lives under
+      // `prs` so that a review does not refetch a pull request's history, and
+      // that is load-bearing rather than an oversight (see `keys.ts`).
+      //
+      // Which is why the caller gets a hook instead. The picker has to forget
+      // its ticks once they have been spent, and there is no cache event that
+      // would tell it to — the list it is showing has not changed.
+      onQueued?.();
+    },
   });
 }

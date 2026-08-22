@@ -51,7 +51,14 @@ export function CommitPicker({ prId }: { prId: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const commits = usePrCommits(prId, open);
-  const review = useReviewCommits();
+  const review = useReviewCommits({
+    // Cleared on success, because the sheet stays open afterwards and the
+    // ticks stayed put. The button remained enabled over the same selection,
+    // so a second click queued the *same commits again* — a whole extra review
+    // spent on work that was just done. Nothing about that reads as a mistake
+    // at the time: the button looks exactly as it did a moment earlier.
+    onQueued: () => setSelected(new Set()),
+  });
 
   function toggle(sha: string) {
     setSelected((current) => {
@@ -88,6 +95,19 @@ export function CommitPicker({ prId }: { prId: string }) {
   const newCount = rows.length;
   const reviewedCount = all.length - rows.length;
 
+  // The selection, intersected with what is actually on screen.
+  //
+  // `selected` is a Set that outlives any particular render of `rows`, and
+  // since only unreviewed commits are listed the two can describe different
+  // worlds: a header reading "Review 2 commits" over a body reading "Nothing
+  // new to review". Today they cannot actually diverge — `keys.reviews.commits`
+  // sits under `prs` precisely so review invalidation does not refetch it, and
+  // `staleTime: Infinity` keeps it put — but that is an invariant owned by two
+  // other files, and the picker should not depend on it holding. Deriving the
+  // button from what is visible makes the question moot.
+  const visible = new Set(rows.map((c) => c.sha));
+  const picked = [...selected].filter((sha) => visible.has(sha));
+
   return (
     <Sheet>
       <Sheet.Header
@@ -95,15 +115,13 @@ export function CommitPicker({ prId }: { prId: string }) {
         count={commits.data ? newCount : undefined}
         actions={
           <Button
-            onClick={() =>
-              review.mutate({ prId, shas: [...selected] })
-            }
+            onClick={() => review.mutate({ prId, shas: picked })}
             loading={review.isPending}
-            disabled={selected.size === 0}
+            disabled={picked.length === 0}
           >
-            {selected.size === 0
+            {picked.length === 0
               ? "Review selected"
-              : `Review ${selected.size} commit${selected.size === 1 ? "" : "s"}`}
+              : `Review ${picked.length} commit${picked.length === 1 ? "" : "s"}`}
           </Button>
         }
       />

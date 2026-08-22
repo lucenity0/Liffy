@@ -74,6 +74,23 @@ describe("CommitPicker", () => {
     expect(sent).toEqual(["ddddddd4444444444444444444444444444444444"]);
   });
 
+  it("forgets the selection once it has been queued", async () => {
+    // The sheet stays open after a successful queue and the ticks stayed put,
+    // so the button remained enabled over the same selection — a second click
+    // queued the *same commits again*, spending a whole extra review on work
+    // just done. Nothing about that reads as a mistake at the time: the button
+    // looks exactly as it did a moment before.
+    const list = await openPicker();
+    await userEvent.click(within(list).getByLabelText("fix: handle the null case"));
+    await userEvent.click(screen.getByRole("button", { name: "Review 1 commit" }));
+
+    await screen.findByText(/Queued/i);
+
+    expect(
+      screen.getByRole("button", { name: "Review selected" }),
+    ).toBeDisabled();
+  });
+
   it("pluralises the button by how many are ticked", async () => {
     const list = await openPicker();
 

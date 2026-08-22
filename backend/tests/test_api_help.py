@@ -13,7 +13,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import help as help_api
-from app.config import settings
 from app.database import Base, get_db
 from app.main import app
 
@@ -181,7 +180,6 @@ def seeded():
 def fake_github(monkeypatch):
     _FakeClient.calls = []
     monkeypatch.setattr(help_api, "GitHubClient", _FakeClient)
-    monkeypatch.setattr(help_api, "get_github_token", lambda **_kwargs: "token")
     return _FakeClient
 
 
@@ -212,9 +210,11 @@ def test_a_bug_report_files_a_labelled_issue(seeded, fake_github) -> None:
     call = fake_github.calls[0]
     assert call["labels"] == ["bug"]
     assert call["title"] == "Reviews stay queued"
-    # Filed with the instance's token, so the issue would otherwise carry the
-    # wrong name. The body says who actually typed it.
-    assert "Reported by @" in call["body"]
+    # Filed as the reporter, so the issue's GitHub author *is* who reported it.
+    # The body no longer claims a name — a byline is stronger evidence than a
+    # sentence, and the sentence only existed because the wrong account filed.
+    assert "Reported by @" not in call["body"]
+    assert "Filed from Liffy's in-app help." in call["body"]
 
 
 def test_a_feature_idea_is_labelled_enhancement(seeded, fake_github) -> None:
@@ -284,7 +284,6 @@ def test_github_refusing_reads_as_github_not_as_liffy(seeded, monkeypatch) -> No
             raise GitHubError("Resource not accessible by personal access token")
 
     monkeypatch.setattr(help_api, "GitHubClient", _Refusing)
-    monkeypatch.setattr(help_api, "get_github_token", lambda **_kwargs: "token")
 
     response = client.post(
         "/help/report",
@@ -327,20 +326,27 @@ def test_reading_help_stays_open_to_everyone() -> None:
     assert client.get("/help?q=signing+in").status_code == 200
 
 
-def test_a_missing_instance_token_is_503_and_says_so(seeded, monkeypatch) -> None:
-    """The one feature that still needs a PAT, failing on installs without one.
+def test_a_reporter_with_no_stored_token_is_503_and_says_what_to_do(
+    seeded, monkeypatch
+) -> None:
+    """503, not 502, and the difference is the whole point.
 
-    Every other caller acts as the signed-in user, so `GITHUB_TOKEN` exists
-    solely for this route — and `.env.example` ships it empty. "Report a
-    problem" is therefore the single feature that breaks on a default install,
-    and it breaks at the moment somebody is trying to report a problem.
+    502 means GitHub refused. This is Liffy having no credential to ask with —
+    a local condition nobody at GitHub can help with — and it used to surface
+    as "GitHub couldn't find that repository (is it private?)", sending the
+    reader to check permissions on a public repo that was never the problem.
 
-    503, not 502: 502 means GitHub refused. This is Liffy having no credential
-    to ask with, which nobody at GitHub can help with. The detail names the
-    variable, and `normalizeApiError` now passes it through instead of guessing
-    at repository visibility.
+    `submit_report` caught `GitHubError` broadly, so `GitHubAuthError` (a
+    subclass) arrived as 502; the ordering `api/repos.py` already spells out
+    for `GitHubRateLimitError` was missing here.
     """
-    monkeypatch.setattr(settings, "github_token", "")
+    from app.models.user import User
+    from sqlalchemy import select
+
+    with seeded["factory"]() as db:
+        owner = db.scalar(select(User).where(User.is_owner.is_(True)))
+        owner.github_access_token = None
+        db.commit()
 
     response = client.post(
         "/help/report",
@@ -349,4 +355,4 @@ def test_a_missing_instance_token_is_503_and_says_so(seeded, monkeypatch) -> Non
     )
 
     assert response.status_code == 503
-    assert "GITHUB_TOKEN" in response.json()["detail"]
+    assert "sign in again" in response.json()["detail"]

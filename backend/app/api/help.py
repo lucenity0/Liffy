@@ -27,7 +27,6 @@ from app.services.github_service import (
     GitHubAuthError,
     GitHubClient,
     GitHubError,
-    get_github_token,
 )
 from app.services.help_service import HelpDoc, HelpMatch, get_index
 
@@ -154,10 +153,20 @@ def submit_report(
     under the maintainer's name. `require_owner` means the account that files
     the issue is the account the token belongs to.
 
-    The issue is filed with the instance's own GitHub token, so it is attributed
-    to whoever owns that token rather than to the person typing. On a self-hosted
-    install those are usually the same person; where they are not, the body says
-    so rather than leaving the attribution silently wrong.
+    **Filed as the person reporting it**, using their own OAuth token rather
+    than an instance PAT. The issue's GitHub author is therefore the reporter:
+    they get the notifications, they can answer follow-ups in the thread as
+    themselves, and "who reported this" is the byline rather than a line of
+    prose in the body claiming it.
+
+    That claim used to be exactly what this did — append "Reported by @x",
+    because the issue carried the PAT owner's name and the real reporter was
+    otherwise lost. The workaround existed because the wrong account was
+    filing. Using the right account deletes both the workaround and the only
+    reason this install needed `GITHUB_TOKEN` at all.
+
+    The scope is already there: sign-in requests `repo,read:user`, and opening
+    an issue on a public repository needs considerably less than that.
 
     Security reports cannot reach here — `ReportIn` has no shape for one. They
     go to a private advisory, per `SECURITY.md`.
@@ -165,21 +174,14 @@ def submit_report(
     owner, repo = LIFFY_REPO
     label = "enhancement" if payload.kind == "feature" else "bug"
 
-    # Says who actually typed it, since the issue will carry the token owner's
-    # name. Only the GitHub login — nothing else about the account, and nothing
-    # about the instance.
-    body = (
-        f"{payload.body.strip()}\n\n---\n"
-        f"Reported by @{user.username} from Liffy's in-app help."
-    )
+    # Where it came from, and nothing about who — the byline carries that now.
+    # Worth keeping even so: an issue typed into Liffy's form and one typed on
+    # GitHub read identically otherwise, and knowing which is which is the one
+    # piece of metadata the author field cannot supply.
+    body = f"{payload.body.strip()}\n\n---\nFiled from Liffy's in-app help."
 
     try:
-        # The one caller that is genuinely instance-level rather than
-        # user-level: the issue is filed against Liffy's own repository, which
-        # is nobody's connected repo, so there is no per-user token that would
-        # be the right credential. `require_owner` above is what keeps the
-        # person filing it and the account it is filed as the same person.
-        with GitHubClient(get_github_token(allow_server_pat=True)) as client:
+        with GitHubClient(token=user.github_access_token) as client:
             issue = client.create_issue(owner, repo, payload.title.strip(), body, [label])
     except GitHubAuthError as exc:
         # Before the broader clause, because `GitHubAuthError` is a subclass and

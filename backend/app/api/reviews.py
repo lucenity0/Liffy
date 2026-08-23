@@ -226,6 +226,25 @@ class CommitOut(BaseModel):
     is_new: bool
 
 
+class PrCommitsOut(BaseModel):
+    """The commit list, plus whether the branch was rewritten under it.
+
+    An object rather than a bare list because the second field is a property of
+    the *walk*, not of any commit: the boundary either was or was not found,
+    once, for the whole list.
+    """
+
+    commits: list[CommitOut]
+    #: The last completed review's `head_sha` is no longer on the branch — a
+    #: rebase or force-push replaced it. Every commit is then reported as new,
+    #: which is correct (these SHAs have genuinely never been reviewed) and
+    #: deeply confusing to look at, because `committed_at` carries the *author*
+    #: date and rebase preserves those. So a commit object created a minute ago
+    #: displays as an hour old, and a list that is entirely new reads as old
+    #: work reappearing. The flag is what lets the UI say which it is.
+    history_rewritten: bool
+
+
 class ReviewCommitsRequest(BaseModel):
     """The commits to review, validated as commit SHAs and nothing else.
 
@@ -274,12 +293,12 @@ def _owned_pr_or_404(
     return owner, repo_name, row.github_pr_number
 
 
-@router.get("/prs/{pr_id}/commits", response_model=list[CommitOut])
+@router.get("/prs/{pr_id}/commits", response_model=PrCommitsOut)
 def list_pr_commits(
     pr_id: uuid.UUID,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[CommitOut]:
+) -> PrCommitsOut:
     """Commits on a pull request, flagged with which are new since the review.
 
     Backs the picker. `is_new` rather than filtering the old ones away: seeing
@@ -372,12 +391,13 @@ def list_pr_commits(
     # marking commits old on the strength of a commit that no longer exists —
     # except for commits a narrowed review recorded by SHA, which are still
     # known-reviewed regardless of where the boundary went.
-    if reviewed_sha is not None and not seen_boundary:
+    rewritten = reviewed_sha is not None and not seen_boundary
+    if rewritten:
         out = [
             c.model_copy(update={"is_new": c.sha not in covered}) for c in out
         ]
 
-    return out
+    return PrCommitsOut(commits=out, history_rewritten=rewritten)
 
 
 @router.post("/prs/{pr_id}/review-commits", status_code=202)

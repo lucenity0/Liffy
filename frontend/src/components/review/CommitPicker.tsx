@@ -90,7 +90,8 @@ export function CommitPicker({ prId }: { prId: string }) {
   // your ticks is the button directly above it. The count in the header is
   // what makes "new" mean something; the eleven rows were noise that looked
   // like signal.
-  const all = commits.data ?? [];
+  const all = commits.data?.commits ?? [];
+  const rewritten = commits.data?.history_rewritten ?? false;
   const rows = all.filter((c) => c.is_new);
   const newCount = rows.length;
   const reviewedCount = all.length - rows.length;
@@ -149,6 +150,22 @@ export function CommitPicker({ prId }: { prId: string }) {
                 ? "Nothing new to review — the only commit has been reviewed. Re-review reads the whole pull request again."
                 : `Nothing new to review — all ${reviewedCount} commits have been reviewed. Re-review reads the whole pull request again.`
               : "No commits on this pull request."}
+          </p>
+        </Sheet.Body>
+      )}
+
+      {rewritten && rows.length > 0 && (
+        <Sheet.Body>
+          {/* Without this the list is simply baffling. Every commit is new —
+              truthfully, these SHAs have never been reviewed — but they carry
+              their original author dates, so a rebase five minutes ago shows
+              commits "from an hour ago" and the whole thing reads as old work
+              reappearing. Naming the cause costs one sentence. */}
+          <p className="text-base text-ink-dim">
+            The branch was rebased or force-pushed since the last review, so
+            the commit it stopped at is gone. These are new commits — same
+            changes, new identities — and none of them has been reviewed under
+            these SHAs.
           </p>
         </Sheet.Body>
       )}

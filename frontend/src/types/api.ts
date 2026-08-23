@@ -249,6 +249,19 @@ export interface LatestFindingOut {
 }
 
 /** One commit on a pull request, as the picker shows it. */
+/** `GET /prs/{id}/commits` — the list, plus whether the branch moved under it. */
+export interface PrCommitsOut {
+  commits: CommitOut[];
+  /**
+   * The last reviewed commit is no longer on the branch: a rebase or
+   * force-push replaced it. Every commit is then reported as new, which is
+   * true — these SHAs have never been reviewed — and reads as though old work
+   * came back, because `committed_at` is the *author* date and rebase
+   * preserves those. A commit object minutes old displays as hours old.
+   */
+  history_rewritten: boolean;
+}
+
 export interface CommitOut {
   sha: string;
   message: string;

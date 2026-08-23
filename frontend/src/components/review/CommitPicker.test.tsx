@@ -2,6 +2,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
+import { fixtureCommits } from "@/mocks/fixtures";
 import { server } from "@/mocks/server";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { CommitPicker } from "./CommitPicker";
@@ -89,6 +90,32 @@ describe("CommitPicker", () => {
     expect(
       screen.getByRole("button", { name: "Review selected" }),
     ).toBeDisabled();
+  });
+
+  it("names a rebase rather than leaving it to be guessed at", async () => {
+    // The list is truthful and unreadable on its own: every commit is new,
+    // because a rebase gave them new SHAs — but `committed_at` is the *author*
+    // date, which rebase preserves, so commits created minutes ago display as
+    // hours old and the whole list reads as old work reappearing.
+    server.use(
+      http.get("*/prs/:prId/commits", () =>
+        HttpResponse.json({
+          commits: fixtureCommits.map((c) => ({ ...c, is_new: true })),
+          history_rewritten: true,
+        }),
+      ),
+    );
+
+    await openPicker();
+
+    expect(
+      await screen.findByText(/rebased or force-pushed since the last review/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about a rebase on the ordinary path", async () => {
+    await openPicker();
+    expect(screen.queryByText(/rebased or force-pushed/i)).toBeNull();
   });
 
   it("pluralises the button by how many are ticked", async () => {

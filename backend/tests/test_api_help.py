@@ -180,7 +180,6 @@ def seeded():
 def fake_github(monkeypatch):
     _FakeClient.calls = []
     monkeypatch.setattr(help_api, "GitHubClient", _FakeClient)
-    monkeypatch.setattr(help_api, "get_github_token", lambda **_kwargs: "token")
     return _FakeClient
 
 
@@ -211,9 +210,11 @@ def test_a_bug_report_files_a_labelled_issue(seeded, fake_github) -> None:
     call = fake_github.calls[0]
     assert call["labels"] == ["bug"]
     assert call["title"] == "Reviews stay queued"
-    # Filed with the instance's token, so the issue would otherwise carry the
-    # wrong name. The body says who actually typed it.
-    assert "Reported by @" in call["body"]
+    # Filed as the reporter, so the issue's GitHub author *is* who reported it.
+    # The body no longer claims a name — a byline is stronger evidence than a
+    # sentence, and the sentence only existed because the wrong account filed.
+    assert "Reported by @" not in call["body"]
+    assert "Filed from Liffy's in-app help." in call["body"]
 
 
 def test_a_feature_idea_is_labelled_enhancement(seeded, fake_github) -> None:
@@ -283,7 +284,6 @@ def test_github_refusing_reads_as_github_not_as_liffy(seeded, monkeypatch) -> No
             raise GitHubError("Resource not accessible by personal access token")
 
     monkeypatch.setattr(help_api, "GitHubClient", _Refusing)
-    monkeypatch.setattr(help_api, "get_github_token", lambda **_kwargs: "token")
 
     response = client.post(
         "/help/report",
@@ -324,3 +324,76 @@ def test_reading_help_stays_open_to_everyone() -> None:
     """
     assert client.get("/help/topics").status_code == 200
     assert client.get("/help?q=signing+in").status_code == 200
+
+
+def test_a_reporter_with_no_stored_token_is_403_and_says_what_to_do(
+    seeded, monkeypatch
+) -> None:
+    """403 — not 502, and emphatically not 401.
+
+    `submit_report` caught `GitHubError` broadly, so `GitHubAuthError` (a
+    subclass) arrived as 502; the ordering `api/repos.py` already spells out
+    for `GitHubRateLimitError` was missing here. 502 means GitHub refused, and
+    it surfaced as "GitHub couldn't find that repository (is it private?)" —
+    sending the reader to check permissions on a public repo that was never
+    the problem.
+
+    401 would be worse than the original bug: `api/client.ts` refreshes on 401
+    and ends the session when that fails, so a revoked *GitHub* token would log
+    the user out of *Liffy*.
+
+    503 was the first fix and was wrong for a subtler reason — it assumed the
+    only route here was a missing `GITHUB_TOKEN`, and the next commit deleted
+    that token. Both remaining sources are the caller's own credential.
+    """
+    from app.models.user import User
+    from sqlalchemy import select
+
+    with seeded["factory"]() as db:
+        owner = db.scalar(select(User).where(User.is_owner.is_(True)))
+        owner.github_access_token = None
+        db.commit()
+
+    response = client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={"title": "A title", "body": "A body long enough."},
+    )
+
+    assert response.status_code == 403
+    assert "sign in again" in response.json()["detail"]
+
+
+def test_a_revoked_github_token_is_403_not_a_liffy_outage(seeded, monkeypatch) -> None:
+    """The case the 503 mapping got wrong, and the reason 401 is not the answer.
+
+    `_raise_for_status` turns GitHub's 401/403 into `GitHubAuthError`, so a
+    reporter whose OAuth grant was revoked reaches the same clause as one with
+    no token at all. Under 503 that told uptime checks the service was down and
+    told the reporter to look at server configuration they cannot change.
+
+    401 would be worse still: `api/client.ts` refreshes on 401 and ends the
+    session when that fails, so a revoked *GitHub* grant would log the user out
+    of *Liffy* — a good session destroyed by a downstream credential.
+    """
+    from app.services.github_service import GitHubAuthError
+
+    class _Revoked(_FakeClient):
+        def create_issue(self, *_a, **_k):
+            raise GitHubAuthError(
+                "GitHub rejected the credentials. If you revoked Liffy's "
+                "access, reconnect your GitHub account."
+            )
+
+    monkeypatch.setattr(help_api, "GitHubClient", _Revoked)
+
+    response = client.post(
+        "/help/report",
+        headers=seeded["headers"],
+        json={"title": "A title", "body": "A body long enough."},
+    )
+
+    assert response.status_code == 403
+    # GitHub's own sentence reaches the reader: `normalizeApiError` has no 403
+    # branch, so the default passes `detail` through unchanged.
+    assert "reconnect your GitHub account" in response.json()["detail"]

@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 import httpx
 
-from app.config import settings
 from app.services.diff_parser import DiffHunk, FileDiff, FileStatus
 
 logger = logging.getLogger(__name__)
@@ -246,31 +245,27 @@ def verify_webhook_signature(secret: str, payload: bytes, signature_header: str 
     return hmac.compare_digest(signature, digest)
 
 
-def get_github_token(token: str | None = None, *, allow_server_pat: bool = False) -> str:
-    """Resolve a GitHub token, refusing to silently upgrade the caller.
+def get_github_token(token: str | None = None) -> str:
+    """Resolve the GitHub token for a request, or refuse.
 
-    This was the seam left open for per-user OAuth, and once that landed the
-    fallback stopped being a seam and became an escalation: every call site
-    passes ``user.github_access_token``, which is nullable, and a ``None``
-    quietly resolved to the instance owner's PAT.
+    Every caller acts on behalf of somebody: an API route as the signed-in
+    user, a worker as the repository's owner. There is no instance-level
+    credential and deliberately no fallback to one.
 
-    That is worst inside ``repos.connect_repo``, where the GitHub call *is* the
-    access check — "can you see this repository?" answered with somebody else's
-    credential returns yes for repositories the caller cannot see, and the
-    indexer then embeds them into a collection the caller can retrieve from.
+    There used to be. ``token or settings.github_token`` was written as the
+    seam for per-user OAuth, and once per-user OAuth landed it stopped being a
+    seam and became an escalation — a null user token silently upgraded the
+    caller to the instance owner's PAT, including inside ``connect_repo``,
+    where the GitHub call *is* the access check. #298 made the fallback opt-in;
+    this removes it, because the last caller that opted in (filing a report)
+    now files as the reporter, and an unused credential path is precisely the
+    shape the original bug grew out of.
 
-    So the default is strict, and the fallback is something a call site has to
-    ask for. ``allow_server_pat=True`` belongs only to genuinely instance-level
-    work: filing a report against Liffy's own repository is the one such caller
-    today. A user-initiated request that has no user token is an error with an
-    action attached — reconnect — not an invitation to act as somebody else.
+    ``settings.github_token`` is consequently read by nothing. It is kept as a
+    field only so an existing ``.env`` carrying one does not look broken.
     """
     if token:
         return token
-    if allow_server_pat and settings.github_token:
-        return settings.github_token
-    if allow_server_pat:
-        raise GitHubAuthError("No GitHub token configured; set GITHUB_TOKEN or pass a token.")
     raise GitHubAuthError(
         "No GitHub token for this account. Sign out and sign in again to "
         "reconnect it."
@@ -488,17 +483,10 @@ class GitHubClient:
     to inject a stubbed transport in tests.
     """
 
-    def __init__(
-        self,
-        token: str | None = None,
-        *,
-        client: httpx.Client | None = None,
-        allow_server_pat: bool = False,
-    ) -> None:
-        # Strict by default: see `get_github_token`. Every caller acting on
-        # behalf of a user passes that user's token and nothing else, so a null
-        # one fails here rather than reaching GitHub as the instance owner.
-        self.token = get_github_token(token, allow_server_pat=allow_server_pat)
+    def __init__(self, token: str | None = None, *, client: httpx.Client | None = None) -> None:
+        # Every caller passes the token of whoever the request is on behalf of,
+        # so a null one fails here rather than reaching GitHub as somebody else.
+        self.token = get_github_token(token)
         self._client = client or httpx.Client(base_url=GITHUB_API_BASE, timeout=_DEFAULT_TIMEOUT)
 
     def __enter__(self) -> "GitHubClient":

@@ -673,7 +673,13 @@ SECRET_SETTINGS: dict[str, SecretSetting] = {
         "GitHub webhook secret", "Required for automatic reviews on push.",
     ),
     "github_token": SecretSetting(
-        "GitHub token", "Required to read repositories and post reviews.",
+        "GitHub token",
+        # Was "Required to read repositories and post reviews", which stopped
+        # being true when per-user OAuth landed: every route acts as the
+        # signed-in user, and the last holdout — filing a report — now does
+        # too. Nothing reads this. Saying "Required" about a value no code
+        # consumes is the settings page lying in the most confusing direction.
+        "Not used. Every request to GitHub is made with your own sign-in.",
     ),
     "anthropic_api_key": SecretSetting(
         "Anthropic API key",

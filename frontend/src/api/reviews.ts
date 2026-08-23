@@ -1,6 +1,6 @@
 import { apiClient } from "./client";
 import type {
-  CommitOut,
+  PrCommitsOut,
   LatestFindingOut,
   ReviewDetailOut,
   ReviewListPage,
@@ -83,8 +83,8 @@ export async function setAutoReview(
 }
 
 /** Commits on a pull request, each flagged with whether it is new since the review. */
-export async function listPrCommits(prId: string): Promise<CommitOut[]> {
-  const { data } = await apiClient.get<CommitOut[]>(`/prs/${prId}/commits`);
+export async function listPrCommits(prId: string): Promise<PrCommitsOut> {
+  const { data } = await apiClient.get<PrCommitsOut>(`/prs/${prId}/commits`);
   return data;
 }
 

@@ -258,7 +258,9 @@ export const handlers = [
     return HttpResponse.json({ pr_id: "x", auto_review: enabled });
   }),
 
-  http.get("*/prs/:prId/commits", () => HttpResponse.json(fixtureCommits)),
+  http.get("*/prs/:prId/commits", () =>
+    HttpResponse.json({ commits: fixtureCommits, history_rewritten: false }),
+  ),
 
   http.post("*/prs/:prId/review-commits", async ({ request }) => {
     const { shas } = (await request.json()) as { shas: string[] };

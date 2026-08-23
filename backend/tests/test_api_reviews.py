@@ -941,7 +941,7 @@ def test_commits_are_flagged_new_after_the_last_reviewed_commit(
 
     _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c"), _commit("d")])
 
-    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()["commits"]
 
     assert [(c["sha"], c["is_new"]) for c in body] == [
         ("a", False), ("b", False), ("c", True), ("d", True),
@@ -968,7 +968,7 @@ def test_a_narrowed_review_does_not_become_the_boundary(
 
     _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c"), _commit("d")])
 
-    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()["commits"]
     flags = {c["sha"]: c["is_new"] for c in body}
 
     # The one it actually read is covered; the three it skipped are still new,
@@ -987,8 +987,23 @@ def test_every_commit_is_new_when_nothing_has_been_reviewed(
 
     _patch_gh(monkeypatch, [_commit("a"), _commit("b")])
 
-    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
-    assert all(c["is_new"] for c in body)
+    payload = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert all(c["is_new"] for c in payload["commits"])
+    # No boundary was ever set, which is not the same as one being rewritten
+    # away — so the flag stays false and the UI says nothing about a rebase.
+    assert payload["history_rewritten"] is False
+
+
+def test_an_intact_boundary_reports_no_rewrite(seeded, monkeypatch) -> None:
+    """The flag must not cry wolf on the ordinary path."""
+    _patch_gh(monkeypatch, [_commit("old"), _commit("new")])
+
+    with seeded["factory"]() as db:
+        db.get(Review, seeded["new"]).head_sha = "old"
+        db.commit()
+
+    payload = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert payload["history_rewritten"] is False
 
 
 def test_a_rewritten_boundary_marks_everything_new(seeded, monkeypatch) -> None:
@@ -1003,8 +1018,14 @@ def test_a_rewritten_boundary_marks_everything_new(seeded, monkeypatch) -> None:
 
     _patch_gh(monkeypatch, [_commit("a"), _commit("b")])
 
-    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
-    assert all(c["is_new"] for c in body)
+    payload = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    assert all(c["is_new"] for c in payload["commits"])
+    # And *say* so. Marking everything new is correct and unreadable on its
+    # own: `committed_at` carries the author date, which a rebase preserves, so
+    # commit objects created a minute ago display as hours old and a wholly new
+    # list reads as old work reappearing. The flag is what lets the UI name the
+    # cause instead of leaving it to be guessed at.
+    assert payload["history_rewritten"] is True
 
 
 def test_commits_of_another_users_pull_request_are_not_readable(
@@ -1173,7 +1194,7 @@ def test_a_narrowed_review_does_not_mark_skipped_commits_as_reviewed(
 
     _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c"), _commit("d")])
 
-    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()["commits"]
 
     # a, b and d were never looked at; c was.
     assert [(c["sha"], c["is_new"]) for c in body] == [
@@ -1191,7 +1212,7 @@ def test_a_full_review_still_sets_the_boundary(seeded, monkeypatch) -> None:
 
     _patch_gh(monkeypatch, [_commit("a"), _commit("b"), _commit("c")])
 
-    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()
+    body = client.get(f"/prs/{seeded['pr']}/commits", headers=seeded["headers"]).json()["commits"]
     assert [(c["sha"], c["is_new"]) for c in body] == [
         ("a", False), ("b", False), ("c", True),
     ]

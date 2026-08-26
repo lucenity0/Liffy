@@ -1,0 +1,169 @@
+{
+  "generated_for": "#273",
+  "method": "hand adjudication against the code at each review's head_sha; three-way split from #164 / ADR 005",
+  "adjudicator": "single (Claude, agentic session) \u2014 not user thumbs; comment_feedback untouched",
+  "comments": [
+    {
+      "id": "9789880c",
+      "pr": 261,
+      "confidence": "confirmed",
+      "kind": "logic_error/info",
+      "location": "backend/app/services/chunker.py:312-314",
+      "verdict": "correct",
+      "note": "_MODULE_KIND_NODES = {section, block_mapping_pair, pair, element, rule_set, from_instruction}. script_element/style_element (registered for html) and media_statement/keyframes_statement (registered for css) are in none of _CLASS_NODES/_INTERFACE_NODES/_MODULE_NODES either, so _node_kind falls through to \"function\". Verified by set membership at the review sha."
+    },
+    {
+      "id": "b8579d86",
+      "pr": 261,
+      "confidence": "plausible",
+      "kind": "logic_error/warning",
+      "location": "backend/app/services/chunker.py:639",
+      "verdict": "correct",
+      "note": "Its own settling test resolved against the code: line 1007 is extension = \".\" + file_path.rsplit(\".\",1)[-1] \u2014 a plain suffix lookup. Canonical `Dockerfile` yields \"\" and never reaches the \".dockerfile\" entry."
+    },
+    {
+      "id": "878f3a1b",
+      "pr": 261,
+      "confidence": "confirmed",
+      "kind": "logic_error/warning",
+      "location": "backend/app/services/chunker.py:959-961",
+      "verdict": "correct",
+      "note": "Header tuple is (header, node.start_point[0]+1, members[0].start_point[0], ...). First member on the definition's own line gives end_line = start_line - 1. Inverted range."
+    },
+    {
+      "id": "c4677a9b",
+      "pr": 261,
+      "confidence": "confirmed",
+      "kind": "logic_error/warning",
+      "location": "backend/app/services/chunker.py:963-976",
+      "verdict": "correct",
+      "note": "_subdivide emits header (node.start_byte..members[0].start_byte) plus each member's own byte range. Inter-member gaps and everything after members[-1].end_byte are in no chunk."
+    },
+    {
+      "id": "6549706a",
+      "pr": 274,
+      "confidence": "confirmed",
+      "kind": "logic_error/warning",
+      "location": "frontend/src/components/review/ReviewStates.tsx:74-79",
+      "verdict": "correct",
+      "note": "Copy reads \"and the log below goes with it\"; link is /help?report=<title> only. ReportProblem's props are exactly {query, prefillTitle}; body starts \"\" and only ever gains the help-search line. failure_detail is carried nowhere."
+    },
+    {
+      "id": "ddc19908",
+      "pr": 274,
+      "confidence": "confirmed",
+      "kind": "improvement/info",
+      "location": "frontend/src/lib/modelProse.ts:12",
+      "verdict": "correct",
+      "note": "SPAN uses (?<!`) twice in a module-scope regex literal, so an engine without lookbehind fails to parse the module, not the function. Its own settling test \u2014 the configured build targets \u2014 resolves in its favour: vite.config.ts sets no build.target and package.json has no browserslist, so the default baseline (well below Safari 16.4) applies. Severity honestly pitched at info."
+    },
+    {
+      "id": "855fda6b",
+      "pr": 277,
+      "confidence": "confirmed",
+      "kind": "logic_error/warning",
+      "location": "backend/app/services/github_service.py:580-583",
+      "verdict": "correct",
+      "note": "No page param, per_page<=100, GitHub returns oldest-first \u2014 so a >100-commit PR yields the oldest 100. Second half verified too: api/reviews.py:355-377 leaves seen_boundary False when head_sha is absent from the page and the fallback then marks every returned commit is_new."
+    },
+    {
+      "id": "9429b920",
+      "pr": 277,
+      "confidence": "confirmed",
+      "kind": "logic_error/warning",
+      "location": "backend/app/services/review_service.py:302-320",
+      "verdict": "correct",
+      "note": "scope is None unless len(review_diffs) < len(file_diffs), so a selection touching every file persists no commits key. Its subtler half also holds: _diffs_to_review's docstring states every failure path falls back to the full diff, so keying scope off commit_shas alone would be wrong."
+    },
+    {
+      "id": "8c35a148",
+      "pr": 298,
+      "confidence": "plausible",
+      "kind": "security/warning",
+      "location": "backend/app/api/auth.py:126-127",
+      "verdict": "correct",
+      "note": "Settling test resolved: refresh() calls rotate_refresh_token + create_access_token with no login_permitted, owner or allowlist check. Migration a91e5c2b7d04 contains no token revocation, so a pre-existing non-owner keeps rotating indefinitely."
+    },
+    {
+      "id": "46680dab",
+      "pr": 298,
+      "confidence": "plausible",
+      "kind": "logic_error/info",
+      "location": "backend/app/api/auth.py:137-149",
+      "verdict": "correct",
+      "note": "try covers claim_ownership, _issue_pair and db.commit(); any IntegrityError from the deferred users INSERT surfaces at commit inside it and is reported as not_authorised. Settling test resolved: ix_users_github_id is UNIQUE."
+    },
+    {
+      "id": "f0d158fa",
+      "pr": 298,
+      "confidence": "confirmed",
+      "kind": "improvement/info",
+      "location": "backend/app/api/settings.py:61-64",
+      "verdict": "correct",
+      "note": "_secret_is_set special-cases github_webhook_secret only; jwt_secret_key falls to bool(value). config.py:75 defaults it to DEV_JWT_SECRET and the validator returns `value or DEV_JWT_SECRET`, so a blank env var reports Configured."
+    },
+    {
+      "id": "c42698b1",
+      "pr": 298,
+      "confidence": "confirmed",
+      "kind": "convention/warning",
+      "location": "liffy.sh:201-203",
+      "verdict": "correct",
+      "note": "At its own sha (bd639424) liffy.sh:201-203 generates the secret and setup-windows.bat contains zero occurrences of GITHUB_WEBHOOK_SECRET. Exactly as stated."
+    },
+    {
+      "id": "f9fed0c3",
+      "pr": 298,
+      "confidence": "plausible",
+      "kind": "logic_error/warning",
+      "location": "setup-mac.sh:132-134",
+      "verdict": "false",
+      "note": "Claims ensure_env_file in liffy.sh is untouched and still only rewrites JWT_SECRET_KEY. At its own sha (3135d5a7) liffy.sh contains six occurrences of GITHUB_WEBHOOK_SECRET and does generate it. The comment says it reasoned from retrieved context rather than the diff, and named the settling test itself (\"whether liffy.sh's ensure_env_file was updated in a hunk not shown here \u2014 if it was, ignore this\")."
+    },
+    {
+      "id": "8bf8415a",
+      "pr": 298,
+      "confidence": "plausible",
+      "kind": "convention/info",
+      "location": "setup-mac.sh:133",
+      "verdict": "unverifiable",
+      "note": "Code observation is accurate \u2014 setup-mac.sh's sed is unanchored where setup-windows.bat anchors with ^...$ and its REM justifies the anchor. But the predicted failure does not fire: its own settling test (occurrences of GITHUB_WEBHOOK_SECRET= in backend/.env.example that are not the assignment) returns exactly one, the assignment on line 17. Real inconsistency, hypothetical harm."
+    },
+    {
+      "id": "8bbe6e5f",
+      "pr": 298,
+      "confidence": "confirmed",
+      "kind": "logic_error/critical",
+      "location": "setup-windows.bat:131",
+      "verdict": "correct",
+      "note": "Reproduced: io.open(p,'w',encoding='utf-8',newline='\\\\n') truncates the file to 0 bytes and then raises ValueError: illegal newline value. Its distinction that p='backend\\\\.env' is fine while newline='\\\\n' is not is also right."
+    },
+    {
+      "id": "41aa2139",
+      "pr": 299,
+      "confidence": "plausible",
+      "kind": "logic_error/warning",
+      "location": "frontend/src/components/review/CommitPicker.tsx:86-89",
+      "verdict": "correct",
+      "note": "Settling test resolved: useReviewCommits invalidates keys.reviews.all, and hooks/keys.ts documents that keys nest by prefix, so keys.reviews.commits(prId) is caught and refetches. selected is never pruned against rows, and button label/count/disabled all derive from selected.size."
+    },
+    {
+      "id": "b4979eea",
+      "pr": 299,
+      "confidence": "confirmed",
+      "kind": "improvement/info",
+      "location": "frontend/src/components/review/CommitPicker.tsx:147-151",
+      "verdict": "correct",
+      "note": "Template renders \"all 1 commit has been reviewed\" \u2014 the ternary switches only \" has\"/\"s have\" and leaves \"all 1\" standing."
+    },
+    {
+      "id": "d34fdd21",
+      "pr": 300,
+      "confidence": "plausible",
+      "kind": "logic_error/info",
+      "location": "backend/app/api/help.py:186-198",
+      "verdict": "correct",
+      "note": "Settling test resolved: github_service.py:544 raises GitHubAuthError for status 401 as well as 403, so a reporter's revoked token reaches help.py's blanket 503 and is reported as a service outage."
+    }
+  ]
+}

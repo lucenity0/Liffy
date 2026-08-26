@@ -15,6 +15,7 @@ unfalsifiable** — which is the only reason these files are committed.
 | `after-zero-comments.json` | The same five PRs after change 1 — "returning zero comments is a valid outcome" |
 | `after-severity.json` | Change 2 — severity defined by effect on running code. **Rejected** |
 | `after-severity-run2.json` | Change 2 again, because one run of a non-deterministic model is not a result |
+| `confidence-adjudication.json` | All 18 `confidence`-bearing comments, adjudicated by hand for #273 — see ADR 008 §1 |
 
 Two changes, measured **separately and in sequence**: run, measure, change, run,
 measure. That is not a violation of one-change-at-a-time — it is the discipline.

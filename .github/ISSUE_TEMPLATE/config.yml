@@ -1,0 +1,14 @@
+# Blank issues are off so security reports cannot arrive as one by accident —
+# the contact link below is the only route that keeps them private.
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/lucenity0/Liffy/blob/main/SECURITY.md
+    about: >
+      Please do not open a public issue. SECURITY.md has the private
+      disclosure route.
+  - name: Setup trouble
+    url: https://github.com/lucenity0/Liffy/blob/main/docs/SETUP.md
+    about: >
+      The macOS and Windows walkthrough, including the errors people usually
+      hit. Still stuck after that? A bug report is the right place.

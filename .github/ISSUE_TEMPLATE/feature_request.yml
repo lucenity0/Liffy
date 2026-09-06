@@ -1,0 +1,51 @@
+name: Feature request
+description: Something to add or change. Worth opening before you build it.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Opening this first saves you building something we were about to
+        change, and it is a faster conversation than a review on a finished
+        branch. A rough idea is fine — it does not need to be a design.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is the problem
+      description: >
+        What you were trying to do when you wanted this. The problem is more
+        useful than the solution, because it leaves room for a better one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: How you would solve it, if you have a view.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Roughly where does this live?
+      options:
+        - Review quality — the prompt, severity, confidence
+        - Retrieval and indexing
+        - Model providers and cost
+        - Frontend and design system
+        - API and webhooks
+        - Setup, Docker, docs
+        - Somewhere else / not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: offer
+    attributes:
+      label: Would you like to build it?
+      options:
+        - label: I would be up for opening the PR myself
+          required: false

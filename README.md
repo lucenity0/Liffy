@@ -274,11 +274,11 @@ Found a security problem? Please don't open a public issue — see **[SECURITY.m
 
 ### `// docs`
 
-**[ setup ](docs/SETUP.md)** &nbsp;·&nbsp; **[ api reference ](docs/api.md)** &nbsp;·&nbsp; **[ llm pipeline ](docs/llm-pipeline.md)** &nbsp;·&nbsp; **[ indexing coverage ](docs/indexing.md)** &nbsp;·&nbsp; **[ decisions ](docs/decisions/)**
+**[ setup ](docs/SETUP.md)** &nbsp;·&nbsp; **[ architecture ](docs/architecture.md)** &nbsp;·&nbsp; **[ configuration ](docs/configuration.md)** &nbsp;·&nbsp; **[ api reference ](docs/api.md)** &nbsp;·&nbsp; **[ llm pipeline ](docs/llm-pipeline.md)** &nbsp;·&nbsp; **[ indexing coverage ](docs/indexing.md)** &nbsp;·&nbsp; **[ decisions ](docs/decisions/)**
 
 <br />
 
-<div align="center"><sub><a href="LICENSE">MIT licensed</a> &nbsp;·&nbsp; <a href="CONTRIBUTING.md">contributing</a> &nbsp;·&nbsp; <a href="SECURITY.md">security policy</a></sub></div>
+<div align="center"><sub><a href="LICENSE">MIT licensed</a> &nbsp;·&nbsp; <a href="CONTRIBUTING.md">contributing</a> &nbsp;·&nbsp; <a href="CODE_OF_CONDUCT.md">code of conduct</a> &nbsp;·&nbsp; <a href="SECURITY.md">security policy</a></sub></div>
 
 <br />
 

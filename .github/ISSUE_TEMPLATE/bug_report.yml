@@ -1,0 +1,106 @@
+name: Bug report
+description: Something is broken, erroring, or not doing what it says it does.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A stack trace and the steps that produced it are worth more than a
+        careful description. If you have the traceback, that is the most
+        useful thing in this form — everything else is context for it.
+
+        **Found a security problem?** Close this and read
+        [SECURITY.md](https://github.com/lucenity0/Liffy/blob/main/SECURITY.md)
+        instead. Please do not describe it in a public issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        I connected a repo and pressed "Review". The review sat at
+        "processing" for ten minutes and then went to "failed".
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Traceback or logs
+      description: >
+        The backend or worker output around the failure. Pasted as text
+        rather than a screenshot, if you can — it is searchable that way.
+        Scrub any tokens or repo names you would rather not publish.
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: llm-provider
+    attributes:
+      label: LLM_PROVIDER
+      description: Which review provider the instance is pointed at.
+      options:
+        - anthropic
+        - openai
+        - claude_code
+        - codex
+        - "openai, against a local Ollama"
+        - "openai, against some other endpoint"
+        - not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: embedding-provider
+    attributes:
+      label: EMBEDDING_PROVIDER
+      description: >
+        `local` is the default and needs no key. This matters because the two
+        options have different vector dimensions (384 vs 1536).
+      options:
+        - local
+        - openai
+        - not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-running
+    attributes:
+      label: How are you running it?
+      options:
+        - "Docker (./liffy.sh, liffy.ps1 or docker compose)"
+        - "Locally, no Docker"
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15.4 · Windows 11 · Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or branch
+      description: "`git rev-parse --short HEAD`, if you have the repo to hand."
+      placeholder: ccf7e2f
+    validations:
+      required: false

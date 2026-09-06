@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 160" width="880" height="160" font-family="'Courier New', ui-monospace, monospace" role="img" aria-label="The gate: backend pytest, and frontend lint, typecheck, test and build — all passing">
+<defs>
+<style>
+  /* fadein, dot and slide are the three keyframes assets/header.svg and
+     assets/divider.svg already use. The checks land one at a time on the
+     same .d1-.d5 ladder the header boots on. */
+  @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes dot    { 0%,60% { opacity: 1 } 70%,100% { opacity: .15 } }
+  @keyframes slide  { 0% { transform: translateX(0) } 100% { transform: translateX(792px) } }
+  @media (prefers-reduced-motion: no-preference) {
+    .boot { opacity: 0; transform-box: fill-box; animation: fadein .5s ease forwards; }
+    .d1 { animation-delay: .25s } .d2 { animation-delay: .55s } .d3 { animation-delay: .85s }
+    .d4 { animation-delay: 1.15s } .d5 { animation-delay: 1.45s }
+    .odot   { animation: dot 1.8s ease-in-out infinite; }
+    .runner { animation: slide 4.2s linear infinite; }
+  }
+</style>
+</defs>
+<rect x="4" y="4" width="872" height="152" rx="12" fill="#ededed" stroke="#111111" stroke-width="3"/>
+<g stroke="#e6e6e6" stroke-width="1">
+<line x1="20" y1="16" x2="860" y2="16"/>
+<line x1="20" y1="56" x2="860" y2="56"/>
+<line x1="20" y1="96" x2="860" y2="96"/>
+<line x1="20" y1="136" x2="860" y2="136"/>
+</g>
+<text x="24" y="34" font-size="11" letter-spacing="3" fill="#8f8f8f">// THE GATE</text>
+<circle class="odot" cx="644" cy="30" r="4" fill="#111111"/>
+<text x="656" y="34" font-size="11" letter-spacing="3" fill="#8f8f8f">CI RUNS EXACTLY THIS</text>
+
+<text x="24" y="62" font-size="10" letter-spacing="2" fill="#8f8f8f">BACKEND</text>
+<g class="boot d1">
+<rect x="24" y="72" width="200" height="44" rx="5" fill="#f6f6f6" stroke="#111111" stroke-width="1.5"/>
+<text x="38" y="100" font-size="12" letter-spacing=".5" fill="#111111">PYTHONPATH=. pytest</text>
+<text x="200" y="101" font-size="15" fill="#456646">&#10003;</text>
+</g>
+
+<text x="248" y="62" font-size="10" letter-spacing="2" fill="#8f8f8f">FRONTEND &#183; npm run</text>
+<g class="boot d2">
+<rect x="248" y="72" width="140" height="44" rx="5" fill="#f6f6f6" stroke="#111111" stroke-width="1.5"/>
+<text x="262" y="100" font-size="12" letter-spacing=".5" fill="#111111">lint</text>
+<text x="364" y="101" font-size="15" fill="#456646">&#10003;</text>
+</g>
+<g class="boot d3">
+<rect x="400" y="72" width="140" height="44" rx="5" fill="#f6f6f6" stroke="#111111" stroke-width="1.5"/>
+<text x="414" y="100" font-size="12" letter-spacing=".5" fill="#111111">typecheck</text>
+<text x="516" y="101" font-size="15" fill="#456646">&#10003;</text>
+</g>
+<g class="boot d4">
+<rect x="552" y="72" width="140" height="44" rx="5" fill="#f6f6f6" stroke="#111111" stroke-width="1.5"/>
+<text x="566" y="100" font-size="12" letter-spacing=".5" fill="#111111">test</text>
+<text x="668" y="101" font-size="15" fill="#456646">&#10003;</text>
+</g>
+<g class="boot d5">
+<rect x="704" y="72" width="140" height="44" rx="5" fill="#111111"/>
+<text x="718" y="100" font-size="12" letter-spacing=".5" fill="#ededed">build</text>
+<text x="820" y="101" font-size="15" fill="#8fb98a">&#10003;</text>
+</g>
+
+<!-- the run itself, travelling under the row -->
+<line x1="24" y1="128" x2="844" y2="128" stroke="#dcdcdc" stroke-width="2"/>
+<rect class="runner" x="24" y="125" width="28" height="6" rx="3" fill="#111111"/>
+<text x="24" y="150" font-size="10" letter-spacing="1" fill="#8f8f8f">green locally means green on GitHub &#183; .github/workflows/ci.yml</text>
+</svg>
